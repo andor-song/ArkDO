@@ -226,12 +226,27 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
 
   // 清空媒体缓存目录(音视频下到 filesDir/media_cache)。冷启动时调用,避免缓存无限增长;
   // 同会话内文件保留以便重复播放不重复下载。不碰附件目录 download(那是用户主动下的文件)。
+  // rmdirSync 删非空目录必抛(MediaKit 文件持续写入时会失败),故先逐个 unlink 再删目录；
+  // 个别文件删不掉(正被播放占用)也继续,尽量清。
   static clearMediaCacheDir(context: Context): void {
     const dir: string = `${context.filesDir}/media_cache`;
     try {
       if (fs.accessSync(dir)) {
-        fs.rmdirSync(dir);
-        Log.i(`[ArkDO][Network] media cache cleared dir=${dir}`);
+        let removed: number = 0;
+        const names: string[] = fs.listFileSync(dir);
+        for (let index: number = 0; index < names.length; index++) {
+          try {
+            fs.unlinkSync(`${dir}/${names[index]}`);
+            removed++;
+          } catch (fileError) {
+            Log.i(`[ArkDO][Network] media cache file remove failed name=${names[index]} error=${JSON.stringify(fileError)}`);
+          }
+        }
+        // 全删干净才值得补一刀目录本身;有残留就留着,下次冷启动再试。
+        if (removed === names.length && names.length > 0) {
+          fs.rmdirSync(dir);
+        }
+        Log.i(`[ArkDO][Network] media cache cleared dir=${dir} removed=${removed}/${names.length}`);
       }
     } catch (error) {
       Log.i(`[ArkDO][Network] media cache clear failed error=${JSON.stringify(error)}`);
