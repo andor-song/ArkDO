@@ -247,7 +247,7 @@ export struct TopicListItem {
 
         Divider()
           .color($r('app.color.border'))
-          .strokeWidth(1)
+          .strokeWidth(0.5)
           .margin({ left: this.contentHorizontalPadding, right: this.contentHorizontalPadding })
       }
       .width('100%')

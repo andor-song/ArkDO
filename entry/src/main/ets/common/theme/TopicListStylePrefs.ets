@@ -157,14 +157,15 @@ export function avatarGap(avatarSize: number): number {
   return Math.max(6, Math.round(clampAvatarSize(avatarSize) / 6));
 }
 
-/** 分类/标签/时间那一行与标题的间距:默认 3。跟随行留白一起松紧。 */
+/** 分类/标签/时间那一行与标题的间距:默认 6(随行留白松紧)。原为默认 3,标题行高
+ * 23 而下方 3vp 就贴徽章行、再 3vp 贴时间,信息层级挤在一起是首页"糙感"主因。 */
 export function metaRowGap(rowPadding: number): number {
-  return Math.max(2, Math.round(clampRowPadding(rowPadding) * 3 / 8));
+  return Math.max(6, Math.round(clampRowPadding(rowPadding) / 2));
 }
 
-/** 搜索摘要与标题的间距:默认 4。 */
+/** 搜索摘要与标题的间距:默认 6。 */
 export function blurbGap(rowPadding: number): number {
-  return Math.max(2, Math.round(clampRowPadding(rowPadding) / 2));
+  return Math.max(6, Math.round(clampRowPadding(rowPadding) * 3 / 4));
 }
 
 /** 全默认的一套样式。 */
