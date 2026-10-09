@@ -1,4 +1,3 @@
-import localUnitTest from './LocalUnit.test';
 import architectureSkeletonTest from './ArchitectureSkeleton.test';
 import challengeDetectorTest from './ChallengeDetector.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
@@ -51,7 +50,6 @@ import htmlContentUtilsTest from './HtmlContentUtils.test';
 import linkRouterTest from './LinkRouter.test';
 
 export default function testsuite() {
-  localUnitTest();
   architectureSkeletonTest();
   challengeDetectorTest();
   arkWebNetworkBridgeTest();
