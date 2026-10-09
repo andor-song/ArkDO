@@ -255,7 +255,9 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
       this.controller.startDownload(url);
       return true;
     } catch (error) {
-      this.downloadIntents.pop();
+      // 按 url 精确移除刚入队的意图。不能用 pop()：队里可能有更早留下的残留/其它在途下载，
+      // pop() 弹的是队尾，会把别人的意图弹掉，导致后续 onBeforeDownload 按 FIFO 错位。
+      this.removeQueuedIntent(url, false);
       const err: BusinessError = error as BusinessError;
       Log.i(`[ArkDO][Network] startDownload failed code=${err.code} msg=${err.message}`);
       return false;
@@ -287,12 +289,24 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
     try {
       this.controller.startDownload(url);
     } catch (error) {
-      this.downloadIntents.pop();
+      this.removeQueuedIntent(url, true);
       const err: BusinessError = error as BusinessError;
       Log.i(`[ArkDO][Network] downloadMedia start failed code=${err.code}`);
       this.settleMediaFailure(url, new Error('媒体下载启动失败'));
     }
     return promise;
+  }
+
+  // 按 url（+isMedia）从队尾移除意图。入队时记录的 url 是原始值，startDownload 抛异常时能精确
+  // 认领刚 push 的那条；配合消费侧 FIFO shift，避免 pop() 误弹他人意图造成媒体/附件错位。
+  private removeQueuedIntent(url: string, isMedia: boolean): void {
+    for (let index: number = this.downloadIntents.length - 1; index >= 0; index--) {
+      const intent: DownloadIntent = this.downloadIntents[index];
+      if (intent.url === url && intent.isMedia === isMedia) {
+        this.downloadIntents.splice(index, 1);
+        return;
+      }
+    }
   }
 
   // 丢掉队首那些早就该被消费掉的意图。只从队首扫(队列按入队时间有序),遇到还新鲜的就停。
