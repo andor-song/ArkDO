@@ -19,9 +19,11 @@ export struct UserAvatar {
   // 就会出现「间距变了、头像纹丝不动」——间距是 TopicListItem 自己 build 里的,头像却卡在首次挂载的值。
   @Prop @Watch('onAvatarSizeChanged') avatarSize: number = 38;
   private readonly avatarImageSize: string = '96';
-  private readonly avatarBorderColor: string = '#4D00AEFF';
+  private readonly avatarBorderColor: ResourceColor = $r('app.color.border');
   // 当前使用的头像候选下标:动图(0)加载失败 → 静态(1)→ 都失败(>=候选数)回退首字母。
   @State private avatarSourceIndex: number = 0;
+  // 头像图就绪标记:原生/桥两条路径共用,加载完成置 true 从 0 淡入 120ms,避免硬切闪变。
+  @State private avatarLoaded: boolean = false;
   // 当前候选原生直载失败过、已由桥救回:build 据此从原生分支切到 PixelMap 分支。换候选时复位。
   // 当前候选上「原生 / 桥」各自试过没有。两条路都保留退路,靠这两个标记防止来回弹。
   @State private triedNative: boolean = false;
@@ -74,6 +76,11 @@ export struct UserAvatar {
             .objectFit(ImageFit.Cover)
             .backgroundColor($r('app.color.surface_muted'))
             .draggable(false)
+            .opacity(this.avatarLoaded ? 1 : 0)
+            .animation({ duration: 120, curve: Curve.EaseOut })
+            .onComplete(() => {
+              this.avatarLoaded = true;
+            })
             .onError(() => this.onNativeAvatarFailed())
         } else if (this.avatarPixelMap) {
           Image(this.avatarPixelMap)
@@ -82,6 +89,8 @@ export struct UserAvatar {
             .borderRadius(this.avatarBorderRadius())
             .objectFit(ImageFit.Cover)
             .backgroundColor($r('app.color.surface_muted'))
+            .opacity(this.avatarLoaded ? 1 : 0)
+            .animation({ duration: 120, curve: Curve.EaseOut })
         } else {
           Text(this.getInitial())
             .fontSize(Math.max(12, Math.floor(this.avatarSize * 0.4)))
@@ -153,6 +162,8 @@ export struct UserAvatar {
   // 按当前候选准备显示:CDN 头像交给原生 Image 自行加载(见 build 原生分支),
   // 主站被封头像经 host webview 过盾取字节解码成 PixelMap。
   private prepareCurrentCandidate(): void {
+    // 换候选/重试意味着图片来源变了,回到隐藏态,加载完成后重新淡入。
+    this.avatarLoaded = false;
     const url: string = this.currentAvatarUrl();
     const route: string = this.avatarRoute();
     // 排障用:每个 url 只记一次选路结果,重复渲染不再刷屏。
@@ -237,6 +248,7 @@ export struct UserAvatar {
     Log.i(`${LOG_TAG} bridge rescued url=${url}`);
     BlockedImageHosts.markBridgeRescued(url);
     this.avatarPixelMap = pixelMap;
+    this.avatarLoaded = true;
     // 角标多半与头像同域,判定若已翻转就一并改走桥,免得等到下次挂载才恢复。
     this.prepareFlairIfNeeded();
   }
@@ -259,11 +271,13 @@ export struct UserAvatar {
     const cached: image.PixelMap | undefined = cache.getCached(url);
     if (cached) {
       this.avatarPixelMap = cached;
+      this.avatarLoaded = true;
       return;
     }
     const pixelMap: image.PixelMap | undefined = await cache.load(url);
     if (pixelMap) {
       this.avatarPixelMap = pixelMap;
+      this.avatarLoaded = true;
       return;
     }
     // 桥取不到(多半是跨域被 CORS 挡,如 meta 的头像 302 到不回 CORS 头的 CDN)。
