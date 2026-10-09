@@ -336,7 +336,7 @@ export struct SettingsPage {
         })
     }
     .width('100%')
-    .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 12, bottom: 12 })
+    .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 14, bottom: 14 })
   }
 
   // 磨砂强度滑块。两端标出极值,让人一眼知道还能调多少;拖动时首页/详情页的 FAB 已经在跟着变,
@@ -381,7 +381,7 @@ export struct SettingsPage {
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 12, bottom: 8 })
+    .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 12, bottom: 12 })
     .alignItems(HorizontalAlign.Start)
   }
 

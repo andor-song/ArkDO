@@ -311,7 +311,7 @@ export struct ForumsPage {
           Divider()
             .strokeWidth(0.5)
             .color($r('app.color.border'))
-            .margin({ left: CARD_PADDING })
+            .margin({ left: CARD_PADDING, right: CARD_PADDING })
         }
         // key 必须并入这一行实际渲染到的一切:ForEach 按 key 复用,key 不变就不重建。
         // 只用 id 的话,改完名字 key 没变 → 复用旧行 → 名字不刷新(要退出页面重进才对);
@@ -379,7 +379,7 @@ export struct ForumsPage {
             Divider()
               .strokeWidth(0.5)
               .color($r('app.color.border'))
-              .margin({ left: CARD_PADDING })
+              .margin({ left: CARD_PADDING, right: CARD_PADDING })
           }
         }, (item: ForumSuggestion) => item.baseUrl)
       }

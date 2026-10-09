@@ -8,6 +8,7 @@ import { AppConstants } from '../../common/constants/AppConstants';
 import { SidebarTag, User } from '../../models/User';
 import { Topic, TopicCategory, TopicTag } from '../../models/Topic';
 import { TopicListItem } from '../components/TopicListItem';
+import { ListFooter } from '../components/ListFooter';
 import { UserAvatar } from '../components/UserAvatar';
 import { NotificationBell } from '../components/NotificationBell';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
@@ -740,22 +741,12 @@ export struct HomePage {
 
           if (this.topics.length > 0) {
             ListItem() {
-              Row() {
-                if (this.isLoadingMore) {
-                  LoadingProgress()
-                    .width(18)
-                    .height(18)
-                    .color($r('app.color.brand'))
-                    .margin({ right: 8 })
-                }
-
-                Text(this.footerMessage)
-                  .fontSize(13)
-                  .fontColor(this.requiresChallenge ? $r('app.color.warning') : $r('app.color.text_secondary'))
-              }
-              .width('100%')
-              .height(54)
-              .justifyContent(FlexAlign.Center)
+              ListFooter({
+                isLoading: this.isLoadingMore,
+                hasMore: this.hasMore,
+                message: this.footerMessage,
+                messageColor: this.requiresChallenge ? $r('app.color.warning') : $r('app.color.text_secondary')
+              })
             }
           }
         }

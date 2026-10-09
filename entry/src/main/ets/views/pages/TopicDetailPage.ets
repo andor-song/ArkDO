@@ -40,6 +40,7 @@ import {
   shouldShowLotteryNotice
 } from '../../services/topic/LotteryTopicRule';
 import { LoadStateView } from '../components/LoadStateView';
+import { ListFooter } from '../components/ListFooter';
 import { TopicDetailHeader } from '../components/TopicDetailHeader';
 import { TopicSummaryCard } from '../components/TopicSummaryCard';
 import { LotteryNoticeCard } from '../components/LotteryNoticeCard';
@@ -574,22 +575,13 @@ export struct TopicDetailPage {
       if (this.postCount > 0) {
         ListItem() {
           Column() {
-            Row() {
-              if (this.isLoadingMore) {
-                LoadingProgress()
-                  .width(18)
-                  .height(18)
-                  .color($r('app.color.brand'))
-                  .margin({ right: 8 })
-              }
-
-              Text(this.loadMoreMessage)
-                .fontSize(13)
-                .fontColor($r('app.color.text_tertiary'))
-            }
-            .width('100%')
-            .height(54)
-            .justifyContent(FlexAlign.Center)
+            ListFooter({
+              isLoading: this.isLoadingMore,
+              hasMore: this.hasMorePosts,
+              message: this.loadMoreMessage,
+              textColor: $r('app.color.text_tertiary'),
+              messageColor: $r('app.color.text_tertiary')
+            })
 
             // List 铺进底部系统区域，需把导航指示条高度一并计入可滚动尾距。
             Blank()
