@@ -269,7 +269,8 @@ export struct TopicPostItem {
       }
       .width('100%')
       // 上下留白由外层持有(高亮背景通栏);左右留白下放到内层正文区,给红线让出通栏空间。
-      .padding({ top: 12, bottom: 0 })
+      // 底部拆出 6vp 呼吸:原来 top12/bottom0,楼与楼只有 1px 底线贴着,密集时挤。
+      .padding({ top: 10, bottom: 6 })
       // 锚楼底边交给红线接管,撤掉灰线,避免红线上方再压一条灰线成双。
       .border({
         width: { bottom: this.showLastVisitedLine ? 0 : 1 },
@@ -456,7 +457,7 @@ export struct TopicPostItem {
           if (this.hasReplies()) {
             Row({ space: 4 }) {
               Text(`${this.post.replyCount}`)
-                .fontSize(16)
+                .fontSize(15)
                 // 这枚胶囊有自己的灰底(折叠 #E6E8EB / 展开 #D9DDE2),icon_muted 打上去浅色下只有
                 // 1.53:1、展开态 1.38:1(应用市场无障碍检测卡的就是这里)。单列 post_reply_control_fg:
                 // 浅 #575D66 → 5.41 / 4.87,深 #9DA3AE → 5.98 / 4.94,两种底色两种模式都过 4.5:1。
@@ -605,7 +606,7 @@ export struct TopicPostItem {
               .padding({ left: index === this.replies.length - 1 ? 0 : 52 })
             }
             .width('100%')
-            .padding({ top: 12, bottom: 0})
+            .padding({ top: 10, bottom: 6})
           }, (reply: TopicPost) => reply.id.toString())
       }
       .width('100%')
@@ -685,8 +686,8 @@ export struct TopicPostItem {
       }
       .scale({ x: this.likeIconScale, y: this.likeIconScale })
     }
-    .width(38)
-    .height(38)
+    .width(36)
+    .height(36)
     .padding(0)
     .backgroundColor(Color.Transparent)
     .borderRadius(10)
@@ -730,8 +731,8 @@ export struct TopicPostItem {
         FaIconView({ icon: this.faIcon('pencil'), color: $r('app.color.icon_muted'), iconSize: 16 })
       }
     }
-    .width(38)
-    .height(38)
+    .width(36)
+    .height(36)
     .padding(0)
     .backgroundColor(Color.Transparent)
     .borderRadius(10)
@@ -756,8 +757,8 @@ export struct TopicPostItem {
     Button({ type: ButtonType.Normal, stateEffect: true }) {
       FaIconView({ icon: this.faIcon('reply'), color: $r('app.color.text_secondary'), iconSize: 16 })
     }
-    .width(38)
-    .height(38)
+    .width(36)
+    .height(36)
     .padding(0)
     .backgroundColor(Color.Transparent)
     .borderRadius(10)
