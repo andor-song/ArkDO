@@ -40,8 +40,19 @@ export struct WebViewPage {
 
   aboutToAppear(): void {
     webview.WebviewController.initializeWebEngine();
-    WebSessionManager.configureCookieAccess('WebViewPage');
-    this.displayTitle = this.pageTitle.length > 0 ? this.pageTitle : this.hostOf(this.url);
+    // 第三道防线（组件层兜底）：即使上游路由漏过危险 scheme，Web 组件的 src 也绝不喂给引擎。
+    // javascript:/data:/file: 等会被引擎当脚本/数据执行（javaScriptAccess 全开 + mixedMode All）。
+    // src 置空让引擎停留在空白页；错误视图提示用户。upload:// 是 App 内部资源协议，也放行。
+    if (!WebViewPage.isSafeSrc(this.url)) {
+      Log.i(`${LOG_TAG} blocked unsafe src scheme=${this.safeSchemeLabel(this.url)}`);
+      this.url = '';
+      this.displayTitle = '不支持的链接';
+      this.hasError = true;
+      this.errorDetail = '仅支持 http/https 链接';
+    } else {
+      WebSessionManager.configureCookieAccess('WebViewPage');
+      this.displayTitle = this.pageTitle.length > 0 ? this.pageTitle : this.hostOf(this.url);
+    }
   }
 
   build() {
@@ -382,5 +393,20 @@ export struct WebViewPage {
   private hostOf(url: string): string {
     const match: RegExpMatchArray | null = url.match(/^https?:\/\/([^\/?#]+)/i);
     return match ? match[1] : url;
+  }
+
+  // 组件层最终校验：Web 组件的 src 只放行 http(s) 与 App 内部 upload://；空串（上游已拦）也放行。
+  private static isSafeSrc(url: string): boolean {
+    const lower: string = url.toLowerCase();
+    return lower.length === 0
+      || lower.startsWith('http://')
+      || lower.startsWith('https://')
+      || lower.startsWith('upload://');
+  }
+
+  // 用于日志的 scheme 标签：不打印完整 URL（可能带会话参数），只打印协议段。
+  private safeSchemeLabel(url: string): string {
+    const match: RegExpMatchArray | null = url.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+    return match ? match[1] : 'none';
   }
 }
