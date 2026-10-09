@@ -48,6 +48,7 @@ import uploadPermissionsTest from './UploadPermissions.test';
 import readingTrackerRetryTest from './ReadingTrackerRetry.test';
 import pushSubscriptionKeysTest from './PushSubscriptionKeys.test';
 import htmlContentUtilsTest from './HtmlContentUtils.test';
+import linkRouterTest from './LinkRouter.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -99,4 +100,5 @@ export default function testsuite() {
   readingTrackerRetryTest();
   pushSubscriptionKeysTest();
   htmlContentUtilsTest();
+  linkRouterTest();
 }

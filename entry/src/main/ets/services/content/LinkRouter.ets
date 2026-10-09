@@ -35,6 +35,13 @@ export class LinkRouter {
     if (url.length === 0) {
       return { kind: LinkTargetKind.WEB, url };
     }
+    // scheme 白名单（第二道防线）：只放行 http(s)、协议相对、站点相对路径。
+    // javascript:/data:/file:/vbscript: 等一律置空 url —— 上层 handleOpenLink 见空串直接
+    // 返回（RootTabPage.openWebPage 有 `if (!url || url.length === 0) return`），
+    // 后续 WebViewPage 也拿不到可执行的 src。
+    if (!LinkRouter.isSafeWebScheme(url)) {
+      return { kind: LinkTargetKind.WEB, url: '' };
+    }
 
     if (LinkRouter.isSameHost(url)) {
       const path: string = LinkRouter.pathOf(url);
@@ -92,6 +99,14 @@ export class LinkRouter {
     } catch (err) {
       return segment;
     }
+  }
+
+  // 只放行可安全交给 WebView 的 scheme：http(s)、协议相对 //、站点相对 /。
+  // 注意不把 upload:// 放进来 —— 那是 App 内部资源协议，不该作为用户可点链接路由。
+  private static isSafeWebScheme(url: string): boolean {
+    const lower: string = url.toLowerCase();
+    return lower.startsWith('http://') || lower.startsWith('https://')
+      || lower.startsWith('//') || lower.startsWith('/');
   }
 
   private static isSameHost(url: string): boolean {
