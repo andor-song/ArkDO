@@ -47,6 +47,7 @@ import breakpointManagerTest from './BreakpointManager.test';
 import uploadPermissionsTest from './UploadPermissions.test';
 import readingTrackerRetryTest from './ReadingTrackerRetry.test';
 import pushSubscriptionKeysTest from './PushSubscriptionKeys.test';
+import htmlContentUtilsTest from './HtmlContentUtils.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -97,4 +98,5 @@ export default function testsuite() {
   uploadPermissionsTest();
   readingTrackerRetryTest();
   pushSubscriptionKeysTest();
+  htmlContentUtilsTest();
 }

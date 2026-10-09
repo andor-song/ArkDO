@@ -69,7 +69,12 @@ export function resolveUrl(rawUrl: string): string {
   if (url.startsWith('/')) {
     return `${AppConstants.BASE_URL}${url}`;
   }
-  return url;
+  // 安全白名单兜底：未识别的 scheme（javascript:/data:/file:/vbscript: 等）一律丢弃。
+  // 它们要么是注入向量（Web 引擎会把 javascript:/data: 当可执行内容），要么本客户端无法开
+  // 启。返回空串让上层（token.href / 角标建表键）同步变成空，链接渲染为不可点击。
+  // 注意：链接文字/标题不依赖本函数返回值（见 LinkClicks.ets:13 与 PostRichContent 文本渲染），
+  // 因此丢弃只影响"点击行为"，不影响展示。
+  return '';
 }
 
 export function hostFromUrl(url: string): string {
