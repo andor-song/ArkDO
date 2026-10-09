@@ -406,6 +406,17 @@ export struct TopicDetailPage {
       this.createdFetchTimer = -1;
     }
 
+    // 草稿防抖保存定时器：页面销毁后不再触发,避免在已销毁的页面上读/写草稿状态。
+    // 草稿数据已随每次保存实时落盘(replyDraftSequence 持久化),这里只需要停表。
+    if (this.replyDraftTimer !== -1) {
+      clearTimeout(this.replyDraftTimer);
+      this.replyDraftTimer = -1;
+    }
+    if (this.editDraftTimer !== -1) {
+      clearTimeout(this.editDraftTimer);
+      this.editDraftTimer = -1;
+    }
+
     if (this.flashClearTimerId >= 0) {
       clearTimeout(this.flashClearTimerId);
       this.flashClearTimerId = -1;
