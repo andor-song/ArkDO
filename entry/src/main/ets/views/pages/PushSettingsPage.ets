@@ -540,7 +540,7 @@ struct RelayConsentDialog {
   @Builder
   private FlowChip(label: string) {
     Text(label)
-      .fontSize(10.5)
+      .fontSize(11)
       .fontColor($r('app.color.text_secondary'))
       .padding({ left: 7, right: 7, top: 4, bottom: 4 })
       .backgroundColor($r('app.color.surface_muted'))
@@ -551,7 +551,7 @@ struct RelayConsentDialog {
   @Builder
   private FlowArrow() {
     SymbolGlyph($r('sys.symbol.arrow_right'))
-      .fontSize(9)
+      .fontSize(10)
       .fontColor([$r('app.color.text_faint')])
       .margin({ left: 3, right: 3 })
   }
@@ -565,7 +565,7 @@ struct RelayConsentDialog {
         .fontColor([$r('app.color.text_faint')])
         .margin({ top: 2 })
       Text(text)
-        .fontSize(13.5)
+        .fontSize(13)
         .lineHeight(20)
         .fontColor($r('app.color.text_secondary'))
         .layoutWeight(1)

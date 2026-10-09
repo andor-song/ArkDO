@@ -518,7 +518,7 @@ export struct UserProfilePage {
             this.BioToken(token)
           }, (token: RichInlineNode, index: number) => `${index}-${token.type}-${token.text}`)
         }
-        .fontSize(13.5)
+        .fontSize(13)
         .fontColor($r('app.color.text_body'))
         .lineHeight(20)
         .maxLines(2)
@@ -664,7 +664,7 @@ export struct UserProfilePage {
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.ld_success'))
         SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(11)
+          .fontSize(14)
           .fontColor([$r('app.color.ld_success')])
           .margin({ left: 1 })
       }
@@ -988,7 +988,7 @@ export struct UserProfilePage {
               UserAvatar({ user: item.user, avatarSize: 30 })
               if (item.count > 1) {
                 Text(`${item.count}`)
-                  .fontSize(9)
+                  .fontSize(10)
                   .fontWeight(FontWeight.Bold)
                   .fontColor($r('app.color.text_secondary'))
                   .backgroundColor($r('app.color.surface_card'))

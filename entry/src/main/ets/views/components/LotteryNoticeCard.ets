@@ -1,6 +1,6 @@
 import { FaIconDefinition, FaIconView, getFaIcon } from './FaIcon';
 
-const CARD_RADIUS: number = 8;
+const SMALL_RADIUS: number = 10;
 const HEADER_ICON_SIZE: number = 14;
 const LINK_ICON_SIZE: number = 11;
 
@@ -115,7 +115,7 @@ export struct LotteryNoticeCard {
       .padding({ left: 12, right: 12, top: 10, bottom: 12 })
       .backgroundColor($r('app.color.lottery_notice_bg'))
       .border({ width: 1, color: $r('app.color.lottery_notice_border') })
-      .borderRadius(CARD_RADIUS)
+      .borderRadius(SMALL_RADIUS)
     }
     .width('100%')
     .padding({ left: 10, right: 10, top: 12, bottom: 4 })

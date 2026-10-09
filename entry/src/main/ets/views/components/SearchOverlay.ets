@@ -256,7 +256,7 @@ export struct SearchOverlay {
               .renderingStrategy(SymbolRenderingStrategy.SINGLE)
             if (this.filters.hasAny()) {
               Text(`${this.filters.activeCount()}`)
-                .fontSize(9)
+                .fontSize(10)
                 .fontColor(Color.White)
                 .textAlign(TextAlign.Center)
                 .constraintSize({ minWidth: 13 })

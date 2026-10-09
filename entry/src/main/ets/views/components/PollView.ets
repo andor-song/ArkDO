@@ -4,7 +4,7 @@ import { FaIconDefinition, FaIconView, getFaIcon } from './FaIcon';
 // 已投项进度条填充:品牌蓝(强调色,明暗一致),保留字面量。
 const BAR_FILL_CHOSEN: string = '#2563EB';
 // 卡片与按钮圆角(调小,不要太圆润)。
-const CARD_RADIUS: number = 4;
+const SUBTLE_RADIUS: number = 6;
 const BUTTON_RADIUS: number = 4;
 
 // discourse-poll:一个投票的可交互卡片。两态:vote(选项圈,可投/已投) 与 results(百分比进度条)。
@@ -70,7 +70,7 @@ export struct PollView {
     .width('100%')
     .padding({ left: 14, right: 14, top: 14, bottom: 14 })
     .border({ width: 1, color: $r('app.color.border') })
-    .borderRadius(CARD_RADIUS)
+    .borderRadius(SUBTLE_RADIUS)
     .alignItems(HorizontalAlign.Start)
   }
 

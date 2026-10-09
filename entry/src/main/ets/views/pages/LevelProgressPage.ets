@@ -381,7 +381,7 @@ export struct LevelProgressPage {
             .fontWeight(FontWeight.Bold)
             .fontColor(ring.met ? $r('app.color.connect_success') : $r('app.color.connect_warning'))
           Text(ring.target)
-            .fontSize(10)
+            .fontSize(11)
             .fontColor($r('app.color.connect_text_tertiary'))
         }
       }

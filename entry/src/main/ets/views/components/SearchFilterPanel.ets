@@ -337,7 +337,7 @@ export struct SearchFilterPanel {
       if (!p.isChild && CategoryIndex.hasChildren(this.categories, p.category.id)) {
         Row() {
           SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(13)
+            .fontSize(14)
             .fontColor([$r('app.color.text_tertiary')])
             .renderingStrategy(SymbolRenderingStrategy.SINGLE)
             .rotate({ angle: this.expandedParentId === p.category.id ? 90 : 0 })

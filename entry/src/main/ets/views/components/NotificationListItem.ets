@@ -46,7 +46,7 @@ export struct NotificationListItem {
 
         if (this.item.title.length > 0) {
           Text(this.item.title)
-            .fontSize(13.5)
+            .fontSize(13)
             .fontColor(this.item.read ? $r('app.color.text_secondary') : $r('app.color.text_primary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
