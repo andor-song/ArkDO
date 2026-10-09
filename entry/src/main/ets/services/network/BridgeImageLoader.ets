@@ -124,10 +124,15 @@ export class BridgeImageLoader {
       // 切出精确字节区间再交给解码器,避免 base64 解码结果带偏移/多余尾字节。
       const buffer: ArrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       const source: image.ImageSource = image.createImageSource(buffer);
-      const pixelMap: image.PixelMap = await this.decode(source);
-      source.release();
-      this.put(url, pixelMap);
-      return pixelMap;
+      try {
+        const pixelMap: image.PixelMap = await this.decode(source);
+        this.put(url, pixelMap);
+        return pixelMap;
+      } finally {
+        // 无论 decode/put 成功还是抛异常，ImageSource 都要释放，否则句柄泄漏
+        // （decode 失败路径原先会跳过 release）。
+        source.release();
+      }
     } catch (error) {
       Log.i(`${this.logTag} decode failed url=${url} err=${JSON.stringify(error)}`);
       return undefined;
