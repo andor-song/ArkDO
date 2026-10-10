@@ -143,6 +143,8 @@ export struct TopicPostItem {
   onDeletePost: (post: TopicPost) => Promise<boolean> = () => Promise.resolve(false);
   // 举报楼层:上抛页面弹举报确认;返回是否成功(成功 toast「已举报」)。默认 false 不渲染入口。
   onFlagPost: (post: TopicPost) => Promise<boolean> = () => Promise.resolve(false);
+  // 分享楼层:上抛页面组装「正文纯文本 + 永久链接」拉起系统分享面板。默认不渲染入口。
+  onSharePost: (post: TopicPost) => void = () => {};
   // 本楼能否删除/举报(服务端给 can_delete / 未给则按 yours 兜底)。由页面按下发。
   @Prop canDelete: boolean = false;
   // linux.do shared issue（"俺也一样"）。仅一楼(postNumber===1)且 shared_issue_visible 时,页面下发 sharedIssueVisible=true。
@@ -1023,6 +1025,10 @@ export struct TopicPostItem {
       if (this.onFlagPost !== undefined) {
         this.FlagPostButton()
       }
+      // 分享入口:任何楼都有,点了把正文+链接拉起系统分享面板。
+      if (this.onSharePost !== undefined) {
+        this.SharePostButton()
+      }
     } else {
       this.MoreButton()
     }
@@ -1076,6 +1082,23 @@ export struct TopicPostItem {
     .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ x: 12 })))
     .onClick(() => {
       this.onFlagPost(this.post);
+    })
+  }
+
+  // 分享楼层:share-nodes 图标,38 透明按钮。点击上抛页面组装正文纯文本+永久链接走系统分享面板。
+  @Builder
+  private SharePostButton() {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      FaIconView({ icon: this.faIcon('share-nodes'), color: $r('app.color.icon_muted'), iconSize: 16 })
+    }
+    .width(38)
+    .height(38)
+    .padding(0)
+    .backgroundColor(Color.Transparent)
+    .borderRadius(10)
+    .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ x: 12 })))
+    .onClick(() => {
+      this.onSharePost(this.post);
     })
   }
 

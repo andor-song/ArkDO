@@ -28,7 +28,10 @@ const TOOLBAR_BUTTONS: ToolbarButton[] = [
   { iconId: 'list-ul', action: { kind: MdActionKind.LinePrefix, prefix: '- ' } },
   { iconId: 'list-ol', action: { kind: MdActionKind.LinePrefix, ordered: true } },
   { iconId: 'hashtag', action: { kind: MdActionKind.LinePrefix, prefix: '# ' } },
-  { iconId: 'link', action: { kind: MdActionKind.Wrap, before: '[', after: '](url)', placeholder: '链接文字' } }
+  { iconId: 'link', action: { kind: MdActionKind.Wrap, before: '[', after: '](url)', placeholder: '链接文字' } },
+  // 投票(discourse-poll 插件):插入 BBCode 模板并把光标落在第一个选项文本上,直接输入覆盖可选文字。
+  // 发布后由服务端煮熟成 va.poll 卡片再渲染;预览(markdown-it 无 poll 插件)会显示为字面文本属正常。
+  { iconId: 'check-to-slot', action: { kind: MdActionKind.InsertCursor, snippet: '[poll]\n* 选项文字\n* 选项文字\n[/poll]', cursorOffset: 8, selectLength: 4 } }
 ];
 
 // Markdown 快捷工具栏:一排图标,点击插入对应语法。横向可滚,轻量态与全屏态复用同一组件。

@@ -12,6 +12,8 @@ import { common } from '@kit.AbilityKit';
 import { TopicDetailRouteParam } from '../../navigation/AppRoutes';
 import { PendingPost, Poll, PollVoteResult, PostBoost, ReactionUser, SharedIssueResult, TopicDetail, TopicPost } from '../../models/TopicDetail';
 import { TopicCategory, TopicTag } from '../../models/Topic';
+import { AppConstants } from '../../common/constants/AppConstants';
+import { ImageShareService } from '../../services/content/ImageShareService';
 import { User } from '../../models/User';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
 import { NetworkResult } from '../../services/network/NetworkTypes';
@@ -560,6 +562,9 @@ export struct TopicDetailPage {
           },
           onFlagPost: (targetPost: TopicPost): Promise<boolean> => {
             return this.confirmFlagPost(targetPost);
+          },
+          onSharePost: (targetPost: TopicPost) => {
+            this.sharePost(targetPost);
           }
         })
       }, (post: TopicPost) => post.id.toString())
@@ -2020,6 +2025,31 @@ export struct TopicDetailPage {
     }
     this.showComposerToast('已举报，感谢反馈', 1500);
     return true;
+  }
+
+  // 分享楼层:组装「标题 + 正文纯文本 + 永久链接」拉起系统分享面板(标题在分享面板里作为首行,
+  // 链接让收件人能直接打开原帖)。正文优先纯文本,没有则退回"查看原帖"占位,不把 cooked HTML 塞出去。
+  private sharePost(post: TopicPost): void {
+    const topicId: number = this.detail ? this.detail.id : this.param.topicId;
+    if (topicId <= 0) {
+      return;
+    }
+    const slug: string | undefined = this.detail?.slug ?? this.param.slug;
+    const path: string = slug !== undefined && slug.length > 0
+      ? `/t/${slug}/${topicId}/${post.postNumber}`
+      : `/t/topic/${topicId}/${post.postNumber}`;
+    const url: string = `${AppConstants.BASE_URL}${path}`;
+    const body: string = post.plainText && post.plainText.length > 0
+      ? post.plainText
+      : (this.detail ? this.detail.title : '');
+    const text: string = `${this.detail ? this.detail.title : ''}\n\n${body}\n\n${url}`;
+    const context: common.Context = this.getUIContext().getHostContext() as common.Context;
+    const abilityContext: common.UIAbilityContext = context as common.UIAbilityContext;
+    ImageShareService.shareText(abilityContext, text, this.detail ? this.detail.title : '分享楼层').then((ok: boolean) => {
+      if (!ok) {
+        this.showComposerToast('分享失败，请稍后重试', 2000);
+      }
+    });
   }
 
   // 整主题书签 toggle:对 1 楼复用 addBookmark/removeBookmark,联动标题右钮与摘要卡。

@@ -53,6 +53,34 @@ export class ImageShareService {
   }
 
   /**
+   * 分享纯文本(楼层正文/话题链接等,不进沙箱直接走系统分享面板)。
+   * 系统分享对文本 record 直接透传 text 字段,无需落盘,失败码集中在面板拉起阶段。
+   */
+  static async shareText(context: common.UIAbilityContext, text: string, title: string): Promise<boolean> {
+    if (text.trim().length === 0) {
+      return false;
+    }
+    try {
+      // SharedRecord 的文本载荷字段是 content(不是 text),utd 用 PLAIN_TEXT 让接收方按纯文本打开。
+      const record: systemShare.SharedRecord = {
+        utd: utd.UniformDataType.PLAIN_TEXT,
+        content: text,
+        title: title.length > 0 ? title : undefined
+      } as systemShare.SharedRecord;
+      const controller: systemShare.ShareController = new systemShare.ShareController(new systemShare.SharedData(record));
+      await controller.show(context, {
+        selectionMode: systemShare.SelectionMode.SINGLE,
+        previewMode: systemShare.SharePreviewMode.DETAIL
+      });
+      return true;
+    } catch (err) {
+      const error: BusinessError = err as BusinessError;
+      Log.i(`${LOG_TAG} present text panel failed code=${error.code}`);
+      return false;
+    }
+  }
+
+  /**
    * 下载到 cacheDir/share_images,返回沙箱绝对路径;失败返回 undefined。
    * 域名已判定原生走不通就直接走桥,否则先 http、失败再退到桥(桥能过 SNI 封锁、吃得到 DoH)。
    */
