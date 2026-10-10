@@ -199,3 +199,98 @@ function hostOf(url: string): string {
   const match: RegExpMatchArray | null = url.match(/^https?:\/\/([^\/?#]+)/i);
   return match ? match[1].toLowerCase() : '';
 }
+// ---------------------------------------------------------------------------
+// 深链(URL scheme arkdo://)
+//
+// App 对外暴露的自定义 scheme。可从浏览器 / 其它 App 唤起,支持四类目标:
+//  1. 站内帖子:  arkdo://t/<topicId>[/<postNumber>]            (同站,按当前论坛取)
+//  2. 站内用户:  arkdo://u/<username>
+//  3. 指定论坛:  arkdo://<host>/…                               (host 是论坛域名,如 arkdo://linux.do/t/123 → /t/123)
+//  4. 通用站点:  arkdo://browse?url=<urlencoded 绝对链接>        (任意已订阅论坛的链接)
+//
+// 解析只出一件事:把它规整成一条 PushNotificationRoute 交回既有的推送导航通路——
+// 冷启动 pending、跨站先切论坛、LinkRouter 原生/Web 分流,全部免费复用,不另起炉灶。
+// 这也是为什么 source 用 'deeplink' 而结构完全一致:消费方不关心它来自推送还是深链。
+// ---------------------------------------------------------------------------
+const ARKDO_SCHEME: string = 'arkdo://';
+
+export function parseArkDoUriToRoute(uri: string | undefined, title?: string): PushNotificationRoute | undefined {
+  const raw: string = uri ? uri.trim() : '';
+  if (raw.length === 0 || !raw.toLowerCase().startsWith(ARKDO_SCHEME)) {
+    return undefined;
+  }
+  const rest: string = raw.substring(ARKDO_SCHEME.length);
+  if (rest.length === 0) {
+    return undefined;
+  }
+
+  // 4. 通用站点:参数里带完整绝对链接。
+  if (rest.toLowerCase().startsWith('browse?')) {
+    const params: string = rest.substring('browse?'.length);
+    const urlValue: string = queryParamOf(params, 'url');
+    if (urlValue.length === 0) {
+      return undefined;
+    }
+    return buildRoute(urlValue, title, undefined, 'deeplink');
+  }
+
+  // 1/2/3. 站内路径或指定论坛。拆 host + path:
+  //    arkdo://t/123      → host='t'        path='/123'
+  //    arkdo://linux.do/u/x → host='linux.do' path='/u/x'
+  const slash: number = rest.indexOf('/');
+  let host: string = '';
+  let path: string = '';
+  if (slash < 0) {
+    host = rest;
+  } else {
+    host = rest.substring(0, slash);
+    path = rest.substring(slash);
+  }
+  host = host.trim();
+  path = path.trim();
+  if (path.length === 0) {
+    path = '/';
+  }
+
+  // host 看起来是论坛域名(带点/端口) → 构造绝对链接,declaredHost 用该 host。
+  if (isHostLike(host)) {
+    const probe: string = `https://${host}${path}`;
+    return buildRoute(probe, title, undefined, 'deeplink', host);
+  }
+
+  // 纯站内路径:按当前论坛拼。相对路径让 resolveDiscoursePushUrl 用当前 BASE_URL 落。
+  // 此时不带 declaredHost(siteHost 由消费方按 URL 派生,即当前论坛)。
+  if (host.length > 0) {
+    path = `/${host}${path}`;
+  }
+  return buildRoute(path, title, undefined, 'deeplink');
+}
+
+// 是否像论坛域名:带点号(linux.do)或带端口(host:port)。宿主段语义关键字(如 t/u)不含点,不会误判。
+function isHostLike(host: string): boolean {
+  return /[.:]/.test(host);
+}
+
+// 从 query 里取首个指定参数值(urlencoded 已由构建方编码,这里按需做一次安全解码)。
+function queryParamOf(query: string, key: string): string {
+  const pairs: string[] = query.split('&');
+  for (let index: number = 0; index < pairs.length; index++) {
+    const pair: string = pairs[index];
+    const eq: number = pair.indexOf('=');
+    if (eq < 0) {
+      continue;
+    }
+    const k: string = pair.substring(0, eq);
+    if (k !== key) {
+      continue;
+    }
+    let v: string = pair.substring(eq + 1);
+    try {
+      v = decodeURIComponent(v);
+    } catch (error) {
+      // 不解码失败就原样用。
+    }
+    return v.trim();
+  }
+  return '';
+}

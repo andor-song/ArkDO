@@ -53,6 +53,19 @@
             "actions": [
               "ohos.want.action.home"
             ]
+          },
+          {
+            // 自定义 scheme 深链:arkdo://t/<topicId>、arkdo://u/<username>、
+            // arkdo://<host>/… 、arkdo://browse?url=<encoded>。经 want.uri 唤起,
+            // 由 EntryAbility 统一规整成推送导航路由走既有跳转链路。
+            "uris": [
+              {
+                "scheme": "arkdo"
+              }
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ]
           }
         ]
       }
