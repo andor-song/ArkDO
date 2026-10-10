@@ -89,6 +89,8 @@ export struct ProfilePage {
   onOpenBookmarks: (username: string) => void = () => {};
   // 草稿已原生化:进原生草稿页而非 Web。
   onOpenDrafts: (username: string) => void = () => {};
+  // 私信已原生化:进原生收件箱页而非 Web(GET /u/{username}/messages.json)。
+  onOpenMessages: (username: string) => void = () => {};
   // 登出前的系统推送清理(退订 linux.do + 解绑中继)。由 RootTabPage 注入,必须在 logout
   // 请求之前 await 完:登出后没了登录 cookie 就退不掉订阅,本机会继续收到该账号的推送。
   onLogoutCleanup: () => Promise<void> = async () => {};
@@ -403,6 +405,11 @@ export struct ProfilePage {
           }
         })
         this.DraftQuickEntry()
+        this.QuickEntryNative($r('sys.symbol.envelope'), '我的私信', false, () => {
+          if (this.getUsername().length > 0) {
+            this.onOpenMessages(this.getUsername());
+          }
+        })
       }
       .padding({ top: CARD_PADDING, bottom: 14 })
       .cardStyle()

@@ -2,7 +2,7 @@ import { Log } from '../../services/logging/Log';
 import { AppConstants, LinuxDoConstants } from '../../common/constants/AppConstants';
 import { APP_IS_WIDE_STORAGE_KEY, APP_SPLIT_NAV_BAR_WIDTH_STORAGE_KEY, BreakpointManager,
   SPLIT_NAV_BAR_MAX_WIDTH } from '../../common/utils/BreakpointManager';
-import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildLabSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildTopicListStyleSettingsRouteParam, buildLevelProgressRouteParam, buildNotificationsRouteParam, buildProfileEditRouteParam, buildProfileRouteParam, buildReadTopicsRouteParam, buildSettingsRouteParam, buildForumsRouteParam, buildSitesRouteParam, buildSolvedRouteParam, buildTopicDetailRouteParam, buildTopicDetailDraftRouteParam, buildTopicDetailEditDraftRouteParam, buildUserProfileRouteParam, buildWebRouteParam, isActivityRouteParam, isBadgesRouteParam, isBookmarksRouteParam, isDraftsRouteParam, DraftsRouteParam, isProfileEditRouteParam, isSolvedRouteParam, isTopicDetailRouteParam, isUserProfileRouteParam, isWebRouteParam, LevelProgressRouteParam, ProfileEditRouteParam, SolvedRouteParam, TopicDetailRouteParam, UserProfileRouteParam, WebRouteParam, FollowListRouteParam, buildFollowListRouteParam, isFollowListRouteParam } from '../../navigation/AppRoutes';
+import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildLabSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildTopicListStyleSettingsRouteParam, buildLevelProgressRouteParam, buildNotificationsRouteParam, buildProfileEditRouteParam, buildProfileRouteParam, buildReadTopicsRouteParam, buildSettingsRouteParam, buildForumsRouteParam, buildSitesRouteParam, buildSolvedRouteParam, buildTopicDetailRouteParam, buildTopicDetailDraftRouteParam, buildTopicDetailEditDraftRouteParam, buildUserProfileRouteParam, buildWebRouteParam, isActivityRouteParam, isBadgesRouteParam, isBookmarksRouteParam, isDraftsRouteParam, DraftsRouteParam, isProfileEditRouteParam, isSolvedRouteParam, isTopicDetailRouteParam, isUserProfileRouteParam, isWebRouteParam, LevelProgressRouteParam, ProfileEditRouteParam, SolvedRouteParam, TopicDetailRouteParam, UserProfileRouteParam, WebRouteParam, FollowListRouteParam, buildFollowListRouteParam, isFollowListRouteParam, MessagesRouteParam, buildMessagesRouteParam, isMessagesRouteParam } from '../../navigation/AppRoutes';
 import { LinkRouter, LinkTarget, LinkTargetKind } from '../../services/content/LinkRouter';
 import { DownloadService } from '../../services/content/DownloadService';
 import { DownloadEventBus, DownloadResult } from '../../services/content/DownloadEventBus';
@@ -77,6 +77,7 @@ import { BadgesPage } from './BadgesPage';
 import { UserProfilePage } from './UserProfilePage';
 import { SolvedPostsPage } from './SolvedPostsPage';
 import { FollowersListPage } from './FollowersListPage';
+import { MessageInboxPage } from './MessageInboxPage';
 import { TopicDetailPage } from './TopicDetailPage';
 import { bumpTick, COMPOSER_OVERLAY_BACK_TICK_KEY, COMPOSER_OVERLAY_VISIBLE_KEY, DRAFTS_COMPOSER_BACK_TICK_KEY,
   DRAFTS_COMPOSER_VISIBLE_KEY, DRAFTS_REFRESH_TICK_KEY, IMAGE_VIEWER_BACK_TICK_KEY, IMAGE_VIEWER_VISIBLE_KEY,
@@ -698,6 +699,10 @@ export struct RootTabPage {
           onOpenDrafts: (username: string) => {
             this.navPathStack.pushPath(new NavPathInfo(AppRouteName.DRAFTS, buildDraftsRouteParam(username)));
           },
+          // 私信收件箱已原生化:进原生收件箱页(GET /u/{username}/messages.json)。
+          onOpenMessages: (username: string) => {
+            this.navPathStack.pushPath(new NavPathInfo(AppRouteName.MESSAGES, buildMessagesRouteParam(username)));
+          },
           onLogoutCleanup: () => {
             return this.pushCoordinator.disableForLogout();
           },
@@ -1128,6 +1133,24 @@ export struct RootTabPage {
           },
           onOpenUser: (user: User) => {
             this.openUserProfile(user.username, user.displayName ?? '', user.avatarTemplate ?? '', user.id);
+          }
+        })
+      }
+      .hideTitleBar(true)
+      // NavDestination 自身背景默认铺满含状态栏区域;统一为 page_bg,让各二级页顶部状态栏
+      // 与页内头部/导航栏同色(否则暗色下露出默认浅底,与内容不一致)。
+      .backgroundColor($r('app.color.page_bg'))
+    } else if (name === AppRouteName.MESSAGES && isMessagesRouteParam(param)) {
+      NavDestination() {
+        MessageInboxPage({
+          bridge: this.bridge,
+          isArkWebReady: this.isArkWebReady,
+          username: (param as MessagesRouteParam).username,
+          onBack: () => {
+            this.popNavigation();
+          },
+          onOpenTopic: (topicId: number, title: string) => {
+            this.openTopicDetailById(topicId, undefined, title, undefined, undefined);
           }
         })
       }

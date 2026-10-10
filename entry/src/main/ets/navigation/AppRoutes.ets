@@ -17,6 +17,8 @@ export enum AppRouteName {
   NOTIFICATIONS = 'notifications',
   BOOKMARKS = 'bookmarks',
   DRAFTS = 'drafts',
+  // 私信收件箱:会话列表(GET /u/{username}/messages.json),入口在个人中心快捷入口。
+  MESSAGES = 'messages',
   ACTIVITY = 'activity',
   BADGES = 'badges',
   READ_TOPICS = 'readTopics',
@@ -233,6 +235,25 @@ export function isDraftsRouteParam(param: Object | undefined): boolean {
   }
   const candidate: DraftsRouteParam = param as DraftsRouteParam;
   return typeof candidate.username === 'string';
+}
+
+// 私信收件箱页参数:当前登录用户名(数据走 /u/{username}/messages.json)。
+export interface MessagesRouteParam {
+  username: string;
+}
+
+export function buildMessagesRouteParam(username: string): MessagesRouteParam {
+  return {
+    username: username
+  };
+}
+
+export function isMessagesRouteParam(param: Object | undefined): boolean {
+  if (!param) {
+    return false;
+  }
+  const candidate: MessagesRouteParam = param as MessagesRouteParam;
+  return typeof candidate.username === 'string' && candidate.username.length > 0;
 }
 
 // 全部徽章页参数:目标用户名 + 徽章总数(用于标题「徽章 · N」,0 表示未知)。
