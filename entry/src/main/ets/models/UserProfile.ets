@@ -44,7 +44,7 @@ export interface UserProfileDetail {
   endorsementAvailable?: boolean;
   endorsedCategoryIds?: number[];
   // 昵称后的状态表情短名(user.status.emoji,如 nerd_face),经 EmojiUrlRegistry 查 url,与帖子详情同源。
-  // (昵称后的徽章图标不做:个人页接口只给精选徽章,与帖子头的 show_in_post_header 徽章是两套数据,凑不到一致。)
+  // 昵称后的徽章小金标见 UserSummary.topBadges 的 showInPostHeader(summary 顶层 badges 定义带该字段)。
   statusEmoji?: string;
 }
 
@@ -104,6 +104,9 @@ export interface UserBadgeItem {
   // 「全部徽章」页额外字段(summary 精简版不含):徽章说明与授予时间。
   description?: string;
   grantedAt?: string;
+  // 是否显示在帖子作者头(user_badges 里发过帖的楼层)。Discourse 顶层 badges 定义的
+  // show_in_post_header 字段;个人中心昵称后的小金标只认它,与帖子详情完全同一套徽章。
+  showInPostHeader?: boolean;
 }
 
 // 「全部徽章」页按等级(金/银/铜)分组。

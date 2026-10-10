@@ -182,6 +182,9 @@ interface DiscourseBadge {
   icon?: string | null;
   image_url?: string | null;
   description?: string | null;
+  // 是否显示在帖子作者头(user_badges 只发这个集合)。summary.json 顶层 badges 定义带该字段,
+  // 个人中心昵称后的小金标与帖子详情楼层作者头由此对齐。
+  show_in_post_header?: boolean | null;
 }
 
 // /user-badges/{username}.json?grouped=true 响应:徽章定义 + 等级类型 + 本用户授予记录。
@@ -1184,6 +1187,9 @@ export class UserProfileService {
       if (record.granted_at && record.granted_at.length > 0) {
         item.grantedAt = record.granted_at;
       }
+      if (def.show_in_post_header === true) {
+        item.showInPostHeader = true;
+      }
 
       let bucket: UserBadgeItem[] | undefined = bucketByType.get(typeId);
       if (!bucket) {
@@ -1259,6 +1265,9 @@ export class UserProfileService {
       const grantCount: number | undefined = grantCounts.get(sourceBadge.id);
       if (grantCount !== undefined && grantCount > 0) {
         badge.grantCount = grantCount;
+      }
+      if (sourceBadge.show_in_post_header === true) {
+        badge.showInPostHeader = true;
       }
       badges.push(badge);
     }

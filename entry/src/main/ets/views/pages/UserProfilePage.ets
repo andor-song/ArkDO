@@ -55,6 +55,8 @@ const LOG_TAG: string = '[ArkDO][UserProfile]';
 
 // 带全息闪动特效的称号(与 TopicPostItem 的 HOLOGRAPHIC_TITLES 保持一致)。
 const HOLOGRAPHIC_TITLES: Set<string> = new Set<string>(['Premium', '种子用户', '破界者']);
+// 昵称后小金标色,与帖子详情楼层作者头的徽章图标同色(TopicPostItem 的 BADGE_GOLD)。
+const POST_HEADER_BADGE_GOLD: string = '#E5A50A';
 // 点赞心形红,与帖子详情楼层的实心 heart 一致(TopicPostItem 的 LIKE_RED)。
 
 // 与「我的」页(ProfilePage)完全同一套卡片度量:两页是孪生页面,视觉必须对称。
@@ -482,8 +484,6 @@ export struct UserProfilePage {
               .flexShrink(1)
 
             // 状态表情(user.status.emoji):与帖子详情同源,保留。
-            // 昵称后的徽章图标不显示——个人页接口只给「精选徽章」,与帖子头的
-            // show_in_post_header 徽章是两套数据,凑不到一致,索性不做(见对话记录)。
             if (this.getStatusEmojiUrl().length > 0) {
               Image(this.getStatusEmojiUrl())
                 .width(18)
@@ -492,6 +492,13 @@ export struct UserProfilePage {
                 .draggable(false)
                 .margin({ left: 6 })
             }
+
+            // 昵称后小金标:summary 顶层 badges 里 show_in_post_header=true 的徽章,
+            // 与帖子详情楼层作者头完全同一套(FA 图标单色染金),不再缺失。
+            ForEach(this.getPostHeaderBadgeDefs(), (def: FaIconDefinition) => {
+              FaIconView({ icon: def, color: POST_HEADER_BADGE_GOLD, iconSize: 15 })
+                .margin({ left: 5 })
+            }, (def: FaIconDefinition) => def.id)
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
@@ -1710,6 +1717,28 @@ export struct UserProfilePage {
 
   private getTopBadges(): UserBadgeItem[] {
     return this.summary ? this.summary.topBadges : [];
+  }
+
+  // 昵称后小金标:精选徽章里 show_in_post_header=true 的,滤掉字库没有的 FA 图标。
+  // 与帖子详情楼层作者头同一集合(服务端 user_badges 只发这个),缺失项不再显示。
+  private getPostHeaderBadgeDefs(): FaIconDefinition[] {
+    const defs: FaIconDefinition[] = [];
+    const badges: UserBadgeItem[] = this.getTopBadges();
+    for (let index: number = 0; index < badges.length; index++) {
+      const badge: UserBadgeItem = badges[index];
+      if (badge.showInPostHeader !== true) {
+        continue;
+      }
+      const iconName: string | undefined = badge.icon;
+      if (!iconName || iconName.length === 0) {
+        continue;
+      }
+      const def: FaIconDefinition | undefined = getFaIcon(iconName);
+      if (def) {
+        defs.push(def);
+      }
+    }
+    return defs;
   }
 
   // 徽章按 3 枚一行分组。

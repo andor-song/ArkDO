@@ -54,6 +54,9 @@ const STATS_AREA_HEIGHT: number = 126;
 // 用户卡 meta 行(加入天数/最近发帖/浏览量)固定高度,同理防跳动。
 const USER_META_HEIGHT: number = 26;
 
+// 昵称后小金标色,与帖子详情楼层作者头的徽章图标同色(TopicPostItem 的 BADGE_GOLD)。
+const POST_HEADER_BADGE_GOLD: string = '#E5A50A';
+
 // LDC 入口行的取数状态。credit.linux.do 的会话与 linux.do 各自独立:linux.do 已登录不代表
 // credit 也登录,故 ANON 是常态而非异常,要给出「去登录」而不是错误提示。
 enum LdcEntryPhase {
@@ -271,15 +274,26 @@ export struct ProfilePage {
               this.openUserProfilePage();
             })
           Column() {
-            Text(this.getDisplayName())
-              .fontSize(19)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .onClick(() => {
-                this.openUserProfilePage();
-              })
+            // 昵称行:名字 + 帖子头小金标(summary 顶层 badges 的 show_in_post_header),
+            // 与他人主页(UserProfilePage)昵称行对称。
+            Row() {
+              Text(this.getDisplayName())
+                .fontSize(19)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.text_primary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .flexShrink(1)
+                .onClick(() => {
+                  this.openUserProfilePage();
+                })
+              ForEach(this.getPostHeaderBadgeDefs(), (def: FaIconDefinition) => {
+                FaIconView({ icon: def, color: POST_HEADER_BADGE_GOLD, iconSize: 15 })
+                  .margin({ left: 5 })
+              }, (def: FaIconDefinition) => def.id)
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
             Row() {
               Text(this.getUsernameLabel())
                 .fontSize(13)
@@ -1135,6 +1149,28 @@ export struct ProfilePage {
 
   private getUsername(): string {
     return this.isLoggedIn ? this.accountUser.username : '';
+  }
+
+  // 昵称后小金标:精选徽章里 show_in_post_header=true 的,滤掉字库没有的 FA 图标。
+  // 与他人主页(UserProfilePage)同源同法,缺失项不再显示。
+  private getPostHeaderBadgeDefs(): FaIconDefinition[] {
+    const defs: FaIconDefinition[] = [];
+    const badges: UserBadgeItem[] = this.topBadges;
+    for (let index: number = 0; index < badges.length; index++) {
+      const badge: UserBadgeItem = badges[index];
+      if (badge.showInPostHeader !== true) {
+        continue;
+      }
+      const iconName: string | undefined = badge.icon;
+      if (!iconName || iconName.length === 0) {
+        continue;
+      }
+      const def: FaIconDefinition | undefined = getFaIcon(iconName);
+      if (def) {
+        defs.push(def);
+      }
+    }
+    return defs;
   }
 
   private getUsernameLabel(): string {
