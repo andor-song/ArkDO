@@ -17,6 +17,8 @@ export interface Draft {
   createdAt: string;
   // 回帖草稿:所回主题 id(点击直接进该主题)。
   topicId?: number;
+  // 私信草稿:收件人用户名(来自 data.to 数组第一个)。暂无多人私信,取第一人即可。
+  recipientUsername?: string;
   // 新主题草稿续写用:分类 id、标签、正文原文。
   categoryId?: number;
   // 标签带 id:续写时要用 id 做联想 refine,回存草稿也要写回 {id,name}。

@@ -6,7 +6,7 @@ import { TopicCategory } from '../../models/Topic';
 import { RelativeTime } from '../../common/utils/RelativeTime';
 import { DraftService } from '../../services/draft/DraftService';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
-import { TagSuggestion } from '../../services/topic/TopicService';
+import { CreateTopicOutcome, TagSuggestion, TopicService } from '../../services/topic/TopicService';
 import { JsonNetworkClient, NetworkResult } from '../../services/network/NetworkTypes';
 import { LoadStateView } from '../components/LoadStateView';
 import { ComposerPage } from './ComposerPage';
@@ -78,6 +78,12 @@ export struct DraftsPage {
   @State private resumeCategoryId: number = -1;
   @State private resumeTags: TagSuggestion[] = [];
   @State private resumeText: string = '';
+  // 私信草稿续写浮层(页内另一位 ComposerPage):回填正文 + 固定收件人。
+  @State private showPrivateComposer: boolean = false;
+  @State private resumePrivateRecipient: string = '';
+  @State private resumePrivateKey: string = '';
+  @State private resumePrivateSequence: number = 0;
+  @State private resumePrivateText: string = '';
   // 返回键信号镜像:RootTabPage 在浮层可见时 bump,本页 @Watch 接住关闭。
   @StorageProp(DRAFTS_COMPOSER_BACK_TICK_KEY) @Watch('onComposerBackTick') private composerBackTick: number = 0;
   // 本页重新可见的信号:每次 onShown 都会 bump。首次显示要跳过(aboutToAppear 已加载过一遍)。
@@ -130,6 +136,27 @@ export struct DraftsPage {
           },
           onSubmitTopic: (title: string, categoryId: number, raw: string, tags: string[], typingMs: number, composerMs: number): Promise<boolean> => {
             return this.submitResumedTopic(title, categoryId, raw, tags, typingMs, composerMs);
+          }
+        })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut }))
+      }
+
+      if (this.showPrivateComposer) {
+        ComposerPage({
+          bridge: this.bridge,
+          isArkWebReady: this.isArkWebReady,
+          onResolveMedia: this.onResolveMedia,
+          headerTitle: '继续私信',
+          placeholder: '写下想对 TA 说的话…',
+          minChars: 1,
+          composePrivateMessage: true,
+          recipientUsername: this.resumePrivateRecipient,
+          initialText: this.resumePrivateText,
+          onBack: () => {
+            this.closePrivateComposer();
+          },
+          onSubmitPrivateMessage: (raw: string, typingMs: number, composerMs: number): Promise<boolean> => {
+            return this.submitResumedPrivateMessage(raw, typingMs, composerMs);
           }
         })
           .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut }))
@@ -403,6 +430,14 @@ export struct DraftsPage {
       this.openComposerForDraft(item);
       return;
     }
+    // 私信草稿 → 原生私信续写浮层(页内另一位 ComposerPage,正文回填、收件人固定)。
+    // 没有收件人元数据的私信草稿(旧数据/异常)落网页兜底。
+    if (item.action === DraftAction.PRIVATE_MESSAGE) {
+      if (item.recipientUsername !== undefined && item.recipientUsername.length > 0) {
+        this.openPrivateComposerForDraft(item);
+        return;
+      }
+    }
     // 编辑草稿必须走编辑那条路。它长得像回帖草稿(同 key、同样有 topicId 和正文),但内容是
     // 某一楼的**旧原文** —— 一旦当成回帖打开并发送,等于把自己的旧内容重发成新楼。
     // 所以这里判在回帖分支之前,且要求 postId/originalText 齐备,缺了就宁可落到最后的网页兜底。
@@ -480,6 +515,10 @@ export struct DraftsPage {
 
   // 系统返回键(RootTabPage 在本页 NavDestination.onBackPressed 里 bump tick)。
   private onComposerBackTick(): void {
+    if (this.showPrivateComposer) {
+      this.closePrivateComposer();
+      return;
+    }
     if (this.showComposer) {
       this.closeComposer();
     }
@@ -496,6 +535,56 @@ export struct DraftsPage {
       (message: string, duration: number) => promptToast(this.getUIContext(), message, duration),
       title, categoryId, raw, tags, typingMs, composerMs,
       (topicId: number) => this.onOpenTopic(topicId, title));
+  }
+
+  // 私信草稿续写:点私信草稿时打开页内私信浮层,回填正文、固定收件人。
+  private openPrivateComposerForDraft(item: Draft): void {
+    this.resumePrivateRecipient = item.recipientUsername !== undefined ? item.recipientUsername : '';
+    this.resumePrivateKey = item.draftKey;
+    this.resumePrivateSequence = item.sequence;
+    this.resumePrivateText = item.reply;
+    AppStorage.setOrCreate(DRAFTS_COMPOSER_VISIBLE_KEY, true);
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.showPrivateComposer = true;
+    });
+  }
+
+  private closePrivateComposer(): void {
+    AppStorage.setOrCreate(DRAFTS_COMPOSER_VISIBLE_KEY, false);
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.showPrivateComposer = false;
+    });
+    // 关闭后刷新(草稿可能在浮层里被删过)。
+    this.refreshAfterDraftChange();
+  }
+
+  // 发送续写的私信:POST /posts。成功后删除原草稿(私信模式 ComposerPage 不代删),失败留内容重试。
+  private async submitResumedPrivateMessage(raw: string, typingMs: number, composerMs: number): Promise<boolean> {
+    if (!this.bridge) {
+      return false;
+    }
+    const recipient: string = this.resumePrivateRecipient;
+    if (recipient.length === 0) {
+      promptToast(this.getUIContext(), '缺少收件人，无法发送', 2200);
+      return false;
+    }
+    const service: TopicService = new TopicService(this.bridge);
+    const result: NetworkResult<CreateTopicOutcome> = await service.createPrivateMessage(
+      [recipient], raw, '', typingMs, composerMs);
+    if (result.success) {
+      promptToast(this.getUIContext(), '私信已发送', 1500);
+      // 私信浮层 ComposerPage 不代删草稿(只 composeTopic 模式删),这里手动删掉,免得列表残留。
+      if (this.service && this.resumePrivateKey.length > 0) {
+        const deleted: NetworkResult<boolean> = await this.service.deleteDraft(this.resumePrivateKey, this.resumePrivateSequence);
+        if (deleted.success) {
+          DraftEventBus.notifyDeleted(this.resumePrivateKey);
+        }
+      }
+      return true;
+    }
+    const reason: string = result.error ? result.error.message : '发送失败，请稍后重试。';
+    promptToast(this.getUIContext(), reason, 2500);
+    return false;
   }
 
   private async loadCategories(): Promise<void> {

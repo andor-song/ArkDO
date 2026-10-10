@@ -134,6 +134,13 @@ interface DiscourseDraftData {
   original_text?: string;
   // 新主题草稿里 tags 是对象数组 {id,name};其余类型多为空数组。兼容字符串数组。
   tags?: (DiscourseDraftTag | string)[];
+  // 私信草稿收件人:通常是 [{username:'xxx'}] 对象数组,兼容纯字符串数组。
+  to?: (DiscourseDraftTo | string)[];
+}
+
+// 私信草稿 data.to 数组里的一人(对象形态常见字段是 username)。
+interface DiscourseDraftTo {
+  username?: string;
 }
 
 interface DiscourseDraftTag {
@@ -358,6 +365,12 @@ export class DraftService {
       tags: this.mapTags(data.tags),
       reply: typeof data.reply === 'string' ? data.reply : ''
     };
+    // 私信草稿:取 data.to 里第一个收件人用户名(对象/字符串形态都认)。没有则续写入口缺收件人,
+    // 由页面判断后仍兜底网页。
+    const firstTo: string = this.firstRecipientUsername(data.to);
+    if (firstTo.length > 0) {
+      draft.recipientUsername = firstTo;
+    }
     if (typeof source.topic_id === 'number') {
       draft.topicId = source.topic_id;
     }
@@ -374,6 +387,20 @@ export class DraftService {
       draft.categoryId = source.category_id;
     }
     return draft;
+  }
+
+  private firstRecipientUsername(to?: (DiscourseDraftTo | string)[]): string {
+    if (!to || to.length === 0) {
+      return '';
+    }
+    const first: DiscourseDraftTo | string = to[0];
+    if (typeof first === 'string') {
+      return first;
+    }
+    if (first && typeof first.username === 'string' && first.username.length > 0) {
+      return first.username;
+    }
+    return '';
   }
 
   private parseData(raw?: string): DiscourseDraftData {
