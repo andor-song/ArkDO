@@ -133,6 +133,8 @@ export struct TopicDetailPage {
   // 标题书签图标的独立驱动态:detail 是 interface 的 @State,改字段不触发重渲染,故用基元 @State 镜像。
   // detail 整体加载/替换时经 @Watch 从 detail.bookmarked 同步;楼层 toggle 收藏后由回调直接改写实现即时联动。
   @State private topicBookmarked: boolean = false;
+  // 整主题书签 toggle 请求进行中:标题栏右钮转圈,防连点。
+  @State private topicBookmarkLoading: boolean = false;
   // 反应用户弹层状态由页面持有，避免 LazyForEach 的楼层项回收后丢失分页进度。
   @State private showReactionUsersSheet: boolean = false;
   @State private reactionUsersPost: TopicPost | undefined = undefined;
@@ -497,6 +499,10 @@ export struct TopicDetailPage {
           onReply: (targetPost: TopicPost) => {
             this.openComposerForPost(targetPost);
           },
+          // 引用回复:把该楼正文按 quote 前缀拼进回复框再定向回复该楼。
+          onQuotePost: (targetPost: TopicPost) => {
+            this.quotePost(targetPost);
+          },
           onEdit: (targetPost: TopicPost) => {
             this.openComposerForEdit(targetPost);
           },
@@ -546,6 +552,14 @@ export struct TopicDetailPage {
           sharedIssueCreated: post.postNumber === 1 ? (this.detail?.userCreatedSharedIssue ?? false) : false,
           onToggleSharedIssue: (): Promise<SharedIssueResult | null> => {
             return this.toggleSharedIssue();
+          },
+          // 删除自己的楼层:canDelete 按服务端 canDelete 字段(未给则 yours 兜底),onDeletePost 走确认框。
+          canDelete: post.yours === true && (post.canDelete !== false),
+          onDeletePost: (targetPost: TopicPost): Promise<boolean> => {
+            return this.confirmDeletePost(targetPost);
+          },
+          onFlagPost: (targetPost: TopicPost): Promise<boolean> => {
+            return this.confirmFlagPost(targetPost);
           }
         })
       }, (post: TopicPost) => post.id.toString())
@@ -651,6 +665,10 @@ export struct TopicDetailPage {
       tags: this.getTags(),
       solved: (this.detail?.acceptedAnswers?.length ?? 0) > 0,
       bookmarked: this.topicBookmarked,
+      bookmarkLoading: this.topicBookmarkLoading,
+      onToggleBookmark: () => {
+        this.toggleTopicBookmark();
+      },
       onTitleClick: () => {
         this.jumpToFirstPost();
       },
@@ -1047,6 +1065,28 @@ export struct TopicDetailPage {
     this.resetComposerModes();
     this.replyTargetPostNumber = post.postNumber;
     this.composerPlaceholder = `回复${this.resolveAuthorName(post)}`;
+    AppStorage.setOrCreate(COMPOSER_OVERLAY_VISIBLE_KEY, true);
+    this.showComposer = true;
+  }
+
+  // 引用回复:定向回复该楼,并把该楼正文按 blockquote 语法(每行前加 "> ")带入回复框。
+  // 引用楼主文首/文末夹行都行,Discourse 会把整块渲染成引用块;空楼退化为普通定向回复。
+  private quotePost(post: TopicPost): void {
+    // 未登录:拦截并弹登录页,不打开输入浮层。
+    if (!LoginGate.ensureLoggedIn()) {
+      return;
+    }
+    const quoted: string = (post.plainText ?? '').trim();
+    const quoteBody: string = quoted.length > 0
+      ? quoted.split('\n').map((line: string): string => {
+        return line.length > 0 ? `> ${line}` : '>';
+      }).join('\n') + '\n\n'
+      : '';
+    this.resetComposerModes();
+    this.replyTargetPostNumber = post.postNumber;
+    this.composerPlaceholder = `回复${this.resolveAuthorName(post)}`;
+    // 先写暂存再开浮层:CommentInputBar aboutToAppear 会读 initialText,顺序不能反。
+    this.pendingReplyText = quoteBody;
     AppStorage.setOrCreate(COMPOSER_OVERLAY_VISIBLE_KEY, true);
     this.showComposer = true;
   }
@@ -1906,6 +1946,135 @@ export struct TopicDetailPage {
     }
     this.pendingPosts = this.pendingPosts.filter((item: PendingPost) => item.id !== pending.id);
     this.showComposerToast('已删除', 1500);
+  }
+
+  // 删除自己楼层:二次确认 → DELETE /posts/{id} → 从楼流就地移除。失败 toast 原文,楼不动。
+  private confirmDeletePost(post: TopicPost): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      this.getUIContext().showAlertDialog({
+        title: '删除楼层',
+        message: '删除后这一楼会被移除(含回复内容)，部分站点无法恢复。确定删除吗？',
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        primaryButton: { value: '取消', action: () => { resolve(false); } },
+        secondaryButton: {
+          value: '删除',
+          fontColor: $r('app.color.ld_danger'),
+          action: () => {
+            this.deletePostConfirm(post).then((ok: boolean) => { resolve(ok); });
+          }
+        }
+      });
+    });
+  }
+
+  // DELETE /posts/{id}。不做乐观移除:删失败还得把楼塞回原位;等服务端确认再摘,失败则原样留着。
+  private async deletePostConfirm(post: TopicPost): Promise<boolean> {
+    if (!this.detail || !LoginGate.ensureLoggedIn()) {
+      return false;
+    }
+    const result: NetworkResult<boolean> =
+      await new TopicService(this.bridge).deletePost(post.id, this.detail.id);
+    if (!result.success) {
+      Log.i(`${LOG_TAG} deletePost failed id=${post.id} status=${result.statusCode}`);
+      this.showComposerToast(result.error ? result.error.message : '删除失败，请稍后重试', 2000);
+      return false;
+    }
+    // 从楼流移除;若删除的是主题一楼,整体数据已失效,交给页面刷新(统一 toast)。
+    this.dataSource.removePost(post.id);
+    this.postCount = this.dataSource.totalCount();
+    this.showComposerToast('已删除', 1500);
+    return true;
+  }
+
+  // 举报楼层:二次确认 → POST /post_actions(flag=3)。成功 toast「已举报」。
+  private confirmFlagPost(post: TopicPost): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      this.getUIContext().showAlertDialog({
+        title: '举报楼层',
+        message: '确定举报这一楼吗？提交后站点管理员会收到审核。',
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        primaryButton: { value: '取消', action: () => { resolve(false); } },
+        secondaryButton: {
+          value: '举报',
+          fontColor: $r('app.color.ld_danger'),
+          action: () => {
+            this.flagPost(post).then((ok: boolean) => { resolve(ok); });
+          }
+        }
+      });
+    });
+  }
+
+  private async flagPost(post: TopicPost): Promise<boolean> {
+    if (!this.detail || !LoginGate.ensureLoggedIn()) {
+      return false;
+    }
+    const result: NetworkResult<boolean> =
+      await new TopicService(this.bridge).flagPost(post.id, this.detail.id);
+    if (!result.success) {
+      Log.i(`${LOG_TAG} flagPost failed id=${post.id} status=${result.statusCode}`);
+      this.showComposerToast(result.error ? result.error.message : '举报失败，请稍后重试', 2000);
+      return false;
+    }
+    this.showComposerToast('已举报，感谢反馈', 1500);
+    return true;
+  }
+
+  // 整主题书签 toggle:对 1 楼复用 addBookmark/removeBookmark,联动标题右钮与摘要卡。
+  // 取消时要用 1 楼的 bookmarkId;万一没解析到(个别帖服务端不给),退回整体重拉详情让服务端状态回正,
+  // 不瞎改本地态。成功后即时改写本地态并在 1 楼对象上同步(用户再点楼层书签不会前后不一致)。
+  private async toggleTopicBookmark(): Promise<void> {
+    if (this.topicBookmarkLoading || !this.detail) {
+      return;
+    }
+    if (!LoginGate.ensureLoggedIn()) {
+      return;
+    }
+    const firstPost: TopicPost | undefined = this.dataSource.firstPost();
+    if (firstPost === undefined) {
+      return;
+    }
+    this.topicBookmarkLoading = true;
+    const topicId: number = this.detail.id;
+    const service: TopicService = new TopicService(this.bridge);
+    if (this.topicBookmarked) {
+      const bookmarkId: number | undefined = firstPost.bookmarkId;
+      if (bookmarkId === undefined) {
+        this.topicBookmarkLoading = false;
+        this.loadTopicDetail();
+        return;
+      }
+      const result: NetworkResult<boolean> = await service.removeBookmark(bookmarkId, topicId);
+      if (result.success) {
+        this.topicBookmarked = false;
+        if (this.detail) {
+          this.detail.bookmarked = false;
+        }
+        firstPost.bookmarked = false;
+        firstPost.bookmarkId = undefined;
+        this.showComposerToast('已取消收藏', 1500);
+      } else {
+        Log.i(`${LOG_TAG} toggleTopicBookmark remove failed=${result.statusCode}`);
+        this.showComposerToast(result.error ? result.error.message : '操作失败，请稍后重试', 2000);
+      }
+    } else {
+      const result: NetworkResult<number> = await service.addBookmark(firstPost.id, topicId);
+      if (result.success) {
+        this.topicBookmarked = true;
+        if (this.detail) {
+          this.detail.bookmarked = true;
+        }
+        firstPost.bookmarked = true;
+        firstPost.bookmarkId = result.data;
+        this.showComposerToast('已收藏', 1500);
+      } else {
+        Log.i(`${LOG_TAG} toggleTopicBookmark add failed=${result.statusCode}`);
+        this.showComposerToast(result.error ? result.error.message : '操作失败，请稍后重试', 2000);
+      }
+    }
+    this.topicBookmarkLoading = false;
   }
 
   private replyFabButton(): ActionBarButton {

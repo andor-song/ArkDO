@@ -1,5 +1,6 @@
 import { TopicCategory, TopicTag } from '../../models/Topic';
 import { TopicMetadataBadges } from './TopicBadges';
+import { FaIconView, getFaIcon } from './FaIcon';
 
 // 详情页 HDS 标题栏的自定义中间内容。返回键与右侧菜单由 HdsNavigation 原生区域绘制；
 // 本组件只负责双层标题及其左右占位。两种标题内容始终挂载、叠层显示,
@@ -23,6 +24,10 @@ export struct TopicDetailHeader {
   onTitleClick: () => void = () => {};
   // 右侧原生过盾菜单出现时，为自定义标题预留同宽空间，避免标题伸到菜单按钮下面。
   @Prop showChallengeShortcut: boolean = false;
+  // 整主题书签请求进行中:右侧书签按钮转圈,防连点。
+  @Prop bookmarkLoading: boolean = false;
+  // 点右侧书签按钮:上抛页面 toggle 整主题书签(对 1 楼 addBookmark/removeBookmark)。
+  onToggleBookmark: () => void = () => {};
 
   build() {
     Row({ space: 8 }) {
@@ -96,6 +101,28 @@ export struct TopicDetailHeader {
       }
       .layoutWeight(1)
       .alignContent(Alignment.Start)
+
+      // 整主题书签:可点按钮(标题行首的内联书签标记保留为纯展示)。请求中转圈;已收藏实心蓝、未收藏空心灰。
+      Button({ type: ButtonType.Normal, stateEffect: true }) {
+        if (this.bookmarkLoading) {
+          LoadingProgress()
+            .width(16)
+            .height(16)
+            .color($r('app.color.icon_muted'))
+        } else if (this.bookmarked) {
+          FaIconView({ icon: getFaIcon('bookmark'), color: $r('app.color.ld_accent'), iconSize: 16 })
+        } else {
+          FaIconView({ icon: getFaIcon('far-bookmark'), color: $r('app.color.icon_muted'), iconSize: 16 })
+        }
+      }
+      .width(36)
+      .height(36)
+      .padding(0)
+      .backgroundColor(Color.Transparent)
+      .borderRadius(10)
+      .onClick(() => {
+        this.onToggleBookmark();
+      })
 
       // 右侧按钮由 HdsNavigation.menu 绘制，这里仅做对称占位，不参与点击。
       if (this.showChallengeShortcut) {

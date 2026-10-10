@@ -16,7 +16,7 @@ import { CreatePostResponse, CreatePrivateMessagePayload, CreateReplyPayload, Cr
   DiscoursePoll, DiscoursePollOption, DiscoursePollVoteResponse, DiscoursePost, DiscourseReaction,
   DiscourseReactionUser, DiscourseReactionUsersPage, DiscourseSearchPost, DiscourseSearchResponse,
   DiscourseSharedIssueResponse, DiscourseTagFilterResponse, DiscourseTagResult, DiscourseTopic,
-  DiscoursePostUpdateResponse, DiscourseTopicDetail, DiscourseTopicList, DiscourseUser, DiscourseUserBadges,
+  DiscoursePostUpdateResponse, DiscoursePostActionResponse, DiscoursePostDeleteResponse, DiscourseTopicDetail, DiscourseTopicList, DiscourseUser, DiscourseUserBadges,
   DiscourseUserBadgeUser } from './TopicApiTypes';
 
 // linux.do shared issue（"俺也一样"）toggle 端点:同一 POST 翻转(点/撤),form body 只带 topic_id。
@@ -910,6 +910,41 @@ export class TopicService {
     }
   }
 
+  // 删除自己的楼层:软删。DELETE /posts/<id>.json(官方复用 PostDestroyer,form body 空)。
+  // 返回 boolean 成败;软删成功后服务端会从楼流摘掉,本页在楼流里就地移除。
+  async deletePost(postId: number, topicId: number): Promise<NetworkResult<boolean>> {
+    const referrer: string = `${AppConstants.BASE_URL}/t/topic/${topicId}`;
+    const response: NetworkResult<string> = await this.bridge.deleteForm(`/posts/${postId}`, '', {
+      notifyChallenge: true,
+      referrer: referrer
+    });
+    if (!response.success) {
+      return forwardFailure<boolean>(response);
+    }
+    return { success: true, statusCode: response.statusCode, challengeState: response.challengeState, data: true };
+  }
+
+  // 举报楼层:POST /post_actions.json,form body(对齐官方 flag):post_action_type_id=3(flag)。
+  // 官方 flag 动作需要 message(举报理由,可选)与 topic_id。响应 { success:"OK" }。
+  async flagPost(postId: number, topicId: number, message: string = ''): Promise<NetworkResult<boolean>> {
+    const parts: string[] = [];
+    parts.push('id=' + postId);
+    parts.push('post_action_type_id=3');
+    parts.push(`topic_id=${topicId}`);
+    if (message.trim().length > 0) {
+      parts.push(`message=${encodeURIComponent(message.trim())}`);
+    }
+    const referrer: string = `${AppConstants.BASE_URL}/t/topic/${topicId}`;
+    const response: NetworkResult<string> = await this.bridge.postForm('/post_actions', parts.join('&'), {
+      notifyChallenge: true,
+      referrer: referrer
+    });
+    if (!response.success) {
+      return forwardFailure<boolean>(response);
+    }
+    return { success: true, statusCode: response.statusCode, challengeState: response.challengeState, data: true };
+  }
+
   // 书签:给某楼加书签。POST /bookmarks.json,form body(对齐抓包):
   // reminder_at=&auto_delete_preference=3&bookmarkable_id=<postId>&bookmarkable_type=Post。
   // 响应 { success:"OK", id:<bookmarkId> };返回 bookmarkId 供后续取消。
@@ -1363,6 +1398,7 @@ export class TopicService {
       post.badgeIcons = badgeMap && authorId !== undefined ? badgeMap.get(authorId) : undefined;
       post.yours = sourcePost.yours === true;
       post.canEdit = sourcePost.can_edit === true;
+      post.canDelete = sourcePost.can_delete === true;
       post.linkClicks = buildLinkClicks(cookedHtml, sourcePost.link_counts);
       posts.push(post);
     }

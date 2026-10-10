@@ -116,6 +116,8 @@ export class TopicPost {
   // 是否还能编辑(can_edit)。与 yours 分开两个字段是必要的:过了编辑时限后 yours 仍真、can_edit 转假,
   // 此时既不该给点赞按钮、也不该给编辑按钮。
   canEdit?: boolean;
+  // 是否还能删除(can_delete,软删)。与 yours 分开:过了删除时限后 yours 仍真、can_delete 转假。
+  canDelete?: boolean;
   // 正文各链接的点击数,键是渲染用的 href(见 LinkClicks)。由 post JSON 的 link_counts 建表,
   // 反链、0 次点击、引用卡内的链接已在建表时剔除;有值的链接后面跟一枚灰色计数角标。
   linkClicks?: Map<string, number>;

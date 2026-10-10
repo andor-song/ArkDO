@@ -109,6 +109,8 @@ export struct TopicPostItem {
   onOpenReactionUsers: (post: TopicPost) => void = () => {};
   // 点该楼回复按钮:把整条 post 上抛给页面,由页面按 postNumber+作者昵称打开定向回复输入框。
   onReply: (post: TopicPost) => void = () => {};
+  // 引用回复:把该楼正文按 blockquote 前缀拼进回复输入框再定向回复。页面未接(默认空)时不渲染入口。
+  onQuotePost: (post: TopicPost) => void = () => {};
   // 点编辑(铅笔):进入本楼的编辑态。不接这条线的场景(如个人主页的帖子列表)不出现铅笔 ——
   // 否则那里会冒出一个点了没反应的按钮。
   onEdit?: (post: TopicPost) => void = undefined;
@@ -136,6 +138,13 @@ export struct TopicPostItem {
   onCopyPostLink: (post: TopicPost) => void = () => {};
   // 书签 toggle 上抛页面发网络,返回该楼与主题级最终态;本组件只取 postBookmarked 校正本地显示。
   onToggleBookmark: (post: TopicPost) => Promise<BookmarkToggleResult> = () => Promise.resolve({ postBookmarked: false } as BookmarkToggleResult);
+  // 删除自己的楼层:上抛页面确认+发 DELETE /posts/{id} 并从楼流移除;返回是否成功(成功即已摘楼)。
+  // 页面未接(非详情页/无权限)时默认 false,楼层操作栏不出现删除按钮。
+  onDeletePost: (post: TopicPost) => Promise<boolean> = () => Promise.resolve(false);
+  // 举报楼层:上抛页面弹举报确认;返回是否成功(成功 toast「已举报」)。默认 false 不渲染入口。
+  onFlagPost: (post: TopicPost) => Promise<boolean> = () => Promise.resolve(false);
+  // 本楼能否删除/举报(服务端给 can_delete / 未给则按 yours 兜底)。由页面按下发。
+  @Prop canDelete: boolean = false;
   // linux.do shared issue（"俺也一样"）。仅一楼(postNumber===1)且 shared_issue_visible 时,页面下发 sharedIssueVisible=true。
   // 计数/已点态是话题级值(不在 @Observed post 上),按 memory objectlink-state-source 用本组件自身 @State 驱动显示才稳。
   sharedIssueVisible: boolean = false;
@@ -1000,11 +1009,74 @@ export struct TopicPostItem {
   @Builder
   private MoreActions() {
     if (this.moreExpanded) {
+      // 引用回复:把该楼正文带进回复框。默认不渲染(页面未接时 onQuotePost 为默认空实现同样不渲染)。
+      if (this.onQuotePost !== undefined) {
+        this.QuotePostButton()
+      }
       this.CopyLinkButton()
       this.BookmarkButton()
+      // 自己的楼:删除入口(软删,服务端 can_delete 或 yours 兜底)。
+      if (this.canDelete && this.onDeletePost !== undefined) {
+        this.DeletePostButton()
+      }
+      // 举报入口:任何楼都有(治理刚性入口),点了弹确认。
+      if (this.onFlagPost !== undefined) {
+        this.FlagPostButton()
+      }
     } else {
       this.MoreButton()
     }
+  }
+
+  // 引用回复:quote-left 图标,38 透明按钮。点击上抛页面把该楼正文带进回复输入框。
+  @Builder
+  private QuotePostButton() {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      FaIconView({ icon: this.faIcon('quote-left'), color: $r('app.color.icon_muted'), iconSize: 16 })
+    }
+    .width(38)
+    .height(38)
+    .padding(0)
+    .backgroundColor(Color.Transparent)
+    .borderRadius(10)
+    .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ x: 12 })))
+    .onClick(() => {
+      this.onQuotePost(this.post);
+    })
+  }
+
+  // 删除自己楼层:垃圾桶图标,38 透明按钮。点击上抛页面走确认框 + DELETE /posts/{id}。
+  @Builder
+  private DeletePostButton() {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      FaIconView({ icon: this.faIcon('trash-can'), color: $r('app.color.icon_muted'), iconSize: 16 })
+    }
+    .width(38)
+    .height(38)
+    .padding(0)
+    .backgroundColor(Color.Transparent)
+    .borderRadius(10)
+    .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ x: 12 })))
+    .onClick(() => {
+      this.onDeletePost(this.post);
+    })
+  }
+
+  // 举报楼层:flag 图标。点击上抛页面弹确认(官方 flag 端点 POST /post_actions)。
+  @Builder
+  private FlagPostButton() {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      FaIconView({ icon: this.faIcon('flag'), color: $r('app.color.icon_muted'), iconSize: 16 })
+    }
+    .width(38)
+    .height(38)
+    .padding(0)
+    .backgroundColor(Color.Transparent)
+    .borderRadius(10)
+    .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ x: 12 })))
+    .onClick(() => {
+      this.onFlagPost(this.post);
+    })
   }
 
   @Builder

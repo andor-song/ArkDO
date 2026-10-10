@@ -207,6 +207,8 @@ export interface DiscoursePost {
   // 当前用户能不能改这一楼(PostSerializer#can_edit,走 Guardian)。注意「是我的」不等于「还能改」——
   // 超过 SiteSetting 的编辑时限后 yours 仍为真而 can_edit 变假。
   can_edit?: boolean;
+  // 当前用户能不能删这一楼(PostSerializer#can_delete)。超过删除时限或非本人时转假。
+  can_delete?: boolean;
   // 编辑用的 Markdown 原文。只有单帖接口 /posts/{id}.json 会带,列表接口不返回。
   raw?: string;
   user_id?: number;
@@ -405,4 +407,18 @@ export interface CreatePrivateMessagePayload {
   locale: string;
   image_sizes: Record<string, number>;
   nested_post: boolean;
+}
+
+// DELETE /posts/<id>.json 的响应:软删成功一般返回 { success:"OK" };Discourse 个别版本返回空 body。
+export interface DiscoursePostDeleteResponse {
+  success?: string;
+}
+
+// POST /post_actions.json 的响应:举报(flag)成功一般返回 { success:"OK", id?: <actionId> }。
+// 官方用同一端点发 like/flag:post_action_type_id=3 即 flag,4=like。
+export interface DiscoursePostActionResponse {
+  success?: string;
+  id?: number;
+  deferred?: boolean;
+  hidden?: boolean;
 }

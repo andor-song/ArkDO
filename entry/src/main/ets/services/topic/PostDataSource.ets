@@ -17,6 +17,11 @@ export class PostDataSource implements IDataSource {
     return this.posts[index];
   }
 
+  // 一楼(楼主楼):主题级操作的挂点(整主题书签、采纳等都用它)。楼流可能尚未载入时返回 undefined。
+  firstPost(): TopicPost | undefined {
+    return this.posts.length > 0 ? this.posts[0] : undefined;
+  }
+
   registerDataChangeListener(listener: DataChangeListener): void {
     if (this.listeners.indexOf(listener) < 0) {
       this.listeners.push(listener);
@@ -107,6 +112,21 @@ export class PostDataSource implements IDataSource {
     this.posts = fresh.concat(this.posts);
     this.notifyAdd(0, fresh.length);
     return fresh.length;
+  }
+
+  // 删除某楼:本地楼流移除(删除成功后页面调用)。返回被删楼所在下标用于后续校正,找不到返回 -1。
+  // LazyForEach 按 DataChangeListener 的 DELETE 通知销毁对应列表项;post 数组同步剔除。
+  removePost(postId: number): number {
+    for (let index: number = 0; index < this.posts.length; index++) {
+      if (this.posts[index].id === postId) {
+        this.posts.splice(index, 1);
+        for (let i: number = 0; i < this.listeners.length; i++) {
+          this.listeners[i].onDataDelete(index);
+        }
+        return index;
+      }
+    }
+    return -1;
   }
 
   findIndexByPostNumber(postNumber: number): number {
