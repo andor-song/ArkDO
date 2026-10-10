@@ -33,6 +33,8 @@ export enum AppRouteName {
   USER_PROFILE = 'userProfile',
   // 他被采纳为解决方案的回复列表,入口是他人主页统计格里的「解决方案」。
   SOLVED = 'solved',
+  // 他人主页统计格的三个插件页(Boost / 回应 / 投票)共用列表:kinds 见 UserHistoryRouteParam。
+  USER_HISTORY = 'userHistory',
   // 关注/粉丝列表(discourse-follow),入口是他人主页的「关注 N · 粉丝 M」行。
   FOLLOW_LIST = 'followList',
   // 双栏(平板横屏)下右详情栏的空占位:未选帖子时垫在栈底,让右栏不空白。仅宽屏使用。
@@ -337,6 +339,31 @@ export function isSolvedRouteParam(param: Object | undefined): boolean {
   }
   const candidate: SolvedRouteParam = param as SolvedRouteParam;
   return typeof candidate.username === 'string' && candidate.username.length > 0;
+}
+
+// 用户历史列表(插件页)参数:kind 取 'boosts' | 'reactions' | 'votes',title 供页头显示。
+export interface UserHistoryRouteParam {
+  username: string;
+  kind: string;
+  title: string;
+}
+
+export function buildUserHistoryRouteParam(username: string, kind: string, title: string): UserHistoryRouteParam {
+  return {
+    username: username,
+    kind: kind,
+    title: title
+  };
+}
+
+export function isUserHistoryRouteParam(param: Object | undefined): boolean {
+  if (!param) {
+    return false;
+  }
+  const candidate: UserHistoryRouteParam = param as UserHistoryRouteParam;
+  return typeof candidate.username === 'string' && candidate.username.length > 0 &&
+    (candidate.kind === 'boosts' || candidate.kind === 'reactions' || candidate.kind === 'votes') &&
+    typeof candidate.title === 'string';
 }
 
 

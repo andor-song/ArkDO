@@ -173,6 +173,36 @@ export interface SolvedPostPage {
   hasMore: boolean;
 }
 
+// 用户历史列表(插件页)的统一行:discourse-boosts(送出的 boost)/ discourse-reactions(给出的
+// 回应)/ discourse-topic-voting(投过票的主题)三个插件页数据形态各异,统一压成一行结构后由
+// 同一个列表页渲染——标题 + 摘要(纯文本)+ 分类 + 时间,点击跳对应主题。
+export interface UserHistoryItem {
+  // 行内展示用标题:boost 取所回主题标题、reactions 取所回应主题标题、votes 取投票主题标题。
+  title: string;
+  // 正文摘要(纯文本);boost 泛化了(它只有一句 boost 内容,取它当摘要)。
+  excerpt: string;
+  topicId?: number;
+  slug?: string;
+  postNumber?: number;
+  categoryId?: number;
+  createdAt?: string;
+  // 来源类型(文案与图标由页面按 kind 区分)。
+  kind: string;
+  // boost:是谁收到了这条 boost(所回楼层作者);reactions/votes 无此字段。
+  targetUsername?: string;
+  // 互动方向:boosts/reactions 给「给出的」与「收到的」都留字段;目前他人主页只走「给出的」。
+  received?: boolean;
+  // 分页游标:boost/reaction 走游标分页(before_boost_id / before_reaction_user_id),
+  // 这里存「本条 id」作为下一页游标;投票走 topic list 页码,不需要。
+  cursor?: number;
+}
+
+// 一页用户历史(discourse 插件页各不相同:boost/reaction 用游标、votes 用 page,统一成 hasMore)。
+export interface UserHistoryPage {
+  items: UserHistoryItem[];
+  hasMore: boolean;
+}
+
 // /user_actions.json 的 action_type:4=发布话题 5=回复。
 export enum UserActionType {
   NEW_TOPIC = 4,

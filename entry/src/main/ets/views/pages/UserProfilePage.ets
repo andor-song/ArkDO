@@ -94,6 +94,11 @@ export struct UserProfilePage {
   onOpenBadges: (username: string, badgeCount: number) => void = () => {};
   // 被采纳的答案列表:四个插件页里唯一保留的,因为它是「靠不靠谱」的硬证据。
   onOpenSolved: (username: string, solvedCount: number) => void = () => {};
+  // 其余三个插件页入口:Boost(discourse-boosts 送的)/ 回应(discourse-reactions 给的)/
+  // 投票(discourse-topic-voting 投过的)。宿主 push 通用的 USER_HISTORY 路由。
+  onOpenBoosts: (username: string) => void = () => {};
+  onOpenReactions: (username: string) => void = () => {};
+  onOpenVotes: (username: string) => void = () => {};
   // 关注/粉丝列表入口(followers/following):宿主 push FOLLOW_LIST 路由。
   onOpenFollowList: (username: string, kind: string, title: string) => void = () => {};
   // 互动圈头像可点:递归进目标用户的本页(带上 id 以免头像形状先圆后方闪)。
@@ -700,20 +705,30 @@ export struct UserProfilePage {
         this.StatCell(formatCount(stats.topicCount), '创建话题')
         this.StatCell(formatCount(stats.postCount), '回复')
         this.StatCell(formatCount(stats.topicsEntered), '浏览话题')
-        // 唯一可点的统计格:被采纳的答案是能力硬证据,也是四个插件页里唯一值得做的。
-        // 其余七格只是数字,不做入口——否则每格都像按钮。
-        if (this.getSolvedCount() > 0) {
-          this.SolvedCell(formatCount(this.getSolvedCount()))
-        } else {
-          this.StatCell(stats.solvedCount !== undefined ? formatCount(stats.solvedCount) : '—', '解决方案')
-        }
+        this.StatCell(stats.solvedCount !== undefined ? formatCount(stats.solvedCount) : '—', '解决方案')
       }
       .width('100%')
-      .padding({ left: 8, right: 8, top: 16, bottom: CARD_PADDING })
+      .padding({ left: 8, right: 8, top: 16, bottom: 4 })
+
+      // 记录入口行:解决方案 / Boost / 回应 / 投票,插件页统一入口。
+      this.PluginEntryRow()
     }
     .width('100%')
-    .height(STATS_AREA_HEIGHT)
     .justifyContent(FlexAlign.Start)
+  }
+
+  // 记录入口行:四个插件页(解决方案 / Boost / 回应 / 投票)各自可点。与统计格分离——
+  // 数字格保持纯展示,入口行统一带图标+文字+箭头,视觉节奏更清晰。
+  @Builder
+  private PluginEntryRow() {
+    Row() {
+      this.PluginEntry('check-to-slot', '解决方案', 'solved', this.getSolvedCount() > 0)
+      this.PluginEntry('rocket', 'Boost', 'boosts', true)
+      this.PluginEntry('thumbs-up', '回应', 'reactions', true)
+      this.PluginEntry('check-to-slot', '投票', 'votes', true)
+    }
+    .width('100%')
+    .padding({ left: 8, right: 8, top: 4, bottom: CARD_PADDING })
   }
 
   @Builder
@@ -731,28 +746,40 @@ export struct UserProfilePage {
     .layoutWeight(1)
   }
 
+  // 插件入口格:图标 + 文字 + 箭头。图标染品牌色,文字次要色,整格可点。
+  // iconId(全部用可用 FA 图标)与点击分流(四个 kind)统一在这里,调用点只传参数。
   @Builder
-  private SolvedCell(value: string) {
+  private PluginEntry(iconId: string, label: string, kind: string, available: boolean) {
     Column() {
-      Row() {
-        Text(value)
-          .fontSize(17)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.ld_success'))
-        SymbolGlyph($r('sys.symbol.chevron_right'))
+      Row({ space: 5 }) {
+        FaIconView({ icon: this.faIcon(iconId), color: kind === 'solved' ? $r('app.color.ld_success') : $r('app.color.ld_accent'), iconSize: 13 })
+        Text(label)
           .fontSize(14)
-          .fontColor([$r('app.color.ld_success')])
-          .margin({ left: 1 })
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(11)
+          .fontColor([$r('app.color.text_faint')])
       }
       .alignItems(VerticalAlign.Center)
-      Text('解决方案')
-        .fontSize(11)
-        .fontColor($r('app.color.text_faint'))
-        .margin({ top: 2 })
+      .opacity(available ? 1 : 0.5)
     }
     .layoutWeight(1)
+    .padding({ top: 9, bottom: 9 })
     .onClick(() => {
-      this.onOpenSolved(this.username, this.getSolvedCount());
+      if (!available) {
+        return;
+      }
+      if (kind === 'boosts') {
+        this.onOpenBoosts(this.username);
+      } else if (kind === 'reactions') {
+        this.onOpenReactions(this.username);
+      } else if (kind === 'votes') {
+        this.onOpenVotes(this.username);
+      } else {
+        this.onOpenSolved(this.username, this.getSolvedCount());
+      }
     })
   }
 

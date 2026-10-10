@@ -8,6 +8,8 @@ import {
   UserActivityPage,
   UserBadgeGroup,
   UserBadgeItem,
+  UserHistoryItem,
+  UserHistoryPage,
   UserInteraction,
   UserProfileDetail,
   UserSummary,
@@ -225,6 +227,77 @@ interface DiscourseUserAction {
   username?: string;
   name?: string;
   avatar_template?: string;
+}
+
+// ========== 用户历史插件页 DTO ==========
+// discourse-boosts「送出的 boost」:GET /discourse-boosts/users/{u}/boosts-given.json
+// 游标分页:?before_boost_id=<上一页最后一条 id>,服务端固定每页 20 条、按 id 倒序。
+// 响应 { boosts: [ { id, raw, cooked, created_at, post_id, user, post } ] },
+// post 里带所回楼层/主题信息。
+interface DiscourseBoostsGivenResponse {
+  boosts?: DiscourseBoostGivenItem[];
+}
+
+interface DiscourseBoostGivenItem {
+  id?: number;
+  // 那句 boost 的纯文本(短内容,官方限制 16 字),直接当行摘要。
+  raw?: string;
+  created_at?: string;
+  post?: DiscourseBoostGivenPost;
+}
+
+interface DiscourseBoostGivenPost {
+  id?: number;
+  // 所回楼层所在主题。
+  topic_id?: number;
+  topic_title?: string;
+  category_id?: number;
+  // 所回楼层号(网页 url 形如 /t/<slug>/<topic_id>/<post_number>)。
+  excerpt?: string;
+  username?: string;
+}
+
+// discourse-reactions「给出的回应」:GET /discourse-reactions/posts/reactions.json?username=U
+// 游标分页:?before_reaction_user_id=<上一页最后一条 id>,固定每页 20 条。
+// 响应是**顶层裸数组**({ user, post, reaction } 每项),没有 root。
+interface DiscourseReactionHistoryItem {
+  id?: number;
+  created_at?: string;
+  post?: DiscourseReactionHistoryPost;
+}
+
+interface DiscourseReactionHistoryPost {
+  id?: number;
+  topic_id?: number;
+  // 所回应主题的标题(topic_title 或 title 两种键都见过,兼容)。
+  topic_title?: string;
+  title?: string;
+  excerpt?: string;
+  category_id?: number;
+  post_number?: number;
+  username?: string;
+  name?: string;
+  avatar_template?: string;
+}
+
+// discourse-topic-voting「投过票的主题」:GET /topics/voted-by/{u}.json?page=N
+// 响应是标准 topic list:{ topic_list: { topics:[...], more_topics_url }, users:[...] }。
+interface DiscourseVotedTopicsResponse {
+  topic_list?: DiscourseVotedTopicList;
+}
+
+interface DiscourseVotedTopicList {
+  topics?: DiscourseVotedTopic[];
+  more_topics_url?: string;
+}
+
+interface DiscourseVotedTopic {
+  id?: number;
+  title?: string;
+  slug?: string;
+  category_id?: number;
+  created_at?: string;
+  highest_post_number?: number;
 }
 
 // /solution/by_user.json?username=&offset=&limit= 响应(discourse-solved 插件)。
@@ -850,6 +923,174 @@ export class UserProfileService {
     } catch (error) {
       return unexpectedResponse<SolvedPostPage>(response.statusCode, response.challengeState, '站点解决方案响应不是有效 JSON。');
     }
+  }
+
+  // ========== 用户历史插件页(discourse-boosts / discourse-reactions / discourse-topic-voting) ==========
+  // 三者统一进「他人主页统计格」的三个入口,共用 UserHistoryListPage 渲染;分页策略各不相同:
+  // boost 游标 before_boost_id、reaction 游标 before_reaction_user_id、投票 topic list 的 page。
+
+  private static readonly HISTORY_PAGE_SIZE: number = 20;
+
+  // discourse-boosts「送出的 boost」:GET /discourse-boosts/users/{username}/boosts-given.json
+  // 分页参数 beforeBoostId 是上一页最后一条 boost 的 id(首页 0=不带)。响应数组是「最外层 boosts」。
+  async getBoostsGiven(username: string, beforeBoostId: number): Promise<NetworkResult<UserHistoryPage>> {
+    let path: string = `/discourse-boosts/users/${encodeURIComponent(username)}/boosts-given.json`;
+    if (beforeBoostId > 0) {
+      path += `?before_boost_id=${beforeBoostId}`;
+    }
+    const response: NetworkResult<string> = await this.bridge.getJson(path);
+    if (!response.success) {
+      return forwardFailure<UserHistoryPage>(response);
+    }
+    if (response.data === undefined) {
+      return unexpectedResponse<UserHistoryPage>(response.statusCode, response.challengeState, '站点 boost 响应为空。');
+    }
+    try {
+      const payload: DiscourseBoostsGivenResponse = JSON.parse(response.data) as DiscourseBoostsGivenResponse;
+      const source: DiscourseBoostGivenItem[] = payload.boosts ? payload.boosts : [];
+      const items: UserHistoryItem[] = [];
+      for (let index: number = 0; index < source.length; index++) {
+        const item: UserHistoryItem | undefined = this.mapBoostGiven(source[index]);
+        if (item) {
+          items.push(item);
+        }
+      }
+      return {
+        success: true,
+        statusCode: response.statusCode,
+        challengeState: response.challengeState,
+        data: { items: items, hasMore: source.length >= UserProfileService.HISTORY_PAGE_SIZE }
+      };
+    } catch (error) {
+      return unexpectedResponse<UserHistoryPage>(response.statusCode, response.challengeState, '站点 boost 响应不是有效 JSON。');
+    }
+  }
+
+  private mapBoostGiven(source: DiscourseBoostGivenItem): UserHistoryItem | undefined {
+    const post: DiscourseBoostGivenPost | undefined = source.post;
+    if (!post || typeof post.topic_id !== 'number') {
+      return undefined;
+    }
+    const title: string = typeof post.topic_title === 'string' && post.topic_title.length > 0
+      ? post.topic_title : '一条 boost';
+    const item: UserHistoryItem = {
+      title: title,
+      excerpt: HtmlText.toPlainText(source.raw),
+      topicId: post.topic_id,
+      categoryId: typeof post.category_id === 'number' ? post.category_id : undefined,
+      createdAt: typeof source.created_at === 'string' && source.created_at.length > 0 ? source.created_at : undefined,
+      kind: 'boosts',
+      targetUsername: typeof post.username === 'string' && post.username.length > 0 ? post.username : undefined,
+      cursor: typeof source.id === 'number' ? source.id : undefined
+    };
+    return item;
+  }
+
+  // discourse-reactions「给出的回应」:GET /discourse-reactions/posts/reactions.json?username=U
+  // 分页参数 beforeReactionUserId 是上一页最后一条 ref 的 id(首页 0=不带)。响应是顶层裸数组。
+  async getReactionsGiven(username: string, beforeReactionUserId: number): Promise<NetworkResult<UserHistoryPage>> {
+    let path: string = `/discourse-reactions/posts/reactions.json?username=${encodeURIComponent(username)}`;
+    if (beforeReactionUserId > 0) {
+      path += `&before_reaction_user_id=${beforeReactionUserId}`;
+    }
+    const response: NetworkResult<string> = await this.bridge.getJson(path);
+    if (!response.success) {
+      return forwardFailure<UserHistoryPage>(response);
+    }
+    if (response.data === undefined) {
+      return unexpectedResponse<UserHistoryPage>(response.statusCode, response.challengeState, '站点回应响应为空。');
+    }
+    try {
+      const source: DiscourseReactionHistoryItem[] = JSON.parse(response.data) as DiscourseReactionHistoryItem[];
+      const items: UserHistoryItem[] = [];
+      for (let index: number = 0; index < source.length; index++) {
+        const item: UserHistoryItem | undefined = this.mapReactionGiven(source[index]);
+        if (item) {
+          items.push(item);
+        }
+      }
+      return {
+        success: true,
+        statusCode: response.statusCode,
+        challengeState: response.challengeState,
+        data: { items: items, hasMore: source.length >= UserProfileService.HISTORY_PAGE_SIZE }
+      };
+    } catch (error) {
+      return unexpectedResponse<UserHistoryPage>(response.statusCode, response.challengeState, '站点回应响应不是有效 JSON。');
+    }
+  }
+
+  private mapReactionGiven(source: DiscourseReactionHistoryItem): UserHistoryItem | undefined {
+    const postRef = source.post;
+    if (!postRef || typeof postRef.topic_id !== 'number') {
+      return undefined;
+    }
+    const rawTitle: string = typeof postRef.topic_title === 'string' ? postRef.topic_title : '';
+    const altTitle: string = typeof postRef.title === 'string' ? postRef.title : '';
+    const title: string = rawTitle.length > 0 ? rawTitle : (altTitle.length > 0 ? altTitle : '一条回应');
+    const item: UserHistoryItem = {
+      title: title,
+      excerpt: HtmlText.toPlainText(postRef.excerpt),
+      topicId: postRef.topic_id,
+      postNumber: typeof postRef.post_number === 'number' ? postRef.post_number : undefined,
+      categoryId: typeof postRef.category_id === 'number' ? postRef.category_id : undefined,
+      createdAt: typeof source.created_at === 'string' && source.created_at.length > 0 ? source.created_at : undefined,
+      kind: 'reactions',
+      targetUsername: typeof postRef.username === 'string' && postRef.username.length > 0 ? postRef.username : undefined,
+      cursor: typeof source.id === 'number' ? source.id : undefined
+    };
+    return item;
+  }
+
+  // discourse-topic-voting「投过票的主题」:GET /topics/voted-by/{username}.json?page=N
+  // 响应是标准 topic list(topic_list.topics + more_topics_url)。页码从 0 起。
+  async getVotedTopics(username: string, page: number): Promise<NetworkResult<UserHistoryPage>> {
+    const path: string = `/topics/voted-by/${encodeURIComponent(username)}.json?page=${page}`;
+    const response: NetworkResult<string> = await this.bridge.getJson(path);
+    if (!response.success) {
+      return forwardFailure<UserHistoryPage>(response);
+    }
+    if (response.data === undefined) {
+      return unexpectedResponse<UserHistoryPage>(response.statusCode, response.challengeState, '站点投票响应为空。');
+    }
+    try {
+      const payload: DiscourseVotedTopicsResponse = JSON.parse(response.data) as DiscourseVotedTopicsResponse;
+      const list: DiscourseVotedTopicList | undefined = payload.topic_list;
+      const source: DiscourseVotedTopic[] = list && list.topics ? list.topics : [];
+      const items: UserHistoryItem[] = [];
+      for (let index: number = 0; index < source.length; index++) {
+        const item: UserHistoryItem | undefined = this.mapVotedTopic(source[index]);
+        if (item) {
+          items.push(item);
+        }
+      }
+      const hasMore: boolean = list !== undefined && typeof list.more_topics_url === 'string' &&
+        list.more_topics_url.length > 0;
+      return {
+        success: true,
+        statusCode: response.statusCode,
+        challengeState: response.challengeState,
+        data: { items: items, hasMore: hasMore }
+      };
+    } catch (error) {
+      return unexpectedResponse<UserHistoryPage>(response.statusCode, response.challengeState, '站点投票响应不是有效 JSON。');
+    }
+  }
+
+  private mapVotedTopic(source: DiscourseVotedTopic): UserHistoryItem | undefined {
+    if (typeof source.id !== 'number' || typeof source.title !== 'string' || source.title.length === 0) {
+      return undefined;
+    }
+    const item: UserHistoryItem = {
+      title: source.title,
+      excerpt: '',
+      topicId: source.id,
+      slug: typeof source.slug === 'string' && source.slug.length > 0 ? source.slug : undefined,
+      categoryId: typeof source.category_id === 'number' ? source.category_id : undefined,
+      createdAt: typeof source.created_at === 'string' && source.created_at.length > 0 ? source.created_at : undefined,
+      kind: 'votes'
+    };
+    return item;
   }
 
   private mapSolvedPost(sourcePost: DiscourseSolvedPost): SolvedPostItem | undefined {
