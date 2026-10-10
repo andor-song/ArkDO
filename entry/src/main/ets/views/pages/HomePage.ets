@@ -151,11 +151,12 @@ const INCOMING_INSERT_MS: number = 360;
 const INCOMING_INSERT_ROW_ESTIMATE: number = 96;
 // 顶栏主标题(版块/标签名)的字号区间:装得下用大的,长名字自适应往下缩,缩到下限还装不下才截断。
 // 默认标题(论坛名/域名)也走这套:长度虽短,但长论坛名同样需要缩字,不写死 26。
-// 独占一行时给足 21;要带副行时收到 19,和 13 的副行拉开层次但不至于一大一小失衡。
-const TITLE_MAX_FONT_SIZE: number = 21;
-const TITLE_MIN_FONT_SIZE: number = 15;
-const TITLE_WITH_SUMMARY_MAX_FONT_SIZE: number = 19;
-const TITLE_WITH_SUMMARY_MIN_FONT_SIZE: number = 14;
+// 独占一行时给 18(用户反馈 21 偏大,与二级页标题 20 拉开又不失识别度);要带副行时收到 17,
+// 和 13 的副行拉开层次但不至于一大一小失衡。min 同步收小,长名缩字仍留有余量。
+const TITLE_MAX_FONT_SIZE: number = 18;
+const TITLE_MIN_FONT_SIZE: number = 14;
+const TITLE_WITH_SUMMARY_MAX_FONT_SIZE: number = 17;
+const TITLE_WITH_SUMMARY_MIN_FONT_SIZE: number = 13;
 // 副行胶囊:高度压到 20 是为了两行合计仍落在 MINI 顶栏高度内(标题 19 + 间距 1 + 胶囊 20)。
 // 实机若发现被裁,优先动这三个数。
 const SUMMARY_FONT_SIZE: number = 12;
@@ -1039,7 +1040,7 @@ export struct HomePage {
   // 顶栏标题区。全默认(全站 · 最新 · 不限标签)时与改造前完全一致——单行大标题,「ArkDO」末尾的 O
   // 换成 linux.do 三色圆 logo(内联 ImageSpan 保持基线对齐;logo 为固定色 SVG,深色模式下不翻转以保留品牌配色)。
   //
-  // 一旦有筛选条件就长出第二行条件摘要,主标题相应收一号(21 → 19),两行合计仍落在 MINI 顶栏高度内。
+  // 一旦有筛选条件就长出第二行条件摘要,主标题相应收一号(18 → 17),两行合计仍落在 MINI 顶栏高度内。
   // 默认态零视觉负担、有条件时才占位,这样"清爽"和"看得见当前在筛什么"才能同时成立。
   @Builder
   private FeedTitle() {
