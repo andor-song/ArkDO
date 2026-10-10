@@ -16,7 +16,7 @@ import { LINUXDO_FA_SYMBOLS_RAWFILE, loadFaIconsFromRawContent } from '../views/
 import { LINUXDO_TAG_ICONS_RAWFILE, loadTagIconsFromRawContent } from '../views/components/TagIconRegistry';
 import { ArkWebNetworkBridge } from '../services/network/ArkWebNetworkBridge';
 import { LoginGate } from '../services/session/LoginGate';
-import { parsePushNotificationRouteFromParameters, PushNotificationRoute, describePushNotificationRoute } from '../services/push/PushNotificationNavigation';
+import { parseArkDoUriToRoute, parsePushNotificationRouteFromParameters, PushNotificationRoute, describePushNotificationRoute } from '../services/push/PushNotificationNavigation';
 import { PushNotificationNavigationEventBus } from '../services/push/PushNotificationNavigationEventBus';
 import { PushTokenUpdateEventBus } from '../services/push/PushTokenUpdateEventBus';
 import { loadPushRelayConfigFromRawContent, PUSH_RELAY_CONFIG_RAWFILE } from '../services/push/PushRelayConfig';
@@ -28,6 +28,7 @@ import { LotteryTipPrefs } from '../services/topic/LotteryTipPrefs';
 import { RealtimePostsPrefs } from '../services/realtime/RealtimePostsPrefs';
 import { FabGlassPrefs } from '../common/ui/FabGlassPrefs';
 import { TopicListStylePrefs } from '../common/theme/TopicListStylePrefs';
+import { ReadingFontSizePrefs } from '../common/theme/ReadingFontSizePrefs';
 import { AnimatedAvatarPrefs } from '../services/avatar/AnimatedAvatarPrefs';
 import { VideoTranscoder } from '../services/upload/VideoTranscoder';
 
@@ -47,6 +48,9 @@ export default class EntryAbility extends UIAbility {
     // 派生,DoH 要按它的域名下发、宿主 webview 要按它的 origin 引导、首页要按它拉列表——
     // 任何一项跑在它前面都会拿到空地址。未配置论坛时保持未配置状态,由首启引导页接手。
     CurrentSite.init(this.context);
+    // 深链(arkdo://)须在 CurrentSite.init 之后处理:同站相对路径要按当前论坛的 BASE_URL
+    // 才能规整成绝对地址。命中后由 EventBus 挂起,等宿主就绪再消费(冷启动 pending 通路)。
+    this.handleDeepLinkWant(want, 'onCreate');
     // 登录态镜像绑定磁盘,须早于任何页面读取 AppStorage:冷启动即恢复上次登录态,
     // 避免已登录用户在首个会话检查回来前被误判为游客(阅读追踪不启动、写操作被拦)。
     LoginGate.initPersist();
@@ -69,6 +73,9 @@ export default class EntryAbility extends UIAbility {
     // 「帖子列表样式」(字号/字重/行高/行间距/头像):读盘并种入 AppStorage 镜像,须早于任何
     // 帖子列表挂载,保证首帧就按用户设置渲染,不出现「先按默认画一遍再跳成设置值」。
     TopicListStylePrefs.load(this.context);
+    // 「阅读字号」(正文基准字号/行高):读盘并种入 AppStorage 镜像,须早于任何正文渲染器挂载,
+    // 保证首帧就按用户设置渲染,不出现「先按默认画一遍再跳成设置值」。
+    ReadingFontSizePrefs.load(this.context);
     // 「动态头像」开关：读盘并种入 AppStorage 镜像，须早于任何列表挂载——UserAvatar 在
     // aboutToAppear 就要据此决定走原生 Image(可播动图)还是走桥取首帧(静态)。
     AnimatedAvatarPrefs.load(this.context);
@@ -94,6 +101,7 @@ export default class EntryAbility extends UIAbility {
 
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onNewWant');
+    this.handleDeepLinkWant(want, 'onNewWant');
     this.handlePushNotificationWant(want, 'onNewWant');
   }
 
@@ -235,6 +243,27 @@ export default class EntryAbility extends UIAbility {
     } catch (err) {
       const error: BusinessError = err as BusinessError;
       Log.i(`[ArkDO][EntryAbility] push tokenUpdate subscribe failed code=${error.code} message=${error.message ?? ''}`);
+    }
+  }
+
+  // 深链(arkdo:// scheme)在推送参数之前优先处理:深链自带完整目标信息,不依赖 want.parameters。
+  private handleDeepLinkWant(want: Want, source: string): boolean {
+    const uri: string = typeof want.uri === 'string' ? want.uri : '';
+    if (uri.length === 0 || !uri.toLowerCase().startsWith('arkdo://')) {
+      return false;
+    }
+    try {
+      const route: PushNotificationRoute | undefined = parseArkDoUriToRoute(uri);
+      if (!route) {
+        Log.i(`[ArkDO][EntryAbility] deeplink ${source} no route uri=${uri}`);
+        return true;
+      }
+      Log.i(`[ArkDO][EntryAbility] deeplink ${source} route path=${describePushNotificationRoute(route)}`);
+      PushNotificationNavigationEventBus.publish(route);
+      return true;
+    } catch (err) {
+      Log.i(`[ArkDO][EntryAbility] deeplink ${source} parse failed error=${JSON.stringify(err)}`);
+      return true;
     }
   }
 

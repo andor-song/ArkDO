@@ -10,6 +10,8 @@ export enum AppRouteName {
   DIAGNOSTICS_SETTINGS = 'diagnosticsSettings',
   // 帖子列表样式(字号/字重/行高/行间距/头像),入口在设置页「外观」组。
   TOPIC_LIST_STYLE_SETTINGS = 'topicListStyleSettings',
+  // 阅读字号(正文基准字号/行高),入口在设置页「外观」组。
+  READING_FONT_SIZE_SETTINGS = 'readingFontSizeSettings',
   LEVEL_PROGRESS = 'levelProgress',
   // 个人资料编辑页:登录本人编辑姓名/头衔/网站/所在地/简介,入口在个人中心身份卡。
   PROFILE_EDIT = 'profileEdit',
@@ -118,6 +120,16 @@ export interface TopicListStyleSettingsRouteParam {
 }
 
 export function buildTopicListStyleSettingsRouteParam(source: string): TopicListStyleSettingsRouteParam {
+  return {
+    source: source
+  };
+}
+
+export interface ReadingFontSizeSettingsRouteParam {
+  source: string;
+}
+
+export function buildReadingFontSizeSettingsRouteParam(source: string): ReadingFontSizeSettingsRouteParam {
   return {
     source: source
   };

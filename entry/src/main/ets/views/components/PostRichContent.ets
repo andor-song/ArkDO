@@ -26,6 +26,15 @@ import { ContentImageCache } from '../../services/network/ContentImageCache';
 import { BlockedImageHosts } from '../../services/network/BlockedImageHosts';
 import { image } from '@kit.ImageKit';
 import { APP_IS_DARK_STORAGE_KEY } from '../../common/theme/ThemeManager';
+import {
+  READING_BODY_FONT_SIZE_KEY,
+  READING_LINE_HEIGHT_RATIO_KEY,
+  readingBodyLineHeight,
+  readingBadgeFontSize,
+  readingHeadingFontSize,
+  readingHeadingLineHeight,
+  readingInlineCodeFontSize
+} from '../../common/theme/ReadingFontSizePrefs';
 import { APP_IS_WIDE_STORAGE_KEY } from '../../common/utils/BreakpointManager';
 import { display } from '@kit.ArkUI';
 import { showToast as promptToast, TOAST_SHORT_MS } from '../../common/utils/Toast';
@@ -35,11 +44,6 @@ const LOG_TAG: string = '[ArkDO][PostRichContent]';
 // 块级图片自带尺寸小于该阈值（如 emoji 20×20、小图标）时按真实尺寸显示，
 // 不撑满栏宽，避免小表情被 .width('100%') 拉成大方块。
 const SMALL_IMAGE_MAX: number = 48;
-// 链接点击数角标的字号与高度。两者分开:高度取正文行高(22)让胶囊与前面的链接文字齐平,
-// 字号比正文(15)小一号,数字不抢戏。圆角与内边距都从高度算出来,嫌大只动这两个值。
-const LINK_CLICKS_BADGE_FONT_SIZE: number = 14;
-const LINK_CLICKS_BADGE_LINE_HEIGHT: number = 22;
-
 // 图片浏览器 hero 转场用的源节点 id 序号：id 必须全 app 唯一，而同一张图 URL 可能同时
 // 出现在多个 post(引用/跨楼层重复贴图)里,单靠 URL 会撞。每个 PostRichContent 实例领一个
 // 号,与图片 URL 组合成 id,同实例内同 URL 出现两次才会重合(极罕见,后果仅是缩回前一张)。
@@ -132,6 +136,10 @@ export struct PostRichContent {
   // 宽屏标志:平板横屏双栏时正文大图启用「居中 + 宽度封顶 + 按屏高限高」的合规渲染。
   // 手机、平板竖屏恒为 false,大图走原有 width('100%') 左对齐渲染,一字未改。
   @StorageProp(APP_IS_WIDE_STORAGE_KEY) private appIsWide: boolean = false;
+  // 阅读字号:正文基准字号与行高倍率,由设置页「阅读字号」调节。正文/标题/行内 code/角标
+  // 都按这两个标量派生,拖动滑块时 @StorageProp 穿透即时重排,无需任何页面级刷新。
+  @StorageProp(READING_BODY_FONT_SIZE_KEY) private readingBodyFontSize: number = 15;
+  @StorageProp(READING_LINE_HEIGHT_RATIO_KEY) private readingLineHeightRatio: number = 1.47;
   // 宽屏大图的高度上限(vp),惰性计算并缓存:取 min(520, 3/5 屏高),既满足详情页内容型
   // 「不超过 3/5 屏高」的占比建议,又保证绝不比手机现状(520)更高。
   private cachedWideImageMaxHeight: number = 0;
@@ -380,11 +388,11 @@ export struct PostRichContent {
   private InlineTextBlock(inlines: RichInlineNode[], marginTop: number, path: string) {
     Text() {
       ForEach(inlines, (token: RichInlineNode, index: number) => {
-        this.InlineToken(token, path, 15, false)
+        this.InlineToken(token, path, this.readingBodyFontSize, false)
       }, (token: RichInlineNode, index: number) => this.inlineKey(token, index))
     }
-    .fontSize(15)
-    .lineHeight(22)
+    .fontSize(this.readingBodyFontSize)
+    .lineHeight(readingBodyLineHeight(this.readingBodyFontSize, this.readingLineHeightRatio))
     // 正文主体色:原 #374151(深石板灰)。勿用 text_secondary(#6B7280),那是次要/meta 灰,会让正文发淡。
     .fontColor($r('app.color.text_body'))
     .copyOption(CopyOptions.LocalDevice)
@@ -403,14 +411,14 @@ export struct PostRichContent {
   private ClicksBadgeSpan(clicks: number) {
     if (clicks > 0) {
       Span(' ')
-        .fontSize(LINK_CLICKS_BADGE_FONT_SIZE)
+        .fontSize(readingBadgeFontSize(this.readingBodyFontSize))
       Span(` ${clicks} `)
-        .fontSize(LINK_CLICKS_BADGE_FONT_SIZE)
-        .lineHeight(LINK_CLICKS_BADGE_LINE_HEIGHT)
+        .fontSize(readingBadgeFontSize(this.readingBodyFontSize))
+        .lineHeight(readingBodyLineHeight(this.readingBodyFontSize, this.readingLineHeightRatio))
         .fontColor($r('app.color.link_clicks_fg'))
         .textBackgroundStyle({
           color: $r('app.color.link_clicks_bg'),
-          radius: LINK_CLICKS_BADGE_LINE_HEIGHT / 2
+          radius: readingBodyLineHeight(this.readingBodyFontSize, this.readingLineHeightRatio) / 2
         })
     }
   }
@@ -421,11 +429,11 @@ export struct PostRichContent {
   private ClicksBadgeTag(clicks: number) {
     if (clicks > 0) {
       Text(`${clicks}`)
-        .fontSize(LINK_CLICKS_BADGE_FONT_SIZE)
+        .fontSize(readingBadgeFontSize(this.readingBodyFontSize))
         .fontColor($r('app.color.link_clicks_fg'))
         .backgroundColor($r('app.color.link_clicks_bg'))
-        .height(LINK_CLICKS_BADGE_LINE_HEIGHT)
-        .borderRadius(LINK_CLICKS_BADGE_LINE_HEIGHT / 2)
+        .height(readingBodyLineHeight(this.readingBodyFontSize, this.readingLineHeightRatio))
+        .borderRadius(readingBodyLineHeight(this.readingBodyFontSize, this.readingLineHeightRatio) / 2)
         .textAlign(TextAlign.Center)
         .padding({ left: 8, right: 8 })
         .margin({ left: 6 })
@@ -444,14 +452,15 @@ export struct PostRichContent {
       } else if (token.type === RichInlineType.IMAGE) {
         // 行内 emoji 用一个打码字符占位,隐藏时不加载图片。
         Span(SPOILER_REDACT_CHAR)
-          .fontSize(15)
+          .fontSize(this.readingBodyFontSize)
           .fontColor($r('app.color.text_body'))
           .onClick(() => {
             this.toggleSpoiler(path);
           })
       } else {
         Span(this.redactChars(token.text))
-          .fontSize(token.type === RichInlineType.CODE || token.code ? 14 : 15)
+          .fontSize(token.type === RichInlineType.CODE || token.code
+            ? readingInlineCodeFontSize(this.readingBodyFontSize) : this.readingBodyFontSize)
           .fontColor($r('app.color.text_body'))
           .onClick(() => {
             this.toggleSpoiler(path);
@@ -504,7 +513,7 @@ export struct PostRichContent {
           })
       }
       Span(token.text)
-        .fontSize(15)
+        .fontSize(this.readingBodyFontSize)
         .fontColor($r('app.color.brand'))
         .fontWeight(token.bold ? FontWeight.Bold : FontWeight.Normal)
         .fontStyle(token.italic ? FontStyle.Italic : FontStyle.Normal)
@@ -515,7 +524,7 @@ export struct PostRichContent {
     } else if (token.type === RichInlineType.CODE || token.code) {
       if (token.spoiler) {
         Span(token.text)
-          .fontSize(14)
+          .fontSize(readingInlineCodeFontSize(this.readingBodyFontSize))
           .fontFamily('monospace')
           .fontColor('#B45309')
           .backgroundColor($r('app.color.warn_soft_bg'))
@@ -524,7 +533,7 @@ export struct PostRichContent {
           })
       } else {
         Span(token.text)
-          .fontSize(14)
+          .fontSize(readingInlineCodeFontSize(this.readingBodyFontSize))
           .fontFamily('monospace')
           .fontColor('#B45309')
           .backgroundColor($r('app.color.warn_soft_bg'))
@@ -532,7 +541,7 @@ export struct PostRichContent {
     } else if (token.spoiler) {
       // 已揭示的行内剧透文字:再点一下恢复遮蔽(链接/emoji 保持各自的点击行为)。
       Span(token.text)
-        .fontSize(15)
+        .fontSize(this.readingBodyFontSize)
         .fontColor($r('app.color.text_body'))
         .fontWeight(token.bold ? FontWeight.Bold : FontWeight.Normal)
         .fontStyle(token.italic ? FontStyle.Italic : FontStyle.Normal)
@@ -552,11 +561,11 @@ export struct PostRichContent {
   private HeadingBlock(block: RichBlock, marginTop: number, path: string) {
     Text() {
       ForEach(this.safeInlines(block), (token: RichInlineNode, index: number) => {
-        this.InlineToken(token, path, this.getHeadingFontSize(block.level ? block.level : 2), true)
+        this.InlineToken(token, path, this.headingFontSize(block.level ? block.level : 2), true)
       }, (token: RichInlineNode, index: number) => this.inlineKey(token, index))
     }
-    .fontSize(this.getHeadingFontSize(block.level ? block.level : 2))
-    .lineHeight(this.getHeadingLineHeight(block.level ? block.level : 2))
+    .fontSize(this.headingFontSize(block.level ? block.level : 2))
+    .lineHeight(this.headingLineHeight(block.level ? block.level : 2))
     .fontWeight(FontWeight.Bold)
     .fontColor($r('app.color.text_primary'))
     .width('100%')
@@ -885,8 +894,8 @@ export struct PostRichContent {
             this.CalloutTitleToken(token, `${path}-ct`, this.calloutColor(block))
           }, (token: RichInlineNode, tokenIndex: number) => this.inlineKey(token, tokenIndex))
         }
-        .fontSize(15)
-        .lineHeight(22)
+        .fontSize(this.readingBodyFontSize)
+        .lineHeight(readingBodyLineHeight(this.readingBodyFontSize, this.readingLineHeightRatio))
         .fontWeight(FontWeight.Bold)
         .fontColor(this.calloutColor(block))
         .layoutWeight(1)
@@ -1117,9 +1126,9 @@ export struct PostRichContent {
       ForEach(this.safeItems(block), (item: RichListItem, index: number) => {
         Row() {
           Text(block.ordered ? `${index + 1}.` : '•')
-            .fontSize(15)
-            // 行高对齐正文的 22:否则圆点 Text 默认行高偏矮,Row 顶对齐下圆点被顶到第一行文字上方。
-            .lineHeight(22)
+            .fontSize(this.readingBodyFontSize)
+            // 行高对齐正文:否则圆点 Text 默认行高偏矮,Row 顶对齐下圆点被顶到第一行文字上方。
+            .lineHeight(readingBodyLineHeight(this.readingBodyFontSize, this.readingLineHeightRatio))
             .fontColor($r('app.color.text_secondary'))
             .width(24)
 
@@ -1196,8 +1205,8 @@ export struct PostRichContent {
 
         if (block.description && block.description.length > 0) {
           Text(block.description)
-            .fontSize(15)
-            .lineHeight(22)
+            .fontSize(this.readingBodyFontSize)
+            .lineHeight(readingBodyLineHeight(this.readingBodyFontSize, this.readingLineHeightRatio))
             .fontColor($r('app.color.text_primary'))
             .wordBreak(WordBreak.BREAK_ALL)
             .maxLines(3)
@@ -1307,7 +1316,7 @@ export struct PostRichContent {
                 } else {
                   Text() {
                     ForEach(cell.inlines, (token: RichInlineNode, t: number) => {
-                      this.InlineToken(token, `${path}-r${r}c${c}`, 15, false)
+                      this.InlineToken(token, `${path}-r${r}c${c}`, this.readingBodyFontSize, false)
                     }, (token: RichInlineNode, t: number) => this.inlineKey(token, t))
                   }
                   .fontSize(14)
@@ -1521,8 +1530,8 @@ export struct PostRichContent {
       }, (inner: RichBlock, childIndex: number) => this.blockKey(inner, childIndex))
     } else {
       Text(this.redactChars(this.redactedBlockText(block)))
-        .fontSize(15)
-        .lineHeight(22)
+        .fontSize(this.readingBodyFontSize)
+        .lineHeight(readingBodyLineHeight(this.readingBodyFontSize, this.readingLineHeightRatio))
         .fontColor($r('app.color.text_secondary'))
         .width('100%')
         .margin({ top: index > 0 ? 10 : 0 })
@@ -1742,24 +1751,12 @@ export struct PostRichContent {
     this.expandedDisclosures = next;
   }
 
-  private getHeadingFontSize(level: number): number {
-    if (level <= 1) {
-      return 22;
-    }
-    if (level === 2) {
-      return 20;
-    }
-    return 17;
+  private headingFontSize(level: number): number {
+    return readingHeadingFontSize(this.readingBodyFontSize, level);
   }
 
-  private getHeadingLineHeight(level: number): number {
-    if (level <= 1) {
-      return 28;
-    }
-    if (level === 2) {
-      return 26;
-    }
-    return 23;
+  private headingLineHeight(level: number): number {
+    return readingHeadingLineHeight(this.readingBodyFontSize, level);
   }
 
   private hasImageSize(block: RichBlock): boolean {

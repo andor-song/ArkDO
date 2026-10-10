@@ -54,6 +54,8 @@ export struct SettingsPage {
   onOpenExperimental: () => void = () => {};
   // 帖子列表样式子页(字号/字重/行高/行间距/头像)。与外观同组:都是纯观感设置。
   onOpenTopicListStyle: () => void = () => {};
+  // 阅读字号子页(正文基准字号/行高)。与外观同组:都是纯观感设置。
+  onOpenReadingFontSize: () => void = () => {};
   // 论坛管理/切换页:push 由 RootTabPage 注入。
   onOpenForums: () => void = () => {};
   // 站点管理页:与上面四个同款,push 由 RootTabPage 注入。
@@ -182,6 +184,10 @@ export struct SettingsPage {
         this.HairlineInset()
         this.SettingCell($r('sys.symbol.textformat'), '帖子列表样式', '', () => {
           this.onOpenTopicListStyle();
+        })
+        this.HairlineInset()
+        this.SettingCell($r('sys.symbol.textformat'), '阅读字号', '', () => {
+          this.onOpenReadingFontSize();
         })
         this.HairlineInset()
         this.FabGlassRow()
