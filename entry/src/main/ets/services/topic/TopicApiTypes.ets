@@ -384,3 +384,25 @@ export interface DiscourseGroupedSearchResult {
 export interface DiscoursePostUpdateResponse {
   post?: DiscoursePost;
 }
+
+// POST /posts 的私信请求体(对齐官方 composer 发私信字段)。
+// 与 CreateTopicPayload 的区别:archetype 固定 private_message,带 target_usernames
+// (目标用户,单个或多人),无分类,title 可省(空时服务端按正文首行自动起标题)。
+export interface CreatePrivateMessagePayload {
+  raw: string;
+  target_usernames: string[];
+  title?: string;
+  unlist_topic: boolean;
+  is_warning: boolean;
+  archetype: string;
+  typing_duration_msecs: number;
+  composer_open_duration_msecs: number;
+  composer_version: number;
+  tags: string[];
+  featured_link: string | null;
+  shared_draft: boolean;
+  draft_key: string;
+  locale: string;
+  image_sizes: Record<string, number>;
+  nested_post: boolean;
+}

@@ -78,8 +78,8 @@ import { SolvedPostsPage } from './SolvedPostsPage';
 import { TopicDetailPage } from './TopicDetailPage';
 import { bumpTick, COMPOSER_OVERLAY_BACK_TICK_KEY, COMPOSER_OVERLAY_VISIBLE_KEY, DRAFTS_COMPOSER_BACK_TICK_KEY,
   DRAFTS_COMPOSER_VISIBLE_KEY, DRAFTS_REFRESH_TICK_KEY, IMAGE_VIEWER_BACK_TICK_KEY, IMAGE_VIEWER_VISIBLE_KEY,
-  PROFILE_DRAFT_COUNT_KEY, SEARCH_OVERLAY_BACK_TICK_KEY, SEARCH_OVERLAY_VISIBLE_KEY, SETTINGS_DOH_TICK,
-  SITES_TICK } from '../../common/constants/StorageKeys';
+  PROFILE_DRAFT_COUNT_KEY, PROFILE_PM_BACK_TICK_KEY, PROFILE_PM_VISIBLE_KEY, SEARCH_OVERLAY_BACK_TICK_KEY,
+  SEARCH_OVERLAY_VISIBLE_KEY, SETTINGS_DOH_TICK, SITES_TICK } from '../../common/constants/StorageKeys';
 import { DraftEventBus } from '../../services/draft/DraftEventBus';
 import { WebViewPage } from './WebViewPage';
 import { showToast as promptToast } from '../../common/utils/Toast';
@@ -1059,6 +1059,8 @@ export struct RootTabPage {
         })
       }
       .hideTitleBar(true)
+      // 私信浮层开着时消费返回键(bump tick 让 UserProfilePage 关浮层);未开则放行默认 pop。
+      .onBackPressed(() => this.consumeProfilePmBack())
       // NavDestination 自身背景默认铺满含状态栏区域;统一为 page_bg,让各二级页顶部状态栏
       // 与页内头部/导航栏同色(否则暗色下露出默认浅底,与内容不一致)。
       .backgroundColor($r('app.color.page_bg'))
@@ -1537,6 +1539,16 @@ export struct RootTabPage {
 
   // 详情页返回键统一入口:先看全屏编辑器浮层(可见则 bump tick 交详情页一镜回落),再看图片预览。
   // 都没开返回 false 放行默认 pop(弹掉详情页)。挂在详情页 NavDestination 的 onBackPressed 上。
+  // 他人主页的私信浮层打开时消费返回键(bump tick 让 UserProfilePage 关浮层);未开则放行默认 pop。
+  private consumeProfilePmBack(): boolean {
+    const visible: boolean = (AppStorage.get(PROFILE_PM_VISIBLE_KEY) as boolean | undefined) ?? false;
+    if (visible) {
+      bumpTick(PROFILE_PM_BACK_TICK_KEY);
+      return true;
+    }
+    return false;
+  }
+
   // 草稿页的续写浮层打开时消费返回键(bump tick 让 DraftsPage 关浮层);未开则放行默认 pop。
   private consumeDraftsBack(): boolean {
     const visible: boolean = (AppStorage.get(DRAFTS_COMPOSER_VISIBLE_KEY) as boolean | undefined) ?? false;

@@ -123,6 +123,15 @@ export struct ComposerPage {
   onSubmitTopic: (title: string, categoryId: number, raw: string, tags: string[], typingMs: number, composerMs: number) => Promise<boolean> =
     (title: string, categoryId: number, raw: string, tags: string[], typingMs: number, composerMs: number) => Promise.resolve(false);
 
+  // ===== 私信模式 =====
+  // true=发私信(顶栏下渲染固定收件人行,无标题/分类/标签,走 onSubmitPrivateMessage)。
+  // 与 composeTopic 互斥:私信不存草稿、不选分类,故独立成开关、不复用发帖链路。
+  composePrivateMessage: boolean = false;
+  // 收件人用户名(私信模式必填),如 "kevin"。只读展示,不支持改成多人。
+  recipientUsername: string = '';
+  onSubmitPrivateMessage: (raw: string, typingMs: number, composerMs: number) => Promise<boolean> =
+    (raw: string, typingMs: number, composerMs: number) => Promise.resolve(false);
+
   // ===== 草稿续写(从草稿页点进来时带入) =====
   // 非空=续写该草稿(自动存沿用同一 key/序号);空=新开一篇,首次保存时现生成 new_topic_<ts>。
   initialDraftKey: string = '';
@@ -306,6 +315,7 @@ export struct ComposerPage {
     }
     // 发帖还得有标题、选了分类、至少一个标签。标题的长度下限不在本地猜(站点 min_topic_title_length
     // 未知,猜严了会误伤合法标题),只拦空;真不够长由服务端报错原文告知。
+    // 私信:收件人是发起方带入的固定值,只需正文够长,无标题/分类/标签门槛。
     if (this.composeTopic) {
       return this.title.trim().length > 0 && this.categoryId >= 0 && this.selectedTags.length > 0;
     }
@@ -804,7 +814,9 @@ export struct ComposerPage {
     try {
       ok = this.composeTopic
         ? await this.onSubmitTopic(this.title.trim(), this.categoryId, this.text.trim(), this.selectedTags.map((t: TagSuggestion) => t.name), typingMs, composerMs)
-        : await this.onSubmit(this.text.trim(), typingMs, composerMs);
+        : (this.composePrivateMessage
+          ? await this.onSubmitPrivateMessage(this.text.trim(), typingMs, composerMs)
+          : await this.onSubmit(this.text.trim(), typingMs, composerMs));
     } catch (error) {
       ok = false;
     }
@@ -825,8 +837,9 @@ export struct ComposerPage {
         // 让标题/分类/正文首帧位置与改造前完全一致，也避免被原生按钮盖住。
         Blank()
           .height(56)
-        // 发帖模式:标题 + 分类。预览态藏起来——预览是看正文成品的,标题栏杵在那儿只是干扰。
-        if (this.composeTopic && this.mode === ComposerMode.Edit) {
+        // 发帖模式:标题 + 分类;私信模式:收件人行。预览态都藏起来——预览是看正文成品的,
+        // 元信息行杵在那儿只是干扰。
+        if ((this.composeTopic || this.composePrivateMessage) && this.mode === ComposerMode.Edit) {
           this.TopicMetaBar()
         }
         this.ContentArea()
@@ -1138,49 +1151,71 @@ export struct ComposerPage {
     return modifier;
   }
 
-  // 发帖专属:标题输入 + 分类选择,通栏发丝线与正文分组(对齐项目的鸿蒙清爽风,不套卡片)。
+  // 顶栏下的元信息行:发帖=标题输入 + 分类 + 标签;私信=固定收件人行(不可编辑)。
+  // 都无描边卡片,通栏发丝线与正文分组(对齐项目的鸿蒙清爽风)。
   @Builder
   private TopicMetaBar() {
     Column() {
-      // 不硬设 height:TextInput 自身 padding 被外层固定高压死会把光标上下切掉(项目既有坑),
-      // 故只给上下 padding 撑开。
-      TextInput({ text: $$this.title, placeholder: '标题' })
-        .id(TITLE_FOCUS_ID)
+      if (this.composePrivateMessage) {
+        // 私信:收件人 + 正文首行即标题,无需标题输入/分类/标签。
+        Row() {
+          Text('发给')
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+          Text(`@${this.recipientUsername}`)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.brand'))
+            .margin({ left: 6, right: 6 })
+          // 收件人只展示不可改:私信入口在他人主页,收件人即当前浏览对象。
+          Text('(对方主页发起)')
+            .fontSize(12)
+            .fontColor($r('app.color.text_tertiary'))
+        }
         .width('100%')
-        .backgroundColor(Color.Transparent)
-        .borderRadius(0)
+        .alignItems(VerticalAlign.Center)
         .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-        .placeholderColor($r('app.color.text_tertiary'))
-        .enterKeyType(EnterKeyType.Next)
-        .onChange((value: string) => {
-          // 标题也算"开始写了":遥测的 typing 起点不该只认正文。
-          if (this.firstTypeTimeMs === 0 && value.length > 0) {
-            this.firstTypeTimeMs = Date.now();
-          }
-          this.scheduleDraftSave();
-        })
-        // 挂载即抢焦点:发帖从标题写起,键盘直接弹给标题。
-        .onAppear(() => {
-          this.getUIContext().getFocusController().requestFocus(TITLE_FOCUS_ID);
-        })
+      } else {
+        // 不硬设 height:TextInput 自身 padding 被外层固定高压死会把光标上下切掉(项目既有坑),
+        // 故只给上下 padding 撑开。
+        TextInput({ text: $$this.title, placeholder: '标题' })
+          .id(TITLE_FOCUS_ID)
+          .width('100%')
+          .backgroundColor(Color.Transparent)
+          .borderRadius(0)
+          .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .placeholderColor($r('app.color.text_tertiary'))
+          .enterKeyType(EnterKeyType.Next)
+          .onChange((value: string) => {
+            // 标题也算"开始写了":遥测的 typing 起点不该只认正文。
+            if (this.firstTypeTimeMs === 0 && value.length > 0) {
+              this.firstTypeTimeMs = Date.now();
+            }
+            this.scheduleDraftSave();
+          })
+          // 挂载即抢焦点:发帖从标题写起,键盘直接弹给标题。
+          .onAppear(() => {
+            this.getUIContext().getFocusController().requestFocus(TITLE_FOCUS_ID);
+          })
 
-      // 分类 chip + 已选标签 chips + 「加标签」按钮,一行放不下自动换行。
-      // 间距一律用右边距+下边距(不用左边距):首列无前导边距→换行后各行左对齐;下边距→撑出行间距。
-      Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
-        this.CategoryChip()
+        // 分类 chip + 已选标签 chips + 「加标签」按钮,一行放不下自动换行。
+        // 间距一律用右边距+下边距(不用左边距):首列无前导边距→换行后各行左对齐;下边距→撑出行间距。
+        Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+          this.CategoryChip()
 
-        ForEach(this.selectedTags, (tag: TagSuggestion) => {
-          this.SelectedTagChip(tag)
-        }, (tag: TagSuggestion) => `t${tag.id}`)
+          ForEach(this.selectedTags, (tag: TagSuggestion) => {
+            this.SelectedTagChip(tag)
+          }, (tag: TagSuggestion) => `t${tag.id}`)
 
-        this.AddTagChip()
+          this.AddTagChip()
+        }
+        .width('100%')
+        // 底 padding 调小:每个 chip 自带 bottom:8,末行已有下缝,这里只补一点点。
+        .padding({ left: 16, right: 16, bottom: 2 })
       }
-      .width('100%')
-      // 底 padding 调小:每个 chip 自带 bottom:8,末行已有下缝,这里只补一点点。
-      .padding({ left: 16, right: 16, bottom: 2 })
 
       Divider()
         .strokeWidth(0.5)

@@ -9,7 +9,8 @@ import { buildTopicListPath, TopicListQuery } from './TopicListQuery';
 import { buildLinkClicks } from './LinkClicks';
 import { forwardFailure, unexpectedResponse } from '../network/NetworkResults';
 import { discourseErrorMessage } from '../network/DiscourseErrors';
-import { CreatePostResponse, CreateReplyPayload, CreateTopicPayload, DiscourseAcceptedAnswer,
+import { CreatePostResponse, CreatePrivateMessagePayload, CreateReplyPayload, CreateTopicPayload,
+  DiscourseAcceptedAnswer,
   DiscourseBadgeDef, DiscourseBookmarkDeleteResponse, DiscourseBookmarkResponse, DiscourseBoost,
   DiscourseBoostUser, DiscourseGroupedSearchResult, DiscourseLatestResponse, DiscoursePendingPost,
   DiscoursePoll, DiscoursePollOption, DiscoursePollVoteResponse, DiscoursePost, DiscourseReaction,
@@ -636,6 +637,76 @@ export class TopicService {
       return unexpectedResponse<CreateTopicOutcome>(response.statusCode, response.challengeState, '站点发帖响应缺少主题数据。');
     } catch (error) {
       return unexpectedResponse<CreateTopicOutcome>(response.statusCode, response.challengeState, '站点发帖响应不是有效 JSON。');
+    }
+  }
+
+  // 发私信:POST /posts,archetype=private_message + target_usernames。与发帖同端点,
+  // 靠 archetype 与 target_usernames 区分;无分类、无标签,title 可省(服务端自动按首行起标题)。
+  // 响应同样是 { action:'create_post', post:{…} } / enqueued:本页只判成不成功,不回主题。
+  async createPrivateMessage(
+    targetUsernames: string[],
+    raw: string,
+    title: string = '',
+    typingDurationMs: number = 0,
+    composerOpenDurationMs: number = 0
+  ): Promise<NetworkResult<CreateTopicOutcome>> {
+    const payload: CreatePrivateMessagePayload = {
+      raw: raw,
+      target_usernames: targetUsernames,
+      unlist_topic: false,
+      is_warning: false,
+      archetype: 'private_message',
+      typing_duration_msecs: Math.max(0, Math.round(typingDurationMs)),
+      composer_open_duration_msecs: Math.max(0, Math.round(composerOpenDurationMs)),
+      composer_version: 1,
+      tags: [],
+      featured_link: null,
+      shared_draft: false,
+      draft_key: 'new_message',
+      locale: '',
+      image_sizes: {},
+      nested_post: true
+    };
+    if (title.trim().length > 0) {
+      payload.title = title.trim();
+    }
+    const body: string = JSON.stringify(payload);
+    // 官方 composer 发私信停在消息页,Referer 给站点根即可(带上以过 CSRF/来源校验)。
+    const referrer: string = `${AppConstants.BASE_URL}/`;
+
+    const response: NetworkResult<string> = await this.bridge.postJson('/posts', body, {
+      notifyChallenge: true,
+      referrer: referrer
+    });
+    if (!response.success) {
+      return this.postFailure<CreateTopicOutcome>(response);
+    }
+    if (response.data === undefined) {
+      return unexpectedResponse<CreateTopicOutcome>(response.statusCode, response.challengeState, '站点发私信响应为空。');
+    }
+
+    try {
+      const wrapper: CreatePostResponse = JSON.parse(response.data) as CreatePostResponse;
+      const created: DiscoursePost | undefined = wrapper.post;
+      if (created !== undefined && typeof created.topic_id === 'number') {
+        return {
+          success: true,
+          statusCode: response.statusCode,
+          challengeState: response.challengeState,
+          data: { topicId: created.topic_id, pending: false }
+        };
+      }
+      if (wrapper.action === 'enqueued' || wrapper.pending_post !== undefined) {
+        return {
+          success: true,
+          statusCode: response.statusCode,
+          challengeState: response.challengeState,
+          data: { pending: true }
+        };
+      }
+      return unexpectedResponse<CreateTopicOutcome>(response.statusCode, response.challengeState, '站点发私信响应缺少主题数据。');
+    } catch (error) {
+      return unexpectedResponse<CreateTopicOutcome>(response.statusCode, response.challengeState, '站点发私信响应不是有效 JSON。');
     }
   }
 

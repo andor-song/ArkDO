@@ -34,6 +34,11 @@ export const COMPOSER_OVERLAY_BACK_TICK_KEY: string = 'composerOverlayBackTick';
 // 草稿页的续写浮层 + 草稿列表刷新信号。
 export const DRAFTS_COMPOSER_VISIBLE_KEY: string = 'draftsComposerVisible';
 export const DRAFTS_COMPOSER_BACK_TICK_KEY: string = 'draftsComposerBackTick';
+
+// 他人主页的私信浮层(独立一套 key:UserProfilePage 是栈内 NavDestination,返回键由
+// RootTabPage 在其 USER_PROFILE 分支消费,不能复用详情页的 COMPOSER_OVERLAY)。
+export const PROFILE_PM_VISIBLE_KEY: string = 'profilePmComposerVisible';
+export const PROFILE_PM_BACK_TICK_KEY: string = 'profilePmComposerBackTick';
 export const DRAFTS_REFRESH_TICK_KEY: string = 'draftsRefreshTick';
 // 「我的」页草稿角标。单独绑定 AppStorage，避免页面藏在 Navigation 栈中时 @Prop 对象停留在旧快照。
 export const PROFILE_DRAFT_COUNT_KEY: string = 'profileDraftCount';

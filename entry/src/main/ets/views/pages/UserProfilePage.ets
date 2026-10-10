@@ -43,6 +43,10 @@ import {
   requiresHdsLayoutSafeAreaAvoidance
 } from '../../common/ui/ImmersiveLightMaterial';
 import { buildImmersiveTitleBarStyle } from '../../common/ui/ImmersiveTitleBarStyle';
+import { LoginGate } from '../../services/session/LoginGate';
+import { CreateTopicOutcome, TopicService } from '../../services/topic/TopicService';
+import { ComposerPage } from './ComposerPage';
+import { bumpTick, PROFILE_PM_BACK_TICK_KEY, PROFILE_PM_VISIBLE_KEY } from '../../common/constants/StorageKeys';
 
 const LOG_TAG: string = '[ArkDO][UserProfile]';
 
@@ -112,6 +116,10 @@ export struct UserProfilePage {
   @State private endorseLoading: boolean = false;
   @State private endorseSubmitting: boolean = false;
   @State private endorseSelectedIds: number[] = [];
+  // 私信浮层可见态:发私信走原生 ComposerPage 全屏编辑,不再跳 WebView。
+  // 返回键由 RootTabPage 的 USER_PROFILE 分支经 PROFILE_PM_BACK_TICK_KEY 消费。
+  @State private showPrivateComposer: boolean = false;
+  @StorageProp(PROFILE_PM_BACK_TICK_KEY) @Watch('onPrivateComposerBackTick') private pmBackTick: number = 0;
   // 已加载的用户名:同一用户重进不重复拉取(缓存已按 username 分键)。
   private loadedUsername: string = '';
   private categoryIndex: CategoryIndex = new CategoryIndex();
@@ -135,6 +143,30 @@ export struct UserProfilePage {
     Stack({ alignContent: Alignment.TopStart }) {
       this.UserProfileScrollableContent()
       this.UserProfileTitleBarOverlay()
+
+      // 私信全屏编辑器浮层:盖在内容之上,不进 Navigation 栈,返回键由栈内 NavDestination 拦截。
+      if (this.showPrivateComposer) {
+        ComposerPage({
+          bridge: this.bridge,
+          isArkWebReady: this.isArkWebReady,
+          // 预览里的音视频要经下载委托过盾才拿得到字节(同详情页楼层)。
+          onResolveMedia: (url: string): Promise<string> => {
+            return this.bridge.downloadMedia(url);
+          },
+          headerTitle: '私信',
+          placeholder: '写下想对 TA 说的话…',
+          minChars: 1,
+          composePrivateMessage: true,
+          recipientUsername: this.username,
+          onBack: () => {
+            this.closePrivateComposer();
+          },
+          onSubmitPrivateMessage: (raw: string, typingMs: number, composerMs: number): Promise<boolean> => {
+            return this.submitPrivateMessage(raw, typingMs, composerMs);
+          }
+        })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut }))
+      }
     }
     .width('100%')
     .height('100%')
@@ -1213,10 +1245,44 @@ export struct UserProfilePage {
       user.avatarTemplate ? user.avatarTemplate : '', user.id);
   }
 
+  // 原生私信:打全屏编辑器浮层,成功即关不跳转(私信是私聊,发送成功留在原页即可)。
   private openPrivateMessage(): void {
-    this.onOpenWeb(
-      `${AppConstants.BASE_URL}/new-message?username=${encodeURIComponent(this.username)}`,
-      `私信 ${this.getDisplayName()}`);
+    if (!LoginGate.ensureLoggedIn()) {
+      return;
+    }
+    AppStorage.setOrCreate(PROFILE_PM_VISIBLE_KEY, true);
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.showPrivateComposer = true;
+    });
+  }
+
+  private closePrivateComposer(): void {
+    AppStorage.setOrCreate(PROFILE_PM_VISIBLE_KEY, false);
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.showPrivateComposer = false;
+    });
+  }
+
+  // 系统返回键(RootTabPage 在 USER_PROFILE 分支 onBackPressed 里 bump tick):浮层开着就关。
+  private onPrivateComposerBackTick(): void {
+    if (this.showPrivateComposer) {
+      this.closePrivateComposer();
+    }
+  }
+
+  // 发私信:POST /posts(archetype=private_message)。成功 toast 并关浮层;失败 toast 原文留内容重试。
+  private async submitPrivateMessage(raw: string, typingMs: number, composerMs: number): Promise<boolean> {
+    const service: TopicService = new TopicService(this.bridge);
+    const result: NetworkResult<CreateTopicOutcome> = await service.createPrivateMessage(
+      [this.username], raw, '', typingMs, composerMs);
+    if (result.success) {
+      promptToast(this.getUIContext(), '私信已发送', 1500);
+      // 返回 true 令 ComposerPage 自行关闭(其内部 ok 后自调 onBack)。
+      return true;
+    }
+    const reason: string = result.error ? result.error.message : '发送失败，请稍后重试。';
+    promptToast(this.getUIContext(), reason, 2500);
+    return false;
   }
 
   private openUserWebPage(): void {
