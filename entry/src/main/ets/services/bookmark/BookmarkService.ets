@@ -75,6 +75,13 @@ export class BookmarkService {
     return this.toBooleanResult(await this.bridge.putJson(`/bookmarks/${id}/toggle_pin`));
   }
 
+  // 书签重命名(discourse 的 name 字段):PUT /bookmarks/{id},form body name=xxx。
+  // 传空串即清除备注(Discourse 重命名为空 = 还原成默认标题显示)。
+  async updateBookmarkName(id: number, name: string): Promise<NetworkResult<boolean>> {
+    const body: string = `name=${encodeURIComponent(name)}`;
+    return this.toBooleanResult(await this.bridge.putForm(`/bookmarks/${id}`, body));
+  }
+
   private toBooleanResult(response: NetworkResult<string>): NetworkResult<boolean> {
     if (!response.success) {
       return {
@@ -153,6 +160,10 @@ export class BookmarkService {
       pinned: source.pinned === true,
       tags: this.mapTags(source.tags)
     };
+    // 用户自定义备注名:服务端 name 字段(书签重命名),有就给 UI 用,没有则退回标题。
+    if (typeof source.name === 'string' && source.name.length > 0) {
+      bookmark.name = source.name;
+    }
     if (typeof source.category_id === 'number') {
       bookmark.categoryId = source.category_id;
     }

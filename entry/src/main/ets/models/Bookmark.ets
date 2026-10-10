@@ -7,6 +7,8 @@ export interface Bookmark {
   id: number;
   topicId: number;
   title: string;
+  // 用户自定义备注名(Discourse 服务端书签的 name 字段,列表里优先级高于 title)。
+  name?: string;
   // 被收藏楼层的内容摘要,纯文本。
   excerpt: string;
   // 收藏定位到的楼号;主楼(1)不展示 #N 前缀,但仍用于跳转。

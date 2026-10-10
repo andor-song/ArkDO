@@ -44,6 +44,12 @@ export struct BookmarksPage {
   @State private hasMore: boolean = true;
   @State private loadFailed: boolean = false;
   @State private message: string = '';
+  // 书签备注编辑态:非空表示弹窗开着,记录正在改哪一条。
+  @State private renamingBookmark?: Bookmark = undefined;
+  @State private renameInput: string = '';
+  @State private renameSaving: boolean = false;
+  // bindSheet 的 $$ 双向绑定需要纯 boolean 状态(不能用表达式),单独开一个开关。
+  @State private showRenameSheet: boolean = false;
   private service?: BookmarkService = undefined;
   private categoryIndex: CategoryIndex = new CategoryIndex();
   private moreUrl: string = '';
@@ -88,6 +94,12 @@ export struct BookmarksPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_bg'))
+    .bindSheet($$this.showRenameSheet, this.RenameSheet(), {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      showClose: true,
+      title: { title: '书签备注' }
+    })
   }
 
   @Builder
@@ -177,7 +189,7 @@ export struct BookmarksPage {
                 .fontColor([$r('app.color.ld_gold')])
                 .margin({ right: 4, top: 2 })
             }
-            Text(item.title)
+            Text(this.displayTitleOf(item))
               .fontSize(17)
               .fontColor($r('app.color.text_primary'))
               .maxLines(2)
@@ -250,6 +262,12 @@ export struct BookmarksPage {
             value: item.pinned ? '取消置顶' : '置顶',
             action: (): void => {
               this.togglePin(item);
+            }
+          },
+          {
+            value: item.name && item.name.length > 0 ? '修改备注' : '添加备注',
+            action: (): void => {
+              this.openRename(item);
             }
           },
           {
@@ -429,13 +447,132 @@ export struct BookmarksPage {
     this.showToast('已删除');
   }
 
+  // ==================== 备注重命名 ====================
+
+  // 显示标题:有用户备注名(name)优先用备注,否则退回服务端标题。
+  private displayTitleOf(item: Bookmark): string {
+    return item.name && item.name.length > 0 ? item.name : item.title;
+  }
+
+  private openRename(item: Bookmark): void {
+    this.renameInput = item.name ?? '';
+    this.renamingBookmark = item;
+    this.showRenameSheet = true;
+  }
+
+  @Builder
+  private RenameSheet() {
+    Column() {
+      Text('给这条书签起个备注名')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+        .margin({ bottom: 4 })
+
+      Text('列表里优先显示备注名；留空则恢复默认标题。')
+        .fontSize(13)
+        .fontColor($r('app.color.text_faint'))
+        .width('100%')
+        .margin({ bottom: 14 })
+
+      TextInput({ text: this.renameInput, placeholder: '输入备注名（可选）' })
+        .height(46)
+        .fontSize(15)
+        .fontColor($r('app.color.text_primary'))
+        .placeholderColor($r('app.color.text_faint'))
+        .backgroundColor($r('app.color.surface_card'))
+        .borderRadius(10)
+        .borderWidth(1)
+        .borderColor($r('app.color.border'))
+        .padding({ left: 12, right: 12 })
+        .maxLength(60)
+        .onChange((value: string) => {
+          this.renameInput = value;
+        })
+
+      Row() {
+        Button('取消', { type: ButtonType.Capsule, stateEffect: true })
+          .fontSize(15)
+          .fontColor($r('app.color.text_secondary'))
+          .backgroundColor($r('app.color.surface_band'))
+          .layoutWeight(1)
+          .height(44)
+          .onClick(() => {
+            this.showRenameSheet = false;
+            this.renamingBookmark = undefined;
+          })
+        Button(this.renameSaving ? '保存中…' : '保存', { type: ButtonType.Capsule, stateEffect: true })
+          .fontSize(15)
+          .fontColor(Color.White)
+          .backgroundColor($r('app.color.ld_accent'))
+          .layoutWeight(1)
+          .height(44)
+          .enabled(!this.renameSaving)
+          .opacity(this.renameSaving ? 0.6 : 1)
+          .margin({ left: 12 })
+          .onClick(() => {
+            this.performRename();
+          })
+      }
+      .width('100%')
+      .margin({ top: 20 })
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 8, bottom: 24 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  private async performRename(): Promise<void> {
+    if (!this.service || !this.renamingBookmark || this.renameSaving) {
+      return;
+    }
+    // 未登录:拦截并弹登录页,不发请求(书签改备注)。
+    if (!LoginGate.ensureLoggedIn()) {
+      return;
+    }
+    const id: number = this.renamingBookmark.id;
+    const name: string = this.renameInput.trim();
+    this.renameSaving = true;
+    const result: NetworkResult<boolean> = await this.service.updateBookmarkName(id, name);
+    this.renameSaving = false;
+    if (!result.success) {
+      this.showToast(result.error?.message ? result.error.message : '保存失败，请稍后再试');
+      Log.i(`${LOG_TAG} rename bookmark failed id=${id} status=${result.statusCode}`);
+      return;
+    }
+    // 本地更新 name 并关闭弹窗:空串表示清除备注(退回默认标题)。
+    const next: Bookmark[] = [];
+    for (let index: number = 0; index < this.bookmarks.length; index++) {
+      const cur: Bookmark = this.bookmarks[index];
+      next.push(cur.id === id ? this.withName(cur, name) : cur);
+    }
+    this.bookmarks = next;
+    this.showRenameSheet = false;
+    this.renamingBookmark = undefined;
+    this.showToast(name.length > 0 ? '已保存备注' : '已清除备注');
+  }
+
+  // 复制一份并改 name(Bookmark 是接口/值对象,重建以触发列表刷新)。
+  private withName(src: Bookmark, name: string): Bookmark {
+    return {
+      id: src.id, topicId: src.topicId, title: src.title,
+      name: name.length > 0 ? name : undefined,
+      excerpt: src.excerpt, linkedPostNumber: src.linkedPostNumber,
+      pinned: src.pinned, categoryId: src.categoryId, tags: src.tags,
+      author: src.author, highestPostNumber: src.highestPostNumber,
+      createdAt: src.createdAt
+    };
+  }
+
   // 复制一份并改 pinned(Bookmark 是接口/值对象,重建以触发列表刷新)。
   private withPinned(src: Bookmark, pinned: boolean): Bookmark {
     return {
-      id: src.id, topicId: src.topicId, title: src.title, excerpt: src.excerpt,
-      linkedPostNumber: src.linkedPostNumber, pinned: pinned, categoryId: src.categoryId,
-      tags: src.tags, author: src.author, highestPostNumber: src.highestPostNumber,
-      createdAt: src.createdAt
+      id: src.id, topicId: src.topicId, title: src.title, name: src.name,
+      excerpt: src.excerpt, linkedPostNumber: src.linkedPostNumber, pinned: pinned,
+      categoryId: src.categoryId, tags: src.tags, author: src.author,
+      highestPostNumber: src.highestPostNumber, createdAt: src.createdAt
     };
   }
 
