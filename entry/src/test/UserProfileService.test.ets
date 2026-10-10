@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@ohos/hypium';
-import { SolvedPostPage, UserActivityItem, UserProfileDetail, UserSummary } from '../main/ets/models/UserProfile';
+import { ProfileEditableData, SolvedPostPage, UserActivityItem, UserProfileDetail, UserSummary } from '../main/ets/models/UserProfile';
 import { AuthService } from '../main/ets/services/auth/AuthService';
 import { UserProfileService } from '../main/ets/services/user/UserProfileService';
 import { ChallengeState, JsonNetworkClient, NetworkResult } from '../main/ets/services/network/NetworkTypes';
@@ -8,6 +8,7 @@ class FakeBridge implements JsonNetworkClient {
   private result: NetworkResult<string>;
   requestedPath: string = '';
   requestedMethod: string = '';
+  requestedBody: string = '';
 
   constructor(result: NetworkResult<string>) {
     this.result = result;
@@ -40,6 +41,7 @@ class FakeBridge implements JsonNetworkClient {
   putForm(path: string, body: string): Promise<NetworkResult<string>> {
     this.requestedPath = path;
     this.requestedMethod = 'PUT_FORM';
+    this.requestedBody = body;
     return Promise.resolve(this.result);
   }
 
@@ -359,6 +361,64 @@ export default function userProfileServiceTest() {
 
       expect(bridge.requestedPath).assertEqual('/session/linuxdo_user');
       expect(bridge.requestedMethod).assertEqual('DELETE_FORM');
+      expect(result.success).assertTrue();
+      expect(result.data).assertTrue();
+    });
+
+    it('parsesEditableFieldsFromUserProfile', 0, async () => {
+      const payload: string = '{"user":{"id":7,"username":"linuxdo_user","name":"Linux.do User",' +
+        '"title":"活跃用户","website":"https://linux.do",' +
+        '"user_profile":{"bio_raw":"Hello **world**","location":"Shanghai","website":null}}}';
+      const bridge: FakeBridge = new FakeBridge(okResponse(payload));
+      const service: UserProfileService = new UserProfileService(bridge);
+
+      const result = await service.getProfileEditable('linuxdo_user');
+
+      expect(bridge.requestedPath).assertEqual('/u/linuxdo_user.json');
+      expect(result.success).assertTrue();
+      expect(result.data?.name).assertEqual('Linux.do User');
+      expect(result.data?.title).assertEqual('活跃用户');
+      expect(result.data?.website).assertEqual('https://linux.do');
+      expect(result.data?.location).assertEqual('Shanghai');
+      expect(result.data?.bioRaw).assertEqual('Hello **world**');
+      expect(result.data?.username).assertEqual('linuxdo_user');
+    });
+
+    it('editableFieldsDefaultEmptyWhenMissing', 0, async () => {
+      const payload: string = '{"user":{"id":7,"username":"linuxdo_user"}}';
+      const bridge: FakeBridge = new FakeBridge(okResponse(payload));
+      const service: UserProfileService = new UserProfileService(bridge);
+
+      const result = await service.getProfileEditable('linuxdo_user');
+
+      expect(result.success).assertTrue();
+      expect(result.data?.name).assertEqual('');
+      expect(result.data?.title).assertEqual('');
+      expect(result.data?.website).assertEqual('');
+      expect(result.data?.location).assertEqual('');
+      expect(result.data?.bioRaw).assertEqual('');
+    });
+
+    it('updateProfilePutsFormToUserEndpoint', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge(okResponse('{"user":{"id":7,"username":"linuxdo_user"}}'));
+      const service: UserProfileService = new UserProfileService(bridge);
+      const fields: ProfileEditableData = {
+        name: '新名字',
+        title: '新头衔',
+        website: 'https://example.com',
+        location: '北京',
+        bioRaw: '新的简介',
+        username: 'linuxdo_user'
+      };
+
+      const result = await service.updateProfile('linuxdo_user', fields);
+
+      expect(bridge.requestedPath).assertEqual('/u/linuxdo_user.json');
+      expect(bridge.requestedMethod).assertEqual('PUT_FORM');
+      expect(bridge.requestedBody).assertEqual(
+        'user[name]=%E6%96%B0%E5%90%8D%E5%AD%97&user[title]=%E6%96%B0%E5%A4%B4%E8%A1%94&' +
+        'user[website]=https%3A%2F%2Fexample.com&user[location]=%E5%8C%97%E4%BA%AC&' +
+        'user[bio_raw]=%E6%96%B0%E7%9A%84%E7%AE%80%E4%BB%8B');
       expect(result.success).assertTrue();
       expect(result.data).assertTrue();
     });

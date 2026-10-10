@@ -199,3 +199,19 @@ export interface UserActivityPage {
   items: UserActivityItem[];
   hasMore: boolean;
 }
+
+// 资料编辑页的可编辑字段(来自 /u/{username}.json 的 user + user.user_profile)。
+export interface ProfileEditableData {
+  // 昵称(显示名),对应 form user[name]。
+  name: string;
+  // 头衔,对应 form user[title]。
+  title: string;
+  // 网站 URL,对应 form user[website]。
+  website: string;
+  // 所在地,对应 form user[location](存于 user.user_profile.location)。
+  location: string;
+  // 简介原文 markdown,对应 form user[bio_raw](存于 user.user_profile.bio_raw)。
+  bioRaw: string;
+  // 登录名(不可编辑,仅展示)。
+  username: string;
+}

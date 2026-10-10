@@ -2,7 +2,7 @@ import { Log } from '../../services/logging/Log';
 import { AppConstants, LinuxDoConstants } from '../../common/constants/AppConstants';
 import { APP_IS_WIDE_STORAGE_KEY, APP_SPLIT_NAV_BAR_WIDTH_STORAGE_KEY, BreakpointManager,
   SPLIT_NAV_BAR_MAX_WIDTH } from '../../common/utils/BreakpointManager';
-import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildLabSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildTopicListStyleSettingsRouteParam, buildLevelProgressRouteParam, buildNotificationsRouteParam, buildProfileRouteParam, buildReadTopicsRouteParam, buildSettingsRouteParam, buildForumsRouteParam, buildSitesRouteParam, buildSolvedRouteParam, buildTopicDetailRouteParam, buildTopicDetailDraftRouteParam, buildTopicDetailEditDraftRouteParam, buildUserProfileRouteParam, buildWebRouteParam, isActivityRouteParam, isBadgesRouteParam, isBookmarksRouteParam, isDraftsRouteParam, DraftsRouteParam, isSolvedRouteParam, isTopicDetailRouteParam, isUserProfileRouteParam, isWebRouteParam, LevelProgressRouteParam, SolvedRouteParam, TopicDetailRouteParam, UserProfileRouteParam, WebRouteParam } from '../../navigation/AppRoutes';
+import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildLabSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildTopicListStyleSettingsRouteParam, buildLevelProgressRouteParam, buildNotificationsRouteParam, buildProfileEditRouteParam, buildProfileRouteParam, buildReadTopicsRouteParam, buildSettingsRouteParam, buildForumsRouteParam, buildSitesRouteParam, buildSolvedRouteParam, buildTopicDetailRouteParam, buildTopicDetailDraftRouteParam, buildTopicDetailEditDraftRouteParam, buildUserProfileRouteParam, buildWebRouteParam, isActivityRouteParam, isBadgesRouteParam, isBookmarksRouteParam, isDraftsRouteParam, DraftsRouteParam, isProfileEditRouteParam, isSolvedRouteParam, isTopicDetailRouteParam, isUserProfileRouteParam, isWebRouteParam, LevelProgressRouteParam, ProfileEditRouteParam, SolvedRouteParam, TopicDetailRouteParam, UserProfileRouteParam, WebRouteParam } from '../../navigation/AppRoutes';
 import { LinkRouter, LinkTarget, LinkTargetKind } from '../../services/content/LinkRouter';
 import { DownloadService } from '../../services/content/DownloadService';
 import { DownloadEventBus, DownloadResult } from '../../services/content/DownloadEventBus';
@@ -66,6 +66,7 @@ import { ForumDef, ForumPrefs } from '../../services/site/ForumPrefs';
 import { SiteUrl } from '../../services/site/SiteUrl';
 import { SitesPage } from './SitesPage';
 import { LevelProgressPage } from './LevelProgressPage';
+import { ProfileEditPage } from './ProfileEditPage';
 import { LdcCreditPage } from './LdcCreditPage';
 import { isLdcCreditRouteParam, LdcCreditRouteParam } from '../../navigation/AppRoutes';
 import { BookmarksPage } from './BookmarksPage';
@@ -715,6 +716,12 @@ export struct RootTabPage {
             this.navPathStack.pushPath(new NavPathInfo(AppRouteName.LEVEL_PROGRESS,
               buildLevelProgressRouteParam(this.currentUser !== undefined)));
           },
+          onOpenProfileEdit: () => {
+            if (this.currentUser !== undefined && this.currentUser.username.length > 0) {
+              this.navPathStack.pushPath(new NavPathInfo(AppRouteName.PROFILE_EDIT,
+                buildProfileEditRouteParam(this.currentUser.username)));
+            }
+          },
           onBack: () => {
             this.popNavigation();
           }
@@ -738,6 +745,26 @@ export struct RootTabPage {
           },
           onOpenWeb: (url: string, title?: string) => {
             this.openWebPage(url, title);
+          }
+        })
+      }
+      .hideTitleBar(true)
+      // NavDestination 自身背景默认铺满含状态栏区域;统一为 page_bg,让各二级页顶部状态栏
+      // 与页内头部/导航栏同色(否则暗色下露出默认浅底,与内容不一致)。
+      .backgroundColor($r('app.color.page_bg'))
+    } else if (name === AppRouteName.PROFILE_EDIT && isProfileEditRouteParam(param)) {
+      NavDestination() {
+        ProfileEditPage({
+          bridge: this.bridge,
+          username: (param as ProfileEditRouteParam).username,
+          onBack: () => {
+            this.popNavigation();
+          },
+          onSaved: () => {
+            // 更新缓存里已由 ProfileEditPage 写好的 detail;名字改动根页面重查会话,
+            // @Prop 会推到 ProfilePage(压在下层)即时刷新,别处读 currentUser 也拿到新名。
+            this.navPathStack.pop();
+            this.bumpSessionForProfileEdit();
           }
         })
       }
@@ -1537,8 +1564,6 @@ export struct RootTabPage {
     ImmersiveWindow.applyBarContentColor(dark);
   }
 
-  // 详情页返回键统一入口:先看全屏编辑器浮层(可见则 bump tick 交详情页一镜回落),再看图片预览。
-  // 都没开返回 false 放行默认 pop(弹掉详情页)。挂在详情页 NavDestination 的 onBackPressed 上。
   // 他人主页的私信浮层打开时消费返回键(bump tick 让 UserProfilePage 关浮层);未开则放行默认 pop。
   private consumeProfilePmBack(): boolean {
     const visible: boolean = (AppStorage.get(PROFILE_PM_VISIBLE_KEY) as boolean | undefined) ?? false;
@@ -1547,6 +1572,15 @@ export struct RootTabPage {
       return true;
     }
     return false;
+  }
+
+  // 资料保存成功后触发一次会话重查:名字/昵称等当前用户字段重新拉取,
+  // 全局 currentUser(@Prop 下推)与 ProfilePage 一并同步。登出者不在这里(仅登录态有入口)。
+  private bumpSessionForProfileEdit(): void {
+    if (this.currentUser === undefined) {
+      return;
+    }
+    this.checkCurrentUser();
   }
 
   // 草稿页的续写浮层打开时消费返回键(bump tick 让 DraftsPage 关浮层);未开则放行默认 pop。
@@ -1559,6 +1593,8 @@ export struct RootTabPage {
     return false;
   }
 
+  // 详情页返回键统一入口:先看全屏编辑器浮层(可见则 bump tick 交详情页一镜回落),再看图片预览。
+  // 都没开返回 false 放行默认 pop(弹掉详情页)。挂在详情页 NavDestination 的 onBackPressed 上。
   private consumeTopicDetailBack(): boolean {
     const composerVisible: boolean = (AppStorage.get(COMPOSER_OVERLAY_VISIBLE_KEY) as boolean | undefined) ?? false;
     if (composerVisible) {

@@ -11,6 +11,8 @@ export enum AppRouteName {
   // 帖子列表样式(字号/字重/行高/行间距/头像),入口在设置页「外观」组。
   TOPIC_LIST_STYLE_SETTINGS = 'topicListStyleSettings',
   LEVEL_PROGRESS = 'levelProgress',
+  // 个人资料编辑页:登录本人编辑姓名/头衔/网站/所在地/简介,入口在个人中心身份卡。
+  PROFILE_EDIT = 'profileEdit',
   WEB = 'web',
   NOTIFICATIONS = 'notifications',
   BOOKMARKS = 'bookmarks',
@@ -157,6 +159,25 @@ export function buildLevelProgressRouteParam(isLoggedIn: boolean): LevelProgress
   return {
     isLoggedIn: isLoggedIn
   };
+}
+
+// 个人资料编辑页参数:username 是编辑对象(恒为登录本人),数据预填在页内现取。
+export interface ProfileEditRouteParam {
+  username: string;
+}
+
+export function buildProfileEditRouteParam(username: string): ProfileEditRouteParam {
+  return {
+    username: username
+  };
+}
+
+export function isProfileEditRouteParam(param: Object | undefined): boolean {
+  if (!param) {
+    return false;
+  }
+  const candidate: ProfileEditRouteParam = param as ProfileEditRouteParam;
+  return typeof candidate.username === 'string' && candidate.username.length > 0;
 }
 
 export interface NotificationsRouteParam {

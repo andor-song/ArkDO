@@ -1,4 +1,5 @@
 import {
+  ProfileEditableData,
   SolvedPostItem,
   SolvedPostPage,
   UserActivityItem,
@@ -68,6 +69,16 @@ interface DiscourseUserDetail {
   category_expert_endorsements?: DiscourseEndorsementRecord[];
   // 用户状态(user_status.emoji),昵称后展示的状态表情短名。
   status?: DiscourseUserStatus;
+  // 资料编辑子对象(/u/{username}.json 的 user.user_profile):原始简介/所在地等编辑页要用。
+  // user_profile 不在公开精简序列化里(他人主页拿不到),只有登录本人 GET 才带。
+  user_profile?: DiscourseUserProfile;
+}
+
+// 资料设置子对象(user.user_profile):编辑资料页的预填来源。
+interface DiscourseUserProfile {
+  bio_raw?: string | null;
+  location?: string | null;
+  website?: string | null;
 }
 
 interface DiscourseUserStatus {
@@ -398,6 +409,67 @@ export class UserProfileService {
     } catch (error) {
       return unexpectedResponse<UserProfileDetail>(response.statusCode, response.challengeState, '站点用户资料响应不是有效 JSON。');
     }
+  }
+
+  // 资料编辑预填:GET /u/{username}.json 解析出可编辑字段。
+  // 与 getProfileDetail 不同:它要的是 user_profile 子对象的原始简介/所在地(公开序列化里没有,
+  // 只有登录本人 GET 才带);detail 面向展示,这里面向编辑回填。
+  async getProfileEditable(username: string): Promise<NetworkResult<ProfileEditableData>> {
+    const response: NetworkResult<string> = await this.bridge.getJson(`/u/${encodeURIComponent(username)}.json`);
+    if (!response.success) {
+      return forwardFailure<ProfileEditableData>(response);
+    }
+    if (response.data === undefined) {
+      return unexpectedResponse<ProfileEditableData>(response.statusCode, response.challengeState, '站点用户资料响应为空。');
+    }
+
+    try {
+      const payload: DiscourseUserResponse = JSON.parse(response.data) as DiscourseUserResponse;
+      const sourceUser: DiscourseUserDetail | undefined = payload.user;
+      if (!sourceUser || typeof sourceUser.username !== 'string') {
+        return unexpectedResponse<ProfileEditableData>(response.statusCode, response.challengeState, '站点用户资料响应字段无效。');
+      }
+      const profile: DiscourseUserProfile | undefined = sourceUser.user_profile;
+      const editable: ProfileEditableData = {
+        name: typeof sourceUser.name === 'string' ? sourceUser.name : '',
+        title: typeof sourceUser.title === 'string' ? sourceUser.title : '',
+        website: typeof sourceUser.website === 'string' ? sourceUser.website : '',
+        location: profile && typeof profile.location === 'string' ? profile.location : '',
+        bioRaw: profile && typeof profile.bio_raw === 'string' ? profile.bio_raw : '',
+        username: sourceUser.username
+      };
+      return {
+        success: true,
+        statusCode: response.statusCode,
+        challengeState: response.challengeState,
+        data: editable
+      };
+    } catch (error) {
+      return unexpectedResponse<ProfileEditableData>(response.statusCode, response.challengeState, '站点用户资料响应不是有效 JSON。');
+    }
+  }
+
+  // 保存资料编辑:PUT /u/{username}.json,form body 用 Discourse 的 user[field] 数组形式。
+  // 成功响应是 { user:{...} } 或 { success:true },只要不失败即视为保存成功。
+  async updateProfile(username: string, fields: ProfileEditableData): Promise<NetworkResult<boolean>> {
+    const parts: string[] = [];
+    parts.push(`user[name]=${encodeURIComponent(fields.name)}`);
+    parts.push(`user[title]=${encodeURIComponent(fields.title)}`);
+    parts.push(`user[website]=${encodeURIComponent(fields.website)}`);
+    parts.push(`user[location]=${encodeURIComponent(fields.location)}`);
+    parts.push(`user[bio_raw]=${encodeURIComponent(fields.bioRaw)}`);
+    const body: string = parts.join('&');
+    const path: string = `/u/${encodeURIComponent(username)}.json`;
+    const response: NetworkResult<string> = await this.bridge.putForm(path, body);
+    if (!response.success) {
+      return forwardFailure<boolean>(response);
+    }
+    return {
+      success: true,
+      statusCode: response.statusCode,
+      challengeState: response.challengeState,
+      data: true
+    };
   }
 
   async getSummary(username: string): Promise<NetworkResult<UserSummary>> {

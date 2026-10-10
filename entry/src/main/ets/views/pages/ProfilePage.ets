@@ -103,6 +103,8 @@ export struct ProfilePage {
   onOpenSettings: () => void = () => {};
   // 点击信任等级标进入原生等级进度页(数据取自 connect.linux.do)。
   onOpenLevelProgress: () => void = () => {};
+  // 编辑个人资料(原生表单页):只对登录本人开放(未登录不显示入口)。
+  onOpenProfileEdit: () => void = () => {};
   // 本页是从首页头像 push 进来的二级页,返回栏走标准返回按钮。
   onBack: () => void = () => {};
   @State private profileDetail?: UserProfileDetail = undefined;
@@ -334,6 +336,35 @@ export struct ProfilePage {
           .padding({ left: CARD_PADDING, right: CARD_PADDING })
 
         this.HairlineInset()
+
+        // 编辑资料行:登录本人专属(未登录没有可编辑的账号)。与「设置/等级进度」同款列表行观感。
+        if (this.isLoggedIn && this.getUsername().length > 0) {
+          Row() {
+            SymbolGlyph($r('sys.symbol.square_and_pencil'))
+              .fontSize(16)
+              .fontColor([$r('app.color.text_secondary')])
+              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+            Text('编辑资料')
+              .fontSize(14)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+              .margin({ left: 10 })
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(13)
+              .fontColor([$r('app.color.text_faint')])
+              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+          }
+          .width('100%')
+          .height(44)
+          .padding({ left: CARD_PADDING, right: CARD_PADDING })
+          .onClick(() => {
+            if (this.isLoggedIn && this.getUsername().length > 0) {
+              this.onOpenProfileEdit();
+            }
+          })
+
+          this.HairlineInset()
+        }
 
         // 统计区固定高度:加载占位与数据网格同高。
         if (this.summaryStats) {
