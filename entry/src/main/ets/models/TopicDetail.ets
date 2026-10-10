@@ -111,6 +111,13 @@ export class TopicPost {
   statusEmoji?: string;
   // 昵称后展示的徽章图标名数组(顶层 user_badges 按 user_id 解出的 FontAwesome 名,如 far-eye/seedling/hammer)。
   badgeIcons?: string[];
+  // discourse-solved:当前用户能否把本楼设为/取消「采纳答案」(服务端 post 级 can_accept_answer /
+  // can_unaccept_answer)。仅楼主视角为真(且非一楼、或该楼正被采纳),主题未启用解答时恒假。
+  // acceptedAnswer:本楼当前是否正被采纳(服务端 accepted_answer)。采纳/取消成功后就地翻转,
+  // 由 @ObjectLink 驱动操作按钮与绿色「已采纳」标记切换。
+  canAcceptAnswer?: boolean;
+  canUnacceptAnswer?: boolean;
+  acceptedAnswer?: boolean;
   // 本楼是否为当前登录用户所发(yours)。自己不能给自己点赞,故为真时详情页把心形按钮换成编辑入口。
   yours?: boolean;
   // 是否还能编辑(can_edit)。与 yours 分开两个字段是必要的:过了编辑时限后 yours 仍真、can_edit 转假,

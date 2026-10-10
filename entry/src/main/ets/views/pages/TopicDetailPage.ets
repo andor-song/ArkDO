@@ -555,6 +555,11 @@ export struct TopicDetailPage {
           onToggleSharedIssue: (): Promise<SharedIssueResult | null> => {
             return this.toggleSharedIssue();
           },
+          // discourse-solved 采纳答案:楼主对非一楼采纳/取消。发网络后重载详情(acceptedAnswers 面板、
+          // 列表绿勾都从 detail 派生,重建即对齐),期间按钮本地转圈,失败页面 toast、楼层保持原态。
+          onToggleAcceptedAnswer: (targetPost: TopicPost, accept: boolean): Promise<boolean> => {
+            return this.toggleAcceptedAnswer(targetPost, accept);
+          },
           // 删除自己的楼层:canDelete 按服务端 canDelete 字段(未给则 yours 兜底),onDeletePost 走确认框。
           canDelete: post.yours === true && (post.canDelete !== false),
           onDeletePost: (targetPost: TopicPost): Promise<boolean> => {
@@ -1904,6 +1909,25 @@ export struct TopicDetailPage {
       this.detail.sharedIssueCount = result.count;
     }
     return result;
+  }
+
+  // discourse-solved 采纳答案 toggle:发网络(POST /solution/accept|unaccept,body id=postId)。
+  // 成功重载详情——acceptedAnswers(面板)与列表绿勾(TopicListItem solved)都从 detail.acceptedAnswers
+  // 派生,重建即对齐;失败保持原态(服务层已 toast),返回 false 让楼层按钮回滚。
+  private async toggleAcceptedAnswer(post: TopicPost, accept: boolean): Promise<boolean> {
+    if (!this.detail || !LoginGate.ensureLoggedIn()) {
+      return false;
+    }
+    const result: NetworkResult<boolean> =
+      await new TopicService(this.bridge).toggleAcceptedAnswer(post.id, accept);
+    if (!result.success) {
+      Log.i(`${LOG_TAG} acceptAnswer failed postId=${post.id} accept=${accept} status=${result.statusCode}`);
+      this.showComposerToast(result.error ? result.error.message : (accept ? '采纳失败，请稍后重试' : '取消采纳失败，请稍后重试'), 2000);
+      return false;
+    }
+    // 采纳/取消成功后重载详情:面板与列表绿勾都会对齐服务端新态。
+    this.loadTopicDetail();
+    return true;
   }
 
   private showComposerToast(message: string, duration: number): void {

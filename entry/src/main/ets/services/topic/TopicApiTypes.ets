@@ -237,6 +237,13 @@ export interface DiscoursePost {
   can_boost?: boolean;
   bookmarked?: boolean;
   bookmark_id?: number;
+  // discourse-solved:当前用户是否为该楼「采纳答案」(楼主视角)。
+  // can_accept_answer:楼主且非一楼且该楼尚未被采纳 → 显示「采纳为解决方案」。
+  // can_unaccept_answer:楼主且该楼正被采纳 → 显示「取消采纳」。
+  // accepted_answer:该楼当前正被采纳为答案(服务端 topic.solved.answer_post_id == 本楼 id)。
+  can_accept_answer?: boolean;
+  can_unaccept_answer?: boolean;
+  accepted_answer?: boolean;
   // discourse-poll:该楼的投票列表、当前用户各投票的已投项、能否投票。
   polls?: DiscoursePoll[];
   polls_votes?: Record<string, string[]>;

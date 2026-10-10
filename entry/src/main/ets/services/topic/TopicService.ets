@@ -25,6 +25,12 @@ const SHARED_ISSUE_TOGGLE_PATH: string = '/solution/shared_issue';
 // 链接点击上报端点(Discourse ClicksController#track)。
 const CLICK_TRACK_PATH: string = '/clicks/track';
 
+// discourse-solved 采纳答案 toggle 端点:POST /solution/accept、/solution/unaccept,
+// form body 只带 id(被采纳楼的 post id)。响应 { success: true }。权限由服务端 Guard 判定
+// (can_accept_answer / can_unaccept_answer 已在 post 序列化给出)。
+const SOLUTION_ACCEPT_PATH: string = '/solution/accept';
+const SOLUTION_UNACCEPT_PATH: string = '/solution/unaccept';
+
 // 发表评论/回复的结果:要么直接发布得到新楼层 post,要么进了审核队列(pending)。
 export interface CreateReplyOutcome {
   post?: TopicPost;
@@ -490,6 +496,21 @@ export class TopicService {
     } catch (error) {
       return unexpectedResponse<SharedIssueResult>(response.statusCode, response.challengeState, '站点"俺也一样"响应不是有效 JSON。');
     }
+  }
+
+  // discourse-solved 采纳答案 toggle:POST /solution/accept(采纳)/ /solution/unaccept(取消),
+  // form body id=<postId>。纯翻转端点到楼,响应 { success: true } 即成功。
+  // 采纳/取消后详情页据服务端 post 级新态(重载后 can_accept_answer/can_unaccept_answer 翻转)重建,
+  // 失败保持原态(服务层已 toast)。notifyChallenge:true——与书签/评论一致。
+  async toggleAcceptedAnswer(postId: number, accept: boolean): Promise<NetworkResult<boolean>> {
+    const path: string = accept ? SOLUTION_ACCEPT_PATH : SOLUTION_UNACCEPT_PATH;
+    const referrer: string = `${AppConstants.BASE_URL}/t/topic/${postId}`;
+    const response: NetworkResult<string> =
+      await this.bridge.postForm(path, `id=${postId}`, { notifyChallenge: true, referrer: referrer });
+    if (!response.success) {
+      return forwardFailure<boolean>(response);
+    }
+    return { success: true, statusCode: response.statusCode, challengeState: response.challengeState, data: true };
   }
 
   // 发表评论/回复:POST /posts,body 为 JSON(对齐官方 composer 提交)。
@@ -1399,6 +1420,9 @@ export class TopicService {
       post.yours = sourcePost.yours === true;
       post.canEdit = sourcePost.can_edit === true;
       post.canDelete = sourcePost.can_delete === true;
+      post.canAcceptAnswer = sourcePost.can_accept_answer === true;
+      post.canUnacceptAnswer = sourcePost.can_unaccept_answer === true;
+      post.acceptedAnswer = sourcePost.accepted_answer === true;
       post.linkClicks = buildLinkClicks(cookedHtml, sourcePost.link_counts);
       posts.push(post);
     }

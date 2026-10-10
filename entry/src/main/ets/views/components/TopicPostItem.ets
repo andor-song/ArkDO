@@ -155,8 +155,12 @@ export struct TopicPostItem {
   sharedIssueCanCreate: boolean = false;
   sharedIssueCount: number = 0;
   sharedIssueCreated: boolean = false;
-  // "俺也一样" toggle(纯翻转端点,不需传目标态):上抛页面发网络,返回服务端权威新态 { created, count } 覆盖本地;null=失败回滚。
+  // "俺都一样" toggle(纯翻转端点,不需传目标态):上抛页面发网络,返回服务端权威新态 { created, count } 覆盖本地;null=失败回滚。
   onToggleSharedIssue: () => Promise<SharedIssueResult | null> = () => Promise.resolve(null);
+  // discourse-solved 采纳答案 toggle:楼主把某非一楼设为/取消解决方案。上抛页面发网络
+  // (POST /solution/accept|unaccept),返回是否成功;成功则本组件就地翻转 post.acceptedAnswer
+  // 等字段(@ObjectLink 驱动按钮切换),失败保持原态(页面已 toast)。默认(非详情页/无权)不渲染入口。
+  onToggleAcceptedAnswer: (post: TopicPost, accept: boolean) => Promise<boolean> = () => Promise.resolve(false);
   @State private showReactionPicker: boolean = false;
   // 「更多」展开态:点 ellipsis 后换出「拷贝链接 + 书签」两个按钮。对齐官方:展开后不再收起。
   @State private moreExpanded: boolean = false;
@@ -197,6 +201,8 @@ export struct TopicPostItem {
   @State private meTooCountLocal: number = 0;
   // 请求进行中:守卫防连点(乐观已翻转,不再叠加 loading 图标,观感对齐官网即点即变)。
   @State private meTooRequesting: boolean = false;
+  // 采纳答案 toggle 请求进行中:按钮显示转圈并吞掉重复点击(不做乐观更新,等网络结果再翻转)。
+  @State private acceptedAnswerRequesting: boolean = false;
   // 当前展开了删除图标的 boost id(0=没有)。同一时刻只展开一条:点另一条即改指向它,再点自己则收起。
   @State private deleteTargetBoostId: number = 0;
   // 删除请求进行中的 boost id:该条的垃圾桶图标换成转圈,期间忽略重复点击。
@@ -259,6 +265,14 @@ export struct TopicPostItem {
               .fontWeight(FontWeight.Bold)
               .fontColor('#00AEFF')
               .margin({ top: 10 })
+          }
+
+          // discourse-solved 采纳答案:楼主视角的按钮,只挂在服务端给了 can_accept_answer /
+          // can_unaccept_answer 的楼层(非一楼;主题未启用解答时为假,这里自然不渲染)。
+          // 与「楼主标记」不同:标记跟着 isTopicOwner(本楼是楼主发的),采纳按钮跟着"楼主对他人回复
+          // 的操作权"——本楼作者恰恰不是楼主(自己不能采纳自己的楼,服务端 can_accept_answer 已排除)。
+          if (this.post.canAcceptAnswer === true || this.post.canUnacceptAnswer === true) {
+            this.AcceptedAnswerButton()
           }
 
           // "俺也一样"(shared issue):话题级功能,仅一楼(页面只对 shared_issue_visible 的一楼下发)渲染,悬在操作栏上方。
@@ -835,6 +849,66 @@ export struct TopicPostItem {
     if (result !== null) {
       this.meTooLocal = result.created;
       this.meTooCountLocal = result.count;
+    }
+  }
+
+  // discourse-solved 采纳答案按钮:楼主把非一楼设为/取消解决方案。surface_card 底 + 绿色描边 + 圆角 4,
+  // square-check 图标 + 文字。采纳态(本楼正被采纳)显示「已采纳 · 取消」并可点取消;未采纳显示「采纳为解决方案」。
+  // 请求中按钮转圈并吞掉重复点击(不做乐观更新——采纳/取消都会引起面板与列表绿勾变化,等网络成功
+  // 后由页面统一重建详情与面板;本地只把请求中态画出来)。已登录但服务端未给权限时不渲染入口
+  // (can_accept_answer/can_unaccept_answer 两者皆假时根本不进本 Builder)。
+  @Builder
+  private AcceptedAnswerButton() {
+    Row({ space: 6 }) {
+      if (this.acceptedAnswerRequesting) {
+        LoadingProgress()
+          .width(16)
+          .height(16)
+          .color(SUCCESS_GREEN)
+      } else if (this.post.acceptedAnswer === true) {
+        FaIconView({ icon: this.faIcon('square-check'), color: SUCCESS_GREEN, iconSize: 16 })
+      } else {
+        FaIconView({ icon: this.faIcon('square-check'), color: SUCCESS_GREEN, iconSize: 16 })
+      }
+      Text(this.acceptedAnswerLabel())
+        .fontSize(15)
+        .fontColor(SUCCESS_GREEN)
+    }
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+    .backgroundColor($r('app.color.surface_card'))
+    .border({ width: 1, color: SUCCESS_GREEN })
+    .borderRadius(4)
+    .margin({ top: 12 })
+    .onClick(() => {
+      this.toggleAcceptedAnswerButton();
+    })
+  }
+
+  // 按钮文字:未采纳「采纳为解决方案」;已采纳「已采纳 · 取消」。
+  private acceptedAnswerLabel(): string {
+    return this.post.acceptedAnswer === true ? '已采纳 · 取消' : '采纳为解决方案';
+  }
+
+  // 采纳答案 toggle:点击即转圈,发网络等结果;成功由页面重建详情(面板/列表绿勾随之刷新),
+  // 本组件就地把 acceptedAnswer/canAcceptAnswer/canUnacceptAnswer 翻转对齐,失败保持原态(页面已 toast)。
+  // 请求中重复点忽略。
+  private async toggleAcceptedAnswerButton(): Promise<void> {
+    if (this.acceptedAnswerRequesting) {
+      return;
+    }
+    // 未登录:走登录拦截(页面确认后返回 false,按钮保持原态)。
+    if (!LoginGate.ensureLoggedIn()) {
+      return;
+    }
+    const willAccept: boolean = this.post.acceptedAnswer !== true;
+    this.acceptedAnswerRequesting = true;
+    const ok: boolean = await this.onToggleAcceptedAnswer(this.post, willAccept);
+    this.acceptedAnswerRequesting = false;
+    if (ok) {
+      this.post.acceptedAnswer = willAccept;
+      this.post.canAcceptAnswer = !willAccept;
+      this.post.canUnacceptAnswer = willAccept;
     }
   }
 
