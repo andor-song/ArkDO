@@ -730,6 +730,13 @@ export struct RootTabPage {
                 buildProfileEditRouteParam(this.currentUser.username)));
             }
           },
+          // 个人中心头像/昵称/箭头 → 原生他人主页(自己看自己的"他人视角":统计/徽章/赞过/关注/解决方案)。
+          // 刻意绕过 openUserProfile 的"点自己回 PROFILE"分支:个人中心本身就是我的页,再 redirect 回去
+          // 会原地打转;这里的语义是"看别人眼里的我",USER_PROFILE 原生页正好补上个人中心缺的完整视图。
+          onOpenUserProfile: (username: string, displayName: string, avatarTemplate: string, userId: number) => {
+            this.navPathStack.pushPath(new NavPathInfo(AppRouteName.USER_PROFILE,
+              buildUserProfileRouteParam(username, displayName, avatarTemplate, userId)));
+          },
           onBack: () => {
             this.popNavigation();
           }

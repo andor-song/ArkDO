@@ -1,6 +1,5 @@
 import { Log } from '../../services/logging/Log';
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
-import { AppConstants } from '../../common/constants/AppConstants';
 import { RelativeTime } from '../../common/utils/RelativeTime';
 import { TopicCategory } from '../../models/Topic';
 import { TopicMetadataBadges } from '../components/TopicBadges';
@@ -109,6 +108,9 @@ export struct ProfilePage {
   onOpenProfileEdit: () => void = () => {};
   // 本页是从首页头像 push 进来的二级页,返回栏走标准返回按钮。
   onBack: () => void = () => {};
+  // 打开**原生**他人主页(USER_PROFILE 路由):个人中心头像/昵称/箭头点击,从网页兜底改走
+  // 原生资料页(统计/徽章/赞过/关注/解决方案等全原生)。与首页点头像同一条跳转链路。
+  onOpenUserProfile: (username: string, displayName: string, avatarTemplate: string, userId: number) => void = () => {};
   @State private profileDetail?: UserProfileDetail = undefined;
   @State private summaryStats?: UserSummaryStats = undefined;
   @State private topBadges: UserBadgeItem[] = [];
@@ -266,7 +268,7 @@ export struct ProfilePage {
         Row() {
           UserAvatar({ user: this.accountUser, avatarSize: 56 })
             .onClick(() => {
-              this.openUserWebPage('', this.getDisplayName());
+              this.openUserProfilePage();
             })
           Column() {
             Text(this.getDisplayName())
@@ -276,7 +278,7 @@ export struct ProfilePage {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .onClick(() => {
-                this.openUserWebPage('', this.getDisplayName());
+                this.openUserProfilePage();
               })
             Row() {
               Text(this.getUsernameLabel())
@@ -323,7 +325,7 @@ export struct ProfilePage {
             .fontSize(14)
             .fontColor([$r('app.color.text_faint')])
             .onClick(() => {
-              this.openUserWebPage('', this.getDisplayName());
+              this.openUserProfilePage();
             })
         }
         .width('100%')
@@ -1210,11 +1212,13 @@ export struct ProfilePage {
 
 
 
-  private openUserWebPage(subPath: string, title?: string): void {
+  private openUserProfilePage(): void {
     const username: string = this.getUsername();
     if (username.length === 0) {
       return;
     }
-    this.onOpenWeb(`${AppConstants.BASE_URL}/u/${encodeURIComponent(username)}${subPath}`, title);
+    // 个人信息中心自带头像 = 登录本人。跳原生他人主页(他人视角:统计/徽章/赞过/关注/解决方案),
+    // 比网页兜底体验好。id 为 0 时 UserProfilePage 仍能正常出页(详情接口回来后补齐头像形状)。
+    this.onOpenUserProfile(username, this.getDisplayName(), this.accountUser.avatarTemplate ?? '', this.accountUser.id);
   }
 }
