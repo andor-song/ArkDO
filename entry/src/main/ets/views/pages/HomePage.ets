@@ -150,7 +150,7 @@ const INCOMING_INSERT_MS: number = 360;
 // 单条增量行的兜底高度(含分割线)。真机测到实际高度前先用它算揭示距离，避免第一帧跳变。
 const INCOMING_INSERT_ROW_ESTIMATE: number = 96;
 // 顶栏主标题(版块/标签名)的字号区间:装得下用大的,长名字自适应往下缩,缩到下限还装不下才截断。
-// ArkDO 那个默认标题不走这套(它长度固定),仍是 26。
+// 默认标题(论坛名/域名)也走这套:长度虽短,但长论坛名同样需要缩字,不写死 26。
 // 独占一行时给足 21;要带副行时收到 19,和 13 的副行拉开层次但不至于一大一小失衡。
 const TITLE_MAX_FONT_SIZE: number = 21;
 const TITLE_MIN_FONT_SIZE: number = 15;
@@ -1039,7 +1039,7 @@ export struct HomePage {
   // 顶栏标题区。全默认(全站 · 最新 · 不限标签)时与改造前完全一致——单行大标题,「ArkDO」末尾的 O
   // 换成 linux.do 三色圆 logo(内联 ImageSpan 保持基线对齐;logo 为固定色 SVG,深色模式下不翻转以保留品牌配色)。
   //
-  // 一旦有筛选条件就长出第二行条件摘要,主标题相应收一号(26 → 19),两行合计仍落在 MINI 顶栏高度内。
+  // 一旦有筛选条件就长出第二行条件摘要,主标题相应收一号(21 → 19),两行合计仍落在 MINI 顶栏高度内。
   // 默认态零视觉负担、有条件时才占位,这样"清爽"和"看得见当前在筛什么"才能同时成立。
   @Builder
   private FeedTitle() {
@@ -1048,8 +1048,13 @@ export struct HomePage {
         // 默认态标题 = 当前论坛名(用户没起名就是域名)。多站之后「我在哪个论坛」比
         // 「App 叫什么」重要得多;App 名在闪屏与设置页里都有,不必再占这行。
         // 兜底成 APP_NAME:镜像尚未写入的那一帧不留空标题。
+        // 与筛选态同一套字号/自适应机制(21→15):论坛名也会是长字符串,长名自动缩号而不是
+        // 写死 26 撑爆顶栏——两态观感统一,顶栏也因此透气一些。
         Text(this.activeForumName.length > 0 ? this.activeForumName : AppConstants.APP_NAME)
-          .fontSize(26)
+          .fontSize(TITLE_MAX_FONT_SIZE)
+          .minFontSize(TITLE_MIN_FONT_SIZE)
+          .maxFontSize(TITLE_MAX_FONT_SIZE)
+          .heightAdaptivePolicy(TextHeightAdaptivePolicy.MAX_LINES_FIRST)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
           .maxLines(1)
