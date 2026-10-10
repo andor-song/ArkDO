@@ -200,6 +200,18 @@ export interface UserActivityPage {
   hasMore: boolean;
 }
 
+// 关注/粉丝列表里的一行:用户 + 当前登录者是否已关注 TA(列表接口的 is_followed 字段)。
+export interface FollowUserItem {
+  user: User;
+  isFollowed: boolean;
+}
+
+// 一页关注/粉丝列表(discourse-follow 插件 /u/{username}/followers.json 与 /following.json)。
+export interface FollowListPage {
+  items: FollowUserItem[];
+  hasMore: boolean;
+}
+
 // 资料编辑页的可编辑字段(来自 /u/{username}.json 的 user + user.user_profile)。
 export interface ProfileEditableData {
   // 昵称(显示名),对应 form user[name]。

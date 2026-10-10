@@ -1,4 +1,6 @@
 import {
+  FollowListPage,
+  FollowUserItem,
   ProfileEditableData,
   SolvedPostItem,
   SolvedPostPage,
@@ -24,6 +26,8 @@ import { forwardFailure, unexpectedResponse } from '../network/NetworkResults';
 const RECENT_ACTIVITY_LIMIT: number = 3;
 // user_actions 服务端每页固定条数(用于判断是否还有下一页)。
 const ACTIVITY_PAGE_SIZE: number = 30;
+// discourse-follow 插件关注/粉丝列表每页条数(插件默认 100)。
+const FOLLOW_PAGE_SIZE: number = 100;
 // 徽章横滑条最多取的枚数,其余靠「全部」入口。
 const TOP_BADGE_LIMIT: number = 8;
 // /solution/by_user.json 每页条数(该接口自带 limit 参数,由我们指定)。
@@ -35,6 +39,23 @@ const INTERACTION_LIMIT: number = 5;
 
 interface DiscourseUserResponse {
   user?: DiscourseUserDetail;
+}
+
+// discourse-follow 关注/粉丝列表响应:两侧各自己的数组键 + 可选 total。
+interface DiscourseFollowListResponse {
+  user_followers?: DiscourseUserSummaryItem[];
+  user_following?: DiscourseUserSummaryItem[];
+  total?: number;
+}
+
+// 列表里单个用户项(UserCard 精简字段,与 DiscourseUserSearchItem 同形 + is_followed)。
+interface DiscourseUserSummaryItem {
+  id?: number;
+  username?: string;
+  name?: string;
+  avatar_template?: string;
+  animated_avatar?: string | null;
+  is_followed?: boolean;
 }
 
 interface DiscourseUserDetail {
@@ -706,6 +727,66 @@ export class UserProfileService {
       };
     } catch (error) {
       return unexpectedResponse<UserActivityPage>(response.statusCode, response.challengeState, '站点用户活动响应不是有效 JSON。');
+    }
+  }
+
+  // 关注/粉丝列表:discourse-follow 插件端点 GET /u/{username}/followers.json(/following.json)。
+  // 响应形如 { user_followers: [...] } / { user_following: [...] },元素是 UserCard 精简对象:
+  // 有 id/username/name/avatar_template,没有 flair。每页按插件默认 100 条翻页(?page=N);
+  // 服务端给 total 时按 total 判 hasMore,个别站点没 total 就按「本页满 100」兜底。
+  // 两侧都用同一端点差异只有 name,故并到一个方法、kind 区分。
+  async getFollowList(username: string, kind: 'followers' | 'following', page: number):
+    Promise<NetworkResult<FollowListPage>> {
+    const path: string = `/u/${encodeURIComponent(username)}/${kind}.json?page=${page}`;
+    const response: NetworkResult<string> = await this.bridge.getJson(path);
+    if (!response.success) {
+      return forwardFailure<FollowListPage>(response);
+    }
+    if (response.data === undefined) {
+      return unexpectedResponse<FollowListPage>(response.statusCode, response.challengeState, '站点关注列表响应为空。');
+    }
+    try {
+      const payload: DiscourseFollowListResponse = JSON.parse(response.data) as DiscourseFollowListResponse;
+      const raw: DiscourseUserSummaryItem[] = kind === 'followers'
+        ? (payload.user_followers ?? [])
+        : (payload.user_following ?? []);
+      const items: FollowUserItem[] = [];
+      for (let index: number = 0; index < raw.length; index++) {
+        const item: DiscourseUserSummaryItem = raw[index];
+        if (typeof item.username !== 'string' || item.username.length === 0) {
+          continue;
+        }
+        const user: User = {
+          id: typeof item.id === 'number' ? item.id : 0,
+          username: item.username
+        };
+        if (item.name && item.name.length > 0) {
+          user.displayName = item.name;
+        }
+        if (item.avatar_template && item.avatar_template.length > 0) {
+          user.avatarTemplate = item.avatar_template;
+        }
+        if (item.animated_avatar && item.animated_avatar.length > 0) {
+          user.animatedAvatar = item.animated_avatar;
+        }
+        items.push({
+          user: user,
+          // 列表接口的 is_followed:个别站点没给就按 false(只影响按钮初始文案,不会发错请求)。
+          isFollowed: item.is_followed === true
+        });
+      }
+      const total: number = typeof payload.total === 'number' ? payload.total : raw.length;
+      return {
+        success: true,
+        statusCode: response.statusCode,
+        challengeState: response.challengeState,
+        data: {
+          items: items,
+          hasMore: items.length < total || raw.length >= FOLLOW_PAGE_SIZE
+        }
+      };
+    } catch (error) {
+      return unexpectedResponse<FollowListPage>(response.statusCode, response.challengeState, '站点关注列表响应不是有效 JSON。');
     }
   }
 

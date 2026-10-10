@@ -29,6 +29,8 @@ export enum AppRouteName {
   USER_PROFILE = 'userProfile',
   // 他被采纳为解决方案的回复列表,入口是他人主页统计格里的「解决方案」。
   SOLVED = 'solved',
+  // 关注/粉丝列表(discourse-follow),入口是他人主页的「关注 N · 粉丝 M」行。
+  FOLLOW_LIST = 'followList',
   // 双栏(平板横屏)下右详情栏的空占位:未选帖子时垫在栈底,让右栏不空白。仅宽屏使用。
   PLACEHOLDER = 'placeholder',
   // LINUX DO Credit 页(credit.linux.do):余额与最近 7 天获取记录,入口在个人中心。
@@ -304,6 +306,31 @@ export function isSolvedRouteParam(param: Object | undefined): boolean {
   return typeof candidate.username === 'string' && candidate.username.length > 0;
 }
 
+
+// 关注/粉丝列表参数:kind 取 'followers' | 'following'。
+export interface FollowListRouteParam {
+  username: string;
+  kind: string;
+  title: string;
+}
+
+export function buildFollowListRouteParam(username: string, kind: string, title: string): FollowListRouteParam {
+  return {
+    username: username,
+    kind: kind,
+    title: title
+  };
+}
+
+export function isFollowListRouteParam(param: Object | undefined): boolean {
+  if (!param) {
+    return false;
+  }
+  const candidate: FollowListRouteParam = param as FollowListRouteParam;
+  return typeof candidate.username === 'string' && candidate.username.length > 0 &&
+    (candidate.kind === 'followers' || candidate.kind === 'following') &&
+    typeof candidate.title === 'string';
+}
 
 // 用户动态列表参数:filter 见 UserActionType(4=话题 5=回复 1=点赞,可逗号组合)。
 export interface ActivityRouteParam {

@@ -11,6 +11,7 @@ import {
   toAvatarUser,
   UserActionType,
   UserActivityItem,
+  UserActivityPage,
   UserBadgeItem,
   UserInteraction,
   UserProfileDetail,
@@ -68,6 +69,8 @@ const TITLE_REVEAL_OFFSET: number = 64;
 const SEGMENT_TOP_TOPICS: number = 0;
 const SEGMENT_TOP_REPLIES: number = 1;
 const SEGMENT_RECENT: number = 2;
+// 第四段「赞过」:user_actions filter=1。与前三段共用行渲染,惰性拉取(切到才请求)。
+const SEGMENT_LIKED: number = 3;
 
 // 他人主页:点任意头像进来。只回答四件事——他是谁 / 靠不靠谱 / 说过什么 / 怎么找他。
 // 不做的:等级进度(connect 只认当前登录者)、已读(/read.json 固定返回自己)、
@@ -91,6 +94,8 @@ export struct UserProfilePage {
   onOpenBadges: (username: string, badgeCount: number) => void = () => {};
   // 被采纳的答案列表:四个插件页里唯一保留的,因为它是「靠不靠谱」的硬证据。
   onOpenSolved: (username: string, solvedCount: number) => void = () => {};
+  // 关注/粉丝列表入口(followers/following):宿主 push FOLLOW_LIST 路由。
+  onOpenFollowList: (username: string, kind: string, title: string) => void = () => {};
   // 互动圈头像可点:递归进目标用户的本页(带上 id 以免头像形状先圆后方闪)。
   onOpenUser: (username: string, displayName: string, avatarTemplate: string, userId: number) => void = () => {};
   onOpenWeb: (url: string, title?: string) => void = () => {};
@@ -100,6 +105,9 @@ export struct UserProfilePage {
   @State private profileDetail?: UserProfileDetail = undefined;
   @State private summary?: UserSummary = undefined;
   @State private recentActivity: UserActivityItem[] = [];
+  // 「赞过」段内容(user_actions filter=1):惰性加载,切到该分段才请求一次。
+  @State private likedActivity: UserActivityItem[] = [];
+  @State private likedLoaded: boolean = false;
   @State private categories: TopicCategory[] = [];
   @State private selectedSegment: number = SEGMENT_TOP_TOPICS;
   @State private isTitleShown: boolean = false;
@@ -124,6 +132,7 @@ export struct UserProfilePage {
   private loadedUsername: string = '';
   private categoryIndex: CategoryIndex = new CategoryIndex();
   private scroller: Scroller = new Scroller();
+  private profileService?: UserProfileService = undefined;
   private relationService?: UserRelationService = undefined;
 
   aboutToAppear(): void {
@@ -590,6 +599,11 @@ export struct UserProfilePage {
       // 操作区:认可 + 关注同一行(私信已移到头像右侧)。按插件字段条件显示。
       this.ActionButtons()
 
+      // 关注/粉丝计数行(discourse-follow):detail 给了 total 才显示,可点进原生列表页。
+      if (this.hasFollowCounts()) {
+        this.FollowCountRow()
+      }
+
       this.HairlineInset()
 
       // 统计区固定高度:加载占位与数据网格同高。
@@ -638,6 +652,36 @@ export struct UserProfilePage {
         .fontWeight(token.bold ? FontWeight.Bold : FontWeight.Normal)
         .fontStyle(token.italic ? FontStyle.Italic : FontStyle.Normal)
     }
+  }
+
+  // 关注/粉丝计数行:两个等宽可点格(跟随/ActionButtons 的 8px 左右内边距对齐)。
+  // 点进 discourse-follow 原生列表页(FOLLOW_LIST 路由);detail 没给 total 就不渲染整行。
+  @Builder
+  private FollowCountRow() {
+    Row() {
+      this.FollowCountCell(this.followCountLabel('following'), '关注', 'following')
+      this.FollowCountCell(this.followCountLabel('followers'), '粉丝', 'followers')
+    }
+    .width('100%')
+    .padding({ left: 8, right: 8, top: 14, bottom: 12 })
+  }
+
+  @Builder
+  private FollowCountCell(value: string, label: string, kind: string) {
+    Column() {
+      Text(value)
+        .fontSize(17)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+      Text(label)
+        .fontSize(11)
+        .fontColor($r('app.color.text_faint'))
+        .margin({ top: 2 })
+    }
+    .layoutWeight(1)
+    .onClick(() => {
+      this.openFollowList(kind);
+    })
   }
 
   @Builder
@@ -721,6 +765,7 @@ export struct UserProfilePage {
         this.SegmentTab('热门话题', SEGMENT_TOP_TOPICS)
         this.SegmentTab('热门回复', SEGMENT_TOP_REPLIES)
         this.SegmentTab('最近', SEGMENT_RECENT)
+        this.SegmentTab('赞过', SEGMENT_LIKED)
         Blank()
         // 与 tab 文字对齐:tab 列是「文字 + 下方 7px(margin5+线2)下划线」,文字被顶到列上半。
         // 给「全部」补同样 7px 下内边距,让它的盒子高度与 tab 列相等,Center 下两者文字(都在盒顶)才齐平。
@@ -760,6 +805,9 @@ export struct UserProfilePage {
     .margin({ right: 18 })
     .onClick(() => {
       this.selectedSegment = index;
+      if (index === SEGMENT_LIKED) {
+        this.ensureLikedLoaded();
+      }
     })
   }
 
@@ -802,7 +850,7 @@ export struct UserProfilePage {
         } else {
           this.EmptyHint('正在加载')
         }
-      } else {
+      } else if (this.selectedSegment === SEGMENT_RECENT) {
         if (this.recentActivity.length > 0) {
           ForEach(this.recentActivity, (item: UserActivityItem, index: number) => {
             Column() {
@@ -815,6 +863,23 @@ export struct UserProfilePage {
           }, (item: UserActivityItem, index: number) => `act_${item.topicId}_${item.postNumber ?? 0}_${index}`)
         } else {
           this.EmptyHint('最近没有动态')
+        }
+      } else {
+        // 「赞过」:惰性拉取(filter=1),未加载完成显示加载中,加载完为空显示空态。
+        if (this.likedActivity.length > 0) {
+          ForEach(this.likedActivity, (item: UserActivityItem, index: number) => {
+            Column() {
+              if (index > 0) {
+                this.HairlineInset()
+              }
+              this.ActivityRow(item)
+            }
+            .width('100%')
+          }, (item: UserActivityItem, index: number) => `liked_${item.topicId}_${item.postNumber ?? 0}_${index}`)
+        } else if (this.likedLoaded) {
+          this.EmptyHint('还没有赞过')
+        } else {
+          this.EmptyHint('正在加载')
         }
       }
     }
@@ -1144,6 +1209,7 @@ export struct UserProfilePage {
 
     // 服务不在字段初始化器里 new:那时父注入的 bridge 还是空壳默认值(惰性注入)。
     const service: UserProfileService = new UserProfileService(this.bridge);
+    this.profileService = service;
     this.relationService = new UserRelationService(this.bridge);
     this.loadDetail(service, this.username);
     this.loadSummary(service, this.username);
@@ -1215,6 +1281,23 @@ export struct UserProfilePage {
     }
   }
 
+  // 「赞过」段惰性加载:首次切到该分段才拉 filter=1 一页。先置 likedLoaded 防并发重复请求;
+  // 失败按「已加载空态」处理(与最近活动一致,不反复重试)。
+  private async ensureLikedLoaded(): Promise<void> {
+    if (this.likedLoaded || !this.profileService) {
+      return;
+    }
+    this.likedLoaded = true;
+    const result: NetworkResult<UserActivityPage> =
+      await this.profileService.getActivity(this.username, '1', 0);
+    if (this.loadedUsername !== this.username) {
+      return;
+    }
+    if (result.success && result.data) {
+      this.likedActivity = result.data.items;
+    }
+  }
+
   // ==================== 事件 ====================
 
   private updateTitleVisibility(): void {
@@ -1226,6 +1309,10 @@ export struct UserProfilePage {
   }
 
   private openSegmentAll(): void {
+    if (this.selectedSegment === SEGMENT_LIKED) {
+      this.onOpenActivity(this.username, '1', `${this.getDisplayName()} 的赞过`);
+      return;
+    }
     if (this.selectedSegment === SEGMENT_TOP_TOPICS) {
       this.onOpenActivity(this.username, '4', `${this.getDisplayName()} 的话题`);
       return;
@@ -1463,6 +1550,35 @@ export struct UserProfilePage {
 
   private hasFollow(): boolean {
     return this.profileDetail?.canFollow === true;
+  }
+
+  // 关注/粉丝计数:detail 里 total_followers/total_following,没给返回 0。
+  private followCountOf(kind: string): number {
+    const detail: UserProfileDetail | undefined = this.profileDetail;
+    if (!detail) {
+      return 0;
+    }
+    return kind === 'followers'
+      ? (detail.totalFollowers ?? 0)
+      : (detail.totalFollowing ?? 0);
+  }
+
+  private followCountLabel(kind: string): string {
+    const count: number = this.followCountOf(kind);
+    return count > 0 ? formatCount(count) : '—';
+  }
+
+  // 关注/粉丝计数行的显示开关:任意一侧有数就显示整行(两侧通常同时有)。
+  private hasFollowCounts(): boolean {
+    return this.followCountOf('followers') > 0 || this.followCountOf('following') > 0;
+  }
+
+  // 计数行点击:push 原生关注/粉丝列表页(FOLLOW_LIST 路由)。
+  private openFollowList(kind: string): void {
+    const title: string = kind === 'followers'
+      ? `${this.getDisplayName()} 的粉丝`
+      : `${this.getDisplayName()} 的关注`;
+    this.onOpenFollowList(this.username, kind, title);
   }
 
   // 称号是否走全息闪动特效(与帖子详情一致)。
