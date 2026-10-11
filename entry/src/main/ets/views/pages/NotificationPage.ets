@@ -89,7 +89,7 @@ export struct NotificationPage {
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_bg'))
+    .backgroundColor($r('app.color.page_bg_gray'))
   }
 
   @Builder
@@ -118,6 +118,7 @@ export struct NotificationPage {
               ListItem() {
                 NotificationListItem({
                   item: item,
+                  cardMode: true,
                   onItemClick: (clicked: NotificationItem) => {
                     this.handleItemClick(clicked);
                   }
@@ -135,7 +136,6 @@ export struct NotificationPage {
               })
             }
           }
-          .divider({ strokeWidth: 1, color: $r('app.color.border'), startMargin: 70, endMargin: 0 })
         }
         .width('100%')
         .height(`calc(100% + ${immersiveTitleBarContentTopSpacer(this.sysTopInset)}vp)`)

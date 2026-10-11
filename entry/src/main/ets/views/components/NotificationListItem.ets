@@ -4,6 +4,7 @@ import { RelativeTime } from '../../common/utils/RelativeTime';
 import { FaIconDefinition, FaIconView, getFaIcon } from './FaIcon';
 import { UserAvatar } from './UserAvatar';
 import { BRAND_BLUE, ON_DARK_FG } from '../../common/theme/Palette';
+import { CARD_RADIUS } from '../../common/theme/Metrics';
 
 const AVATAR_SIZE: number = 42;
 // 头像右下角角标配色:未读=品牌蓝底白图标;已读=白底深灰图标(对齐站点)。
@@ -21,6 +22,8 @@ export struct NotificationListItem {
     actionText: '', title: '', iconId: 'bell', iconColor: '#9CA3AF'
   };
   onItemClick: (item: NotificationItem) => void = () => {};
+  // 卡片模式(飞书/微信式浅灰底+白卡):开圆角、白卡底、卡间留缝;关闭则保持原平面行+分割线。
+  cardMode: boolean = false;
 
   build() {
     Row({ space: 12 }) {
@@ -68,8 +71,13 @@ export struct NotificationListItem {
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
-    .padding({ left: 16, right: 16, top: 13, bottom: 13 })
-    .backgroundColor(this.item.read ? $r('app.color.page_bg') : $r('app.color.info_soft_bg'))
+    .padding({ left: this.cardMode ? 12 : 16, right: this.cardMode ? 12 : 16, top: 13, bottom: 13 })
+    // 卡片模式:已读=白卡底;未读=淡蓝卡底(未读高亮不能被吃掉)。平面模式沿用原逻辑。
+    .backgroundColor(this.cardMode
+      ? (this.item.read ? $r('app.color.card_bg') : $r('app.color.info_soft_bg'))
+      : (this.item.read ? $r('app.color.page_bg') : $r('app.color.info_soft_bg')))
+    .borderRadius(this.cardMode ? CARD_RADIUS : 0)
+    .margin({ top: this.cardMode ? 6 : 0, bottom: this.cardMode ? 6 : 0 })
     .onClick(() => {
       this.onItemClick(this.item);
     })

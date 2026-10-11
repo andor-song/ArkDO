@@ -16,6 +16,7 @@ import {
   requiresHdsLayoutSafeAreaAvoidance
 } from '../../common/ui/ImmersiveLightMaterial';
 import { buildImmersiveTitleBarStyle } from '../../common/ui/ImmersiveTitleBarStyle';
+import { CARD_RADIUS } from '../../common/theme/Metrics';
 
 const LOG_TAG: string = '[ArkDO][MessageInboxPage]';
 const PAGE_PADDING: number = 16;
@@ -80,7 +81,7 @@ export struct MessageInboxPage {
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_bg'))
+    .backgroundColor($r('app.color.page_bg_gray'))
   }
 
   @Builder
@@ -115,7 +116,6 @@ export struct MessageInboxPage {
               ListFooter({ isLoading: this.isLoadingMore, hasMore: this.hasMore })
             }
           }
-          .divider({ strokeWidth: 1, color: $r('app.color.border'), startMargin: 0, endMargin: 0 })
         }
         .width('100%')
         .height(`calc(100% + ${immersiveTitleBarContentTopSpacer(this.sysTopInset)}vp)`)
@@ -184,8 +184,13 @@ export struct MessageInboxPage {
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
+    // 卡片模式(飞书/微信式浅灰底+白卡):与帖子列表卡片一致,贴边圆角卡、卡间留缝。
+    // 内部 padding 走 PAGE_PADDING(16),保持原有排版比例。
     .padding({ left: PAGE_PADDING, right: PAGE_PADDING, top: 14, bottom: 14 })
     .alignItems(VerticalAlign.Center)
+    .backgroundColor($r('app.color.card_bg'))
+    .borderRadius(CARD_RADIUS)
+    .margin({ top: 6, bottom: 6 })
     .onClick(() => {
       this.onOpenTopic(item.topicId, item.title);
     })
