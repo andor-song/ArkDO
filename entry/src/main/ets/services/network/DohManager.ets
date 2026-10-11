@@ -13,7 +13,8 @@ const PREF_KEY_ID_SEQ: string = 'doh_id_seq';
 
 /**
  * 内置 DoH:不可删除,首次启动种子数据,也是删除 active 后的兜底。
- * 两条内置项都恒在列表中(缺失自动补回):edge 为默认激活项(装机即用),arkdo 为备用预设。
+ * 五条内置项都恒在列表中(缺失自动补回):edge 为默认激活项(装机即用,唯一保 linux.do 真 IP),
+ * 阿里云/360/DNSPod 为国内国情优选预设(供切进/测速),arkdo 为备用预设。
  */
 export const DOH_EDGE_ID: string = 'builtin-edge';
 const DOH_EDGE_NAME: string = '论坛优选';
@@ -21,6 +22,23 @@ const DOH_EDGE_URL: string = 'https://edge.47258.xyz/linuxdo';
 
 // 保留原 id 兼容旧安装(旧版持久化里 active/列表都引用它);现降为第二预设。
 export const DOH_BUILTIN_ID: string = 'builtin-default';
+
+// 国内三家主流 DoH(参考 veegn 实测:阿里 ~87ms / 360 ~118ms / 腾讯 ~204ms)。
+// 对普通域名解析快且稳;但 linux.do 这条记录在国内被污染(实测返回 Facebook/Twitter/Dropbox 的 IP、
+// 连接超时),故不设为默认激活项 —— 默认仍是 edge(解析 linux.do 真 IP 的唯一可靠来源)。
+// 它们作为「国情优选」入口提供给用户切进/测速,尤其适合解析 github/cdn 这类未被污染的大厂域名。
+export const DOH_ALI_ID: string = 'builtin-ali';
+const DOH_ALI_NAME: string = '阿里云 DNS';
+const DOH_ALI_URL: string = 'https://dns.alidns.com/dns-query';
+
+export const DOH_360_ID: string = 'builtin-360';
+const DOH_360_NAME: string = '360 安全 DNS';
+const DOH_360_URL: string = 'https://doh.360.cn/dns-query';
+
+export const DOH_DNSPOD_ID: string = 'builtin-dnspod';
+const DOH_DNSPOD_NAME: string = '腾讯 DNSPod';
+const DOH_DNSPOD_URL: string = 'https://doh.pub/dns-query';
+
 const DOH_BUILTIN_NAME: string = '系统默认';
 const DOH_BUILTIN_URL: string = 'https://arkdo.ddd.oaifree.com/query-dns';
 
@@ -165,7 +183,8 @@ export class DohManager {
 
   /** 删除自定义服务器;内置项拒删。若删的是当前选中项,回退到内置默认并重新下发。 */
   static removeServer(context: common.Context, id: string): void {
-    if (id === DOH_BUILTIN_ID || id === DOH_EDGE_ID) {
+    if (id === DOH_BUILTIN_ID || id === DOH_EDGE_ID || id === DOH_ALI_ID ||
+      id === DOH_360_ID || id === DOH_DNSPOD_ID) {
       return;
     }
     try {
@@ -245,9 +264,43 @@ export class DohManager {
     };
   }
 
-  // 两条内置项,edge 置顶为默认激活项、arkdo 备用。种子/兜底统一走这里。
+  private static aliServer(): DohServer {
+    return {
+      id: DOH_ALI_ID,
+      name: DOH_ALI_NAME,
+      url: DOH_ALI_URL,
+      builtin: true
+    };
+  }
+
+  private static server360(): DohServer {
+    return {
+      id: DOH_360_ID,
+      name: DOH_360_NAME,
+      url: DOH_360_URL,
+      builtin: true
+    };
+  }
+
+  private static dnspodServer(): DohServer {
+    return {
+      id: DOH_DNSPOD_ID,
+      name: DOH_DNSPOD_NAME,
+      url: DOH_DNSPOD_URL,
+      builtin: true
+    };
+  }
+
+  // 内置项顺序:edge(默认激活,唯一保 linux.do 真 IP) → 国内三家(国情优选) → arkdo(备用)。
+  // 种子/兜底统一走这里。edge 保持原位第一位,确保旧安装升级后默认激活项不变。
   private static builtinServers(): DohServer[] {
-    return [DohManager.edgeServer(), DohManager.builtinServer()];
+    return [
+      DohManager.edgeServer(),
+      DohManager.aliServer(),
+      DohManager.server360(),
+      DohManager.dnspodServer(),
+      DohManager.builtinServer()
+    ];
   }
 
   // 解析持久化 JSON:逐项校验字段类型,内置项缺失时补回并置顶,防止被误删/篡改后没有默认项。
@@ -278,11 +331,24 @@ export class DohManager {
       Log.e(`${LOG_TAG} parse servers failed: ${JSON.stringify(err)}`);
       return DohManager.builtinServers();
     }
-    // 补回缺失的内置项:先补 arkdo 置顶,再补 edge 置顶,最终顺序 edge → arkdo → 其它。
-    // 对旧安装(仅有 arkdo)升级后即出现 edge 预设;对新装二者都已在 seed 里,这里是无操作。
+    // 补回缺失的内置项。为保持内置顺序稳定(edge → 阿里 → 360 → DNSPod → arkdo),
+    // 按该顺序用「倒序 unshift」依次补位:后补的会站到更前面。
+    // 对旧安装(仅有 arkdo,甚至只有 edge+arkdo)升级后即补齐全部内置;对新装 seed 已全,这里是无操作。
     const hasBuiltin: boolean = result.some((s: DohServer) => s.id === DOH_BUILTIN_ID);
     if (!hasBuiltin) {
       result.unshift(DohManager.builtinServer());
+    }
+    const hasDnspod: boolean = result.some((s: DohServer) => s.id === DOH_DNSPOD_ID);
+    if (!hasDnspod) {
+      result.unshift(DohManager.dnspodServer());
+    }
+    const has360: boolean = result.some((s: DohServer) => s.id === DOH_360_ID);
+    if (!has360) {
+      result.unshift(DohManager.server360());
+    }
+    const hasAli: boolean = result.some((s: DohServer) => s.id === DOH_ALI_ID);
+    if (!hasAli) {
+      result.unshift(DohManager.aliServer());
     }
     const hasEdge: boolean = result.some((s: DohServer) => s.id === DOH_EDGE_ID);
     if (!hasEdge) {

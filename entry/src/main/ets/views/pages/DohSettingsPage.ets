@@ -210,6 +210,11 @@ export struct DohSettingsPage {
           .fontColor($r('app.color.text_faint'))
           .width('100%')
           .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 14 })
+        Text('提醒:linux.do 在国内被污染,阿里/360/DNSPod 会解析到不可达 IP,所以论坛默认项保留「论坛优选」。国内三家适合 github/cdn 等大厂域名,可切进测速后用。')
+          .fontSize(12)
+          .fontColor($r('app.color.text_faint'))
+          .width('100%')
+          .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 8 })
 
         Row()
           .width('100%')
