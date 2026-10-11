@@ -326,7 +326,7 @@ export struct SettingsPage {
           .fontColor($r('app.color.text_primary'))
           .width('100%')
         Text('首页与详情页右下角按钮显示毛玻璃背景')
-          .fontSize(12)
+          .fontSize(13)
           .fontColor($r('app.color.text_faint'))
           .width('100%')
           .margin({ top: 2 })

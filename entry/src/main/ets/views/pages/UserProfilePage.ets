@@ -766,7 +766,7 @@ export struct UserProfilePage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
         SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(11)
+          .fontSize(14)
           .fontColor([$r('app.color.text_faint')])
       }
       .alignItems(VerticalAlign.Center)
