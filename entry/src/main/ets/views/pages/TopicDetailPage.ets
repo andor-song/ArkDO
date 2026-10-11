@@ -117,6 +117,13 @@ const INCOMING_BANNER_LIFT: number = 24;
 // 离开详情页后延迟这么久再去长轮询循环里删掉本帖频道。该操作要经 ArkWeb 桥 runJavaScript,
 // 压在 pop 那一帧上会掉帧;推迟到转场动画结束之后再做。与 TopicReadController 的 DETACH_DEFER_MS 同理。
 const CHANNEL_UNSUBSCRIBE_DEFER_MS: number = 600;
+// 一键到顶/一键到底悬浮圆钮:右下角回复 FAB 正上方竖排两颗,与 FAB 同一套玻璃材质。
+const SCROLL_NAV_BUTTON_SIZE: number = 40;
+const SCROLL_NAV_BUTTON_GAP: number = 8;
+// 钮列底边到回复 FAB 顶边的空当。
+const SCROLL_NAV_FAB_GAP: number = 10;
+// 侧边距 = 回复 FAB 侧边距 16 + FAB 半宽 26 − 本钮半宽 20,使钮列与 FAB 垂直方向同轴对齐。
+const SCROLL_NAV_SIDE_MARGIN: number = 22;
 
 @Component({ freezeWhenInactive: true })
 export struct TopicDetailPage {
@@ -853,6 +860,52 @@ export struct TopicDetailPage {
       .width('100%')
       .height('100%')
       .hitTestBehavior(HitTestMode.Transparent)
+    }
+
+    // 一键到顶 / 一键到底:右下角回复 FAB 正上方竖排两颗小圆钮。仅列表可滚动时显示
+    // (整屏放得下就不需要),浮层展开(评论输入/全屏编辑)时让位隐藏。
+    if (this.detail && !this.showComposer && !this.showFullComposer && this.listScrollable) {
+      RelativeContainer() {
+        Column({ space: SCROLL_NAV_BUTTON_GAP }) {
+          HdsActionBar({
+            primaryButton: this.scrollNavButton(
+              $r('sys.symbol.arrow_up_to_line'),
+              '回到顶部',
+              () => { this.jumpToFirstPost(); }
+            ),
+            actionBarStyle: this.scrollNavButtonStyle(),
+            blurStrategy: IMMERSIVE_ACTION_BAR_BLUR_DISABLED
+          })
+            .width(SCROLL_NAV_BUTTON_SIZE)
+            .height(SCROLL_NAV_BUTTON_SIZE)
+
+          HdsActionBar({
+            primaryButton: this.scrollNavButton(
+              $r('sys.symbol.arrow_down_to_line'),
+              '跳到底部',
+              () => { this.scrollToPageBottom(); }
+            ),
+            actionBarStyle: this.scrollNavButtonStyle(),
+            blurStrategy: IMMERSIVE_ACTION_BAR_BLUR_DISABLED
+          })
+            .width(SCROLL_NAV_BUTTON_SIZE)
+            .height(SCROLL_NAV_BUTTON_SIZE)
+        }
+        // 跟随智感握姿:与回复 FAB 同边(右手贴右、左手贴左),保证整组悬浮控件同侧。
+        .alignRules(smartReachBottomAlignRules(this.smartReachLeftHanded))
+        .margin({
+          left: SCROLL_NAV_SIDE_MARGIN,
+          right: SCROLL_NAV_SIDE_MARGIN,
+          bottom: floatingActionBottomMargin(this.sysBottomInset) + 52 + SCROLL_NAV_FAB_GAP
+        })
+      }
+      .width('100%')
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
+      .transition(TransitionEffect.asymmetric(
+        TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseOut }),
+        TransitionEffect.IDENTITY
+      ))
     }
 
     // 向上补楼 / 跳楼定位的加载指示:悬浮小胶囊,不参与 List 布局(头插时列表零跳动的前提)。
@@ -2167,6 +2220,51 @@ export struct TopicDetailPage {
     modifier.fontSize(22);
     modifier.fontColor([REPLY_BLUE]);
     return modifier;
+  }
+
+  private scrollNavButton(icon: Resource, label: string, onClick: () => void): ActionBarButton {
+    return new ActionBarButton({
+      width: LengthMetrics.vp(SCROLL_NAV_BUTTON_SIZE),
+      backgroundColor: ColorMetrics.resourceColor(Color.Transparent),
+      buttonModifier: buildImmersiveFloatingActionButtonModifier(this.fabGlassEnabled, this.fabGlassRadius),
+      iconSize: LengthMetrics.vp(18),
+      iconFillColor: ColorMetrics.resourceColor(REPLY_BLUE),
+      baseIconSymbolGlyphModifier: this.scrollNavSymbolModifier(icon),
+      accessibilityText: label,
+      onClick: onClick
+    });
+  }
+
+  private scrollNavButtonStyle(): ActionBarStyle {
+    return new ActionBarStyle({
+      height: LengthMetrics.vp(SCROLL_NAV_BUTTON_SIZE),
+      backgroundBlurStyle: BlurStyle.NONE,
+      backgroundColor: ColorMetrics.resourceColor(Color.Transparent),
+      innerSpace: LengthMetrics.vp(0),
+      startSpace: LengthMetrics.vp(0),
+      endSpace: LengthMetrics.vp(0),
+      isHorizontal: true
+    });
+  }
+
+  private scrollNavSymbolModifier(icon: Resource): SymbolGlyphModifier {
+    const modifier: SymbolGlyphModifier = new SymbolGlyphModifier(icon);
+    modifier.fontSize(18);
+    modifier.fontColor([REPLY_BLUE]);
+    return modifier;
+  }
+
+  // 一键到底。没加载全部(还有更多楼层):以服务端最高楼为锚重开一窗,直接落到真末楼;
+  // 已加载全部则滚到列表末项(待审区/末尾加载行),那就是视觉与数据上的底。
+  private scrollToPageBottom(): void {
+    if (!this.detail || this.isRewindowing) {
+      return;
+    }
+    if (this.hasMorePosts) {
+      this.jumpToPostNumber(this.getHighestPostNumber());
+      return;
+    }
+    this.scrollToListIndexBelowTitleBar(this.lastListIndex(), true);
   }
 
   // 列表末项下标。项序:0 = 摘要卡 → 1..postCount = 楼层 → 待审区(条件渲染) → 底部加载态行(有楼层时)。
