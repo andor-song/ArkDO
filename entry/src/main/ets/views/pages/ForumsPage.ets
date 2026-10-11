@@ -3,7 +3,7 @@ import { FORUM_SUGGESTIONS, ForumDef, ForumPrefs, ForumSuggestion, ForumUpdateRe
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { Log } from '../../services/logging/Log';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
-import { CARD_GAP, CARD_PADDING, CARD_RADIUS, PAGE_MARGIN } from '../../common/theme/Metrics';
+import { BOTTOM_TAB_BAR_HEIGHT, CARD_GAP, CARD_PADDING, CARD_RADIUS, PAGE_MARGIN } from '../../common/theme/Metrics';
 import { SiteUrl } from '../../services/site/SiteUrl';
 import { immersiveTitleBarContentTopSpacer } from '../../common/ui/ImmersiveTitleBarLayout';
 import {
@@ -212,6 +212,8 @@ export struct ForumsPage {
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
     .align(Alignment.Top)
+    // 一级 tab 页底部有飞书式导航栏悬浮覆盖;滚动尾部留出 TabBar 高度,最后一项不被遮。
+    .contentEndOffset(BOTTOM_TAB_BAR_HEIGHT)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 

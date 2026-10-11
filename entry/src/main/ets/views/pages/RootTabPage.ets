@@ -93,6 +93,7 @@ import { MATH_HOST_ACTIVE_KEY } from '../../services/content/MathRenderService';
 import { PushCoordinator } from '../../services/push/PushCoordinator';
 import { SCRIM } from '../../common/theme/Palette';
 import { MessageCutoutCapsule } from '../components/MessageCutoutCapsule';
+import { BottomTabBar, BottomTabId } from '../components/BottomTabBar';
 
 const LOG_TAG: string = '[ArkDO][Root]';
 const DIAG_TAG: string = '[ARKDO_CF_DIAG]';
@@ -135,6 +136,14 @@ export struct RootTabPage {
   @State private showImageViewer: boolean = false;
   @State private viewerImages: ViewerImage[] = [];
   @State private viewerStartIndex: number = 0;
+  // 底部飞书式导航栏:「栈顶是否一级 tab」信号。仅四个一级 tab 在栈顶时为 true,
+  // 由 Navigation interception 的 didShow 按栈顶路由名驱动,切 tab 复用既有 pushPath。
+  // 真正的「显示/隐藏」在 build() 里即时合成:本信号 && !宽屏 && !全屏浮层(搜索/图片)
+  // && !左滑手势——避免用单一陈旧布尔(宽屏旋转、浮层开关、左滑中途都无法准确反应)。
+  @State private showBottomTab: boolean = true;
+  @State private bottomTabIndex: number = BottomTabId.HOME;
+  // 已注入 interception(避免重复设置)。
+  private bottomTabInterceptionSet: boolean = false;
   // 预览返回键信号:Index @Entry 拦截后 bump,经 @Param 透传给 ImageViewer(翻回上一张/首图关闭)。
   @StorageProp(IMAGE_VIEWER_BACK_TICK_KEY) private viewerBackTick: number = 0;
   // 主窗口引用:图片预览期间隐藏/恢复状态栏用(打开时获取,关闭后释放)。
@@ -225,6 +234,7 @@ export struct RootTabPage {
 
   aboutToAppear(): void {
     this.ensureIconSymbolsLoaded();
+    this.installBottomTabInterception();
     // 冷启动即在宽屏(平板横屏)时,给空的右详情栏垫上占位(@Watch 只在切换时触发,首值需手动同步)。
     this.syncWidePlaceholder();
     // 头像缓存单例注入 host bridge:UserAvatar 深层嵌套拿不到 bridge,统一经它取图(过 SNI 封锁)。
@@ -449,6 +459,29 @@ export struct RootTabPage {
         })
           .width('100%')
           .height('100%')
+      }
+
+      // 底部飞书式导航栏:仅一级 tab 在栈顶时显示,悬浮于根 Stack 底部。
+      // 容器整层铺满但 hitTest 透明,按钮以外的区域不挡列表手势;
+      // 内容靠 justify-content 钉到屏幕底部(含 HOME 安全区,由 BottomTabBar 内部处理)。
+      // 合成有效显隐:一级 tab 在栈顶(showBottomTab),且不是宽屏双栏、没有全屏浮层
+      // (搜索 Flow / 图片浏览器)、不在左滑跟手中。四处任一成立都先让出底部——
+      // 搜索/图片是整窗覆盖层,tab 在上层会穿帮;左滑跟手中 tab 高亮会闪现/干扰回弹。
+      if (this.showBottomTab && !this.appIsWide && !this.showImageViewer
+        && !this.showSearchFlow && !this.profileSwipeActive) {
+        Column() {
+          BottomTabBar({
+            current: this.bottomTabIndex,
+            onSelect: (tab: BottomTabId) => {
+              this.handleBottomTabSelect(tab);
+            }
+          })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.End)
+        .hitTestBehavior(HitTestMode.Transparent)
+        .transition(TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseOut }))
       }
 
     }
@@ -1610,6 +1643,78 @@ export struct RootTabPage {
 
   private popNavigation(): void {
     this.navPathStack.pop();
+  }
+
+  // ===== 底部飞书式导航栏 =====
+  // 通过 Navigation interception 的 didShow 跟踪栈顶:一级 tab(首页/论坛/通知/我的)
+  // 在 navBar 或对应路由在栈顶时显示 TabBar,进详情/Web/设置等二级页隐藏。
+  private installBottomTabInterception(): void {
+    if (this.bottomTabInterceptionSet) {
+      return;
+    }
+    this.navPathStack.setInterception({
+      didShow: (from: NavDestinationContext | NavBar, to: NavDestinationContext | NavBar) => {
+        this.syncBottomTabForTop(to);
+      }
+    });
+    this.bottomTabInterceptionSet = true;
+  }
+
+  // 据栈顶内容同步 TabBar 显隐与选中态。
+  private syncBottomTabForTop(to: NavDestinationContext | NavBar): void {
+    // 首页:栈顶就是 navBar(非 NavDestination)。宽屏时 TabBar 是否显示交给 build()
+    // 的 !appIsWide 即时合成(旋转/分屏切换无需等一次路由事件)。
+    if (to === 'navBar') {
+      this.showBottomTab = true;
+      this.bottomTabIndex = BottomTabId.HOME;
+      return;
+    }
+    // 一级 tab 的 NavDestination:显示并同步选中。其余一律隐藏。
+    const ctx: NavDestinationContext = to as NavDestinationContext;
+    const topName: string = ctx.pathInfo.name;
+    if (topName === AppRouteName.FORUMS) {
+      this.showBottomTab = true;
+      this.bottomTabIndex = BottomTabId.FORUMS;
+      return;
+    }
+    if (topName === AppRouteName.NOTIFICATIONS) {
+      this.showBottomTab = true;
+      this.bottomTabIndex = BottomTabId.NOTIFICATIONS;
+      return;
+    }
+    if (topName === AppRouteName.PROFILE) {
+      this.showBottomTab = true;
+      this.bottomTabIndex = BottomTabId.PROFILE;
+      return;
+    }
+    this.showBottomTab = false;
+  }
+
+  // TabBar 点击分发:切到对应一级页。已在该 tab 时(首页场景)不重复 push。
+  private handleBottomTabSelect(tab: BottomTabId): void {
+    switch (tab) {
+      case BottomTabId.HOME:
+        this.popHomeFromTab();
+        break;
+      case BottomTabId.FORUMS:
+        this.navPathStack.pushPath(new NavPathInfo(AppRouteName.FORUMS, buildForumsRouteParam('bottomTab')));
+        break;
+      case BottomTabId.NOTIFICATIONS:
+        this.navPathStack.pushPath(new NavPathInfo(AppRouteName.NOTIFICATIONS, buildNotificationsRouteParam('bottomTab')));
+        break;
+      case BottomTabId.PROFILE:
+        this.navPathStack.pushPath(new NavPathInfo(AppRouteName.PROFILE, buildProfileRouteParam('bottomTab')));
+        break;
+    }
+  }
+
+  // 回首页:首页是 navBar(不占栈),栈内任何内容都挡住首页。全部清空即回首页。
+  // 宽屏双栏的 PLACEHOLDER 占位仅在 TabBar 显示时不存在(TabBar 宽屏隐藏),clear 无副作用。
+  private popHomeFromTab(): void {
+    if (this.navPathStack.size() > 0) {
+      this.navPathStack.clear(false);
+    }
+    this.bottomTabIndex = BottomTabId.HOME;
   }
 
   // 宽<->窄切换时的右栏占位同步:

@@ -9,6 +9,7 @@ import { NotificationListItem } from '../components/NotificationListItem';
 import { LoadStateView } from '../components/LoadStateView';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { ListFooter } from '../components/ListFooter';
+import { BOTTOM_TAB_BAR_HEIGHT } from '../../common/theme/Metrics';
 import { immersiveTitleBarContentTopSpacer } from '../../common/ui/ImmersiveTitleBarLayout';
 import {
   ImmersiveLightArea,
@@ -142,6 +143,8 @@ export struct NotificationPage {
         .position({ x: 0, y: -immersiveTitleBarContentTopSpacer(this.sysTopInset) })
         .clip(false)
         .scrollBar(BarState.Off)
+        // 一级 tab 页底部有飞书式导航栏悬浮覆盖;列表尾部留出 TabBar 高度,最后一条不被遮。
+        .contentEndOffset(BOTTOM_TAB_BAR_HEIGHT)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .onReachEnd(() => {
           this.loadMore();

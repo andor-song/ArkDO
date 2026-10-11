@@ -95,6 +95,7 @@ import {
   requiresHdsLayoutSafeAreaAvoidance
 } from '../../common/ui/ImmersiveLightMaterial';
 import { buildImmersiveTitleBarStyle } from '../../common/ui/ImmersiveTitleBarStyle';
+import { BOTTOM_TAB_BAR_HEIGHT } from '../../common/theme/Metrics';
 import {
   SMART_REACH_ANIMATION_DURATION,
   SMART_REACH_LEFT_HAND_STORAGE_KEY,
@@ -759,6 +760,9 @@ export struct HomePage {
         .scrollBar(BarState.Off)
         .enableScrollInteraction(!this.incomingInsertActive)
         .padding({ bottom: 0 })
+        // 一级 tab 页底部有飞书式导航栏悬浮覆盖;给列表尾部留出 TabBar 高度,
+        // 让最后一条帖子能滚到 TabBar 上方,不被遮挡。
+        .contentEndOffset(BOTTOM_TAB_BAR_HEIGHT)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .onReachEnd(() => {
           this.loadMoreTopics();
@@ -832,7 +836,7 @@ export struct HomePage {
           }
             .id('smartReachHomeFabCluster')
             .alignRules(this.fabAlignRules)
-            .margin({ left: 16, right: 16, bottom: 16 + this.sysBottomInset })
+            .margin({ left: 16, right: 16, bottom: 16 + BOTTOM_TAB_BAR_HEIGHT + this.sysBottomInset })
             .alignItems(VerticalAlign.Center)
         }
         .width('100%')

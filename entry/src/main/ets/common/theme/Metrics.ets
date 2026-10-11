@@ -12,6 +12,9 @@ export const CARD_RADIUS: number = 16;
 export const CARD_PADDING: number = 16;
 // 相邻卡片的纵向间距。
 export const CARD_GAP: number = 12;
+// 底部飞书式导航栏内容条高度(不含系统底部安全区)。一级 tab 页内容底部据此避让,
+// 保证最后一条/输入条不被 TabBar 遮挡;实际总高 = 该值 + sysBottomInset。
+export const BOTTOM_TAB_BAR_HEIGHT: number = 52;
 
 // ---------------------------------------------------------------------------
 // 字号 token

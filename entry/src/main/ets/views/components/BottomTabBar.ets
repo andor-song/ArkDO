@@ -1,5 +1,6 @@
 import { NotificationEventBus, NotificationSnapshot } from '../../services/notification/NotificationEventBus';
 import { SYS_BOTTOM_INSET_KEY } from '../../common/utils/ImmersiveWindow';
+import { BOTTOM_TAB_BAR_HEIGHT } from '../../common/theme/Metrics';
 
 // ===== 飞书/微信式底部导航栏 =====
 // 4 个一级 tab 等分:首页 / 论坛 / 通知 / 我的。选中深色高亮、未选中灰色,
@@ -9,8 +10,6 @@ import { SYS_BOTTOM_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 
 const TAB_ICON_SIZE: number = 24;
 const TAB_LABEL_SIZE: number = 11;
-// 内容条高度(不含系统底部安全区)。
-const TAB_BAR_HEIGHT: number = 52;
 const TAB_ANIM_MS: number = 200;
 // 图标字号内的留白,容纳红点角标不溢出。
 const TAB_ICON_BOX: number = 32;
@@ -76,7 +75,7 @@ export struct BottomTabBar {
         }, (label: string, index: number) => `${label}_${index}`)
       }
       .width('100%')
-      .height(TAB_BAR_HEIGHT)
+      .height(BOTTOM_TAB_BAR_HEIGHT)
       .alignItems(VerticalAlign.Center)
 
       // 底部 HOME 指示条安全区(手势条高低由系统安全区决定)。

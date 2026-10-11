@@ -33,7 +33,7 @@ import { UserAvatar } from '../components/UserAvatar';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { showToast as promptToast } from '../../common/utils/Toast';
 import { badgeHeadLabel, badgeRowFillers, badgeRowsOf, daysSince, formatCount, formatTimeRead, trustLabelWithTitleOf } from '../../common/utils/ProfileFormat';
-import { CARD_GAP, CARD_PADDING, CARD_RADIUS, PAGE_MARGIN } from '../../common/theme/Metrics';
+import { BOTTOM_TAB_BAR_HEIGHT, CARD_GAP, CARD_PADDING, CARD_RADIUS, PAGE_MARGIN } from '../../common/theme/Metrics';
 import { immersiveTitleBarContentTopSpacer } from '../../common/ui/ImmersiveTitleBarLayout';
 import {
   ImmersiveLightArea,
@@ -208,6 +208,8 @@ export struct ProfilePage {
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
     .align(Alignment.Top)
+    // 一级 tab 页底部有飞书式导航栏悬浮覆盖;滚动尾部留出 TabBar 高度,最后一项不被遮。
+    .contentEndOffset(BOTTOM_TAB_BAR_HEIGHT)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
