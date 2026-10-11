@@ -16,6 +16,15 @@ const MAX_CHALLENGE_POLL_COUNT: number = 90;
 // 单靠 URL 判定会漏检。改盯登录令牌 cookie `_t`(登出时无、登录后下发)兜住这条路径。
 const LOGIN_POLL_INTERVAL_MS: number = 800;
 const AUTH_COOKIE_NAME: string = '_t';
+// 主框架间歇性 ERR_CONNECTION_RESET(-101) 的登录页重试:旧包曾撞上同样的 RST 白屏,
+// 但重启后网络路径恢复即可登录。这里在主框架 RST 且未登录成功时自动重新 loadUrl,
+// 最多重试 2 次(仍失败则不打扰,用户可手动重登)。
+const MAIN_FRAME_RST_RETRY_MAX: number = 2;
+// 登录页 HTML 引用了 Google 三方登录脚本(accounts.google.com/gsi/client),国内访问必然
+// 60s 超时,把登录表单渲染整段拖到最后。native 层把它拦截成空响应,页面瞬间完成渲染;
+// 三方登录按钮缺失不影响本地账密登录(旧包同样没有它也能登录成功)。
+const INTERCEPT_GOOGLE_GSI_HOST: string = 'accounts.google.com';
+const INTERCEPT_GOOGLE_GSI_PATH: string = '/gsi/client';
 
 @Component
 export struct LoginPage {
@@ -46,6 +55,8 @@ export struct LoginPage {
   private challengePollTimer: number = -1;
   private challengePollCount: number = 0;
   private hasReloadedAfterChallenge: boolean = false;
+  // 主框架 -101 RST 重试累计(达到上限则停,交还用户手动重登)。
+  private mainFrameRstRetryCount: number = 0;
   // 登录态轮询:检测 `_t` cookie 从"无"变"有"即判定登录成功;单次守卫防与 onPageEnd 路径重复触发。
   private loginPollTimer: number = -1;
   private initialAuthCookiePresent: boolean = false;
@@ -116,7 +127,13 @@ export struct LoginPage {
           }
         })
         .onErrorReceive((event: OnErrorReceiveEvent) => {
-          Log.i(`${LOG_TAG} load error url=${this.safeRequestUrl(event.request)} code=${this.safeErrorCode(event.error)} info=${this.safeErrorInfo(event.error)}`);
+          const rqUrl: string = this.safeRequestUrl(event.request);
+          const errCode: number = this.safeErrorCode(event.error);
+          Log.i(`${LOG_TAG} load error url=${rqUrl} code=${errCode} info=${this.safeErrorInfo(event.error)}`);
+          this.maybeRetryAfterMainFrameRst(rqUrl, errCode);
+        })
+        .onInterceptRequest((event: OnInterceptRequestEvent) => {
+          return this.interceptThirdPartyBlockers(event);
         })
         .onHttpErrorReceive((event: OnHttpErrorReceiveEvent) => {
           const url: string = this.safeRequestUrl(event.request);
@@ -255,6 +272,51 @@ export struct LoginPage {
   private logCfClearanceSnapshot(stage: string): void {
     const snapshot: CookiePresenceSnapshot = WebSessionManager.getCookiePresenceSnapshot('cf_clearance');
     Log.i(`${LOG_TAG} cf_clearance snapshot stage=${stage} exists=${snapshot.hasCookie} cookieHeaderLength=${snapshot.headerLength}`);
+  }
+
+  // 拦截会让登录页卡住的第三方脚本:主要是 Google 三方登录(accounts.google.com/gsi/client)。
+  // 返回 204 空响应,页面 script 立即完成,登录表单体不再被 60s 超时拖着渲染不出来。
+  // 只拦这一个具体资源;其它一律放行(返回 undefined 让 Web 走默认)。
+  private interceptThirdPartyBlockers(event: OnInterceptRequestEvent): WebResourceResponse | undefined {
+    try {
+      const url: string = this.safeRequestUrl(event.request);
+      if (url.indexOf(INTERCEPT_GOOGLE_GSI_HOST) >= 0 && url.indexOf(INTERCEPT_GOOGLE_GSI_PATH) >= 0) {
+        Log.i(`${LOG_TAG} intercept third-party script url=${url}`);
+        const response: WebResourceResponse = new WebResourceResponse();
+        response.setResponseCode(204);
+        response.setResponseData('');
+        response.setResponseMimeType('text/javascript');
+        response.setResponseEncoding('utf-8');
+        return response;
+      }
+    } catch (err) {
+      Log.i(`${LOG_TAG} intercept failed: ${JSON.stringify(err)}`);
+    }
+    return undefined;
+  }
+
+  // 主框架 -101 ERR_CONNECTION_RESET 的自动重试。linux.do 在 CF 边缘会间歇性 RST,
+  // 旧包撞上时白屏、重进往往就通。这里识别出主框架 RST 且还没登录成功时,重新 loadUrl。
+  private maybeRetryAfterMainFrameRst(url: string, code: number): void {
+    if (code !== -101 || this.hasSignaledLoginSuccess) {
+      return;
+    }
+    // 只重试主框架请求:判断当前 url 是否就是登录页(子资源的 -101 不触发)。
+    const isMainLogin: boolean = url.startsWith(AppConstants.LOGIN_URL);
+    if (!isMainLogin) {
+      return;
+    }
+    if (this.mainFrameRstRetryCount >= MAIN_FRAME_RST_RETRY_MAX) {
+      Log.i(`${LOG_TAG} main-frame RST retry exhausted count=${this.mainFrameRstRetryCount}`);
+      return;
+    }
+    this.mainFrameRstRetryCount++;
+    Log.i(`${LOG_TAG} main-frame RST retry #${this.mainFrameRstRetryCount}`);
+    try {
+      this.controller.loadUrl(AppConstants.LOGIN_URL);
+    } catch (err) {
+      Log.i(`${LOG_TAG} main-frame RST retry load failed: ${JSON.stringify(err)}`);
+    }
   }
 
   private safeRequestUrl(request: WebResourceRequest): string {
