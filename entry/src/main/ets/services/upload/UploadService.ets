@@ -21,6 +21,8 @@ interface DiscourseLookupUrlItem {
 
 // 一次成功上传的结果。字段对齐 UploadSerializer,写正文用 shortUrl(图片/附件)或 shortPath(裸 video 标签)。
 export interface UploadedFile {
+  /** 服务端分配的 upload id(/uploads.json 响应的 id)。头像等需要引用「某次上传」的场景用。 */
+  id: number;
   /** upload://xxx.ext。写进 markdown 的短码,服务端 cook 时换成真实地址。 */
   shortUrl: string;
   /** /uploads/short-url/xxx.ext。裸 HTML(如 <video src>)里只能用它,markdown 短码在原始 HTML 里不会被解析。 */
@@ -50,6 +52,7 @@ export interface UploadOutcome {
 
 // /uploads.json 成功响应的关注字段(其余忽略)。
 interface UploadResponse {
+  id?: number;
   short_url?: string;
   short_path?: string;
   url?: string;
@@ -439,6 +442,7 @@ export class UploadService {
       }
       return {
         file: {
+          id: typeof parsed.id === 'number' ? parsed.id : 0,
           shortUrl: shortUrl,
           shortPath: parsed.short_path ? parsed.short_path : '',
           url: realUrl,

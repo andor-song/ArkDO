@@ -259,4 +259,6 @@ export interface ProfileEditableData {
   bioRaw: string;
   // 登录名(不可编辑,仅展示)。
   username: string;
+  // 头像模板(/u/{u}.json 的 user.avatar_template,{size} 占位)。仅用于编辑页展示当前头像。
+  avatarTemplate?: string;
 }

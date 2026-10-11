@@ -423,6 +423,63 @@ export default function userProfileServiceTest() {
       expect(result.data).assertTrue();
     });
 
+    // 上传头像是两步:先传图拿 upload id,再在保存资料时带 user[uploaded_avatar_id]。
+    // id <= 0 视为未换头像,不追加该字段(保持旧头像)。
+    it('updateProfileAppendsUploadedAvatarIdWhenProvided', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge(okResponse('{"user":{"id":7,"username":"linuxdo_user"}}'));
+      const service: UserProfileService = new UserProfileService(bridge);
+      const fields: ProfileEditableData = {
+        name: '新名字',
+        title: '',
+        website: '',
+        location: '',
+        bioRaw: '',
+        username: 'linuxdo_user'
+      };
+
+      const result = await service.updateProfile('linuxdo_user', fields, 12345);
+
+      expect(bridge.requestedPath).assertEqual('/u/linuxdo_user.json');
+      expect(bridge.requestedMethod).assertEqual('PUT_FORM');
+      // 既有字段保持,末尾追加 user[uploaded_avatar_id]=12345
+      expect(bridge.requestedBody).assertEqual(
+        'user[name]=%E6%96%B0%E5%90%8D%E5%AD%97&user[title]=&user[website]=&' +
+        'user[location]=&user[bio_raw]=&user[uploaded_avatar_id]=12345');
+      expect(result.success).assertTrue();
+    });
+
+    it('updateProfileOmitsAvatarIdWhenNotGiven', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge(okResponse('{"user":{"id":7,"username":"linuxdo_user"}}'));
+      const service: UserProfileService = new UserProfileService(bridge);
+      const fields: ProfileEditableData = {
+        name: '仅改名',
+        title: '',
+        website: '',
+        location: '',
+        bioRaw: '',
+        username: 'linuxdo_user'
+      };
+
+      const result = await service.updateProfile('linuxdo_user', fields);
+
+      expect(bridge.requestedBody.includes('uploaded_avatar_id')).assertFalse();
+      expect(result.success).assertTrue();
+    });
+
+    // 头像预览需要 avatar_template(编辑页头部展示当前头像)。
+    it('parsesAvatarTemplateIntoEditableData', 0, async () => {
+      const payload: string = '{"user":{"id":7,"username":"linuxdo_user","name":"Linux.do User",' +
+        '"avatar_template":"/user_avatar/linux.do/linuxdo_user/{size}/7_2.png",' +
+        '"user_profile":{"bio_raw":"Hello"}}}';
+      const bridge: FakeBridge = new FakeBridge(okResponse(payload));
+      const service: UserProfileService = new UserProfileService(bridge);
+
+      const result = await service.getProfileEditable('linuxdo_user');
+
+      expect(result.success).assertTrue();
+      expect(result.data?.avatarTemplate).assertEqual('/user_avatar/linux.do/linuxdo_user/{size}/7_2.png');
+    });
+
     it('parsesDraftCountFromCurrentSession', 0, async () => {
       const payload: string = '{"current_user":{"id":7,"username":"linuxdo_user","draft_count":2}}';
       const bridge: FakeBridge = new FakeBridge(okResponse(payload));

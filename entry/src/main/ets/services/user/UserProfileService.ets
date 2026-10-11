@@ -533,7 +533,8 @@ export class UserProfileService {
         website: typeof sourceUser.website === 'string' ? sourceUser.website : '',
         location: profile && typeof profile.location === 'string' ? profile.location : '',
         bioRaw: profile && typeof profile.bio_raw === 'string' ? profile.bio_raw : '',
-        username: sourceUser.username
+        username: sourceUser.username,
+        avatarTemplate: typeof sourceUser.avatar_template === 'string' ? sourceUser.avatar_template : undefined
       };
       return {
         success: true,
@@ -548,13 +549,19 @@ export class UserProfileService {
 
   // 保存资料编辑:PUT /u/{username}.json,form body 用 Discourse 的 user[field] 数组形式。
   // 成功响应是 { user:{...} } 或 { success:true },只要不失败即视为保存成功。
-  async updateProfile(username: string, fields: ProfileEditableData): Promise<NetworkResult<boolean>> {
+  // avatarUploadId:本次会话新上传头像的 upload id(/uploads.json 的 id);传 >0 时追加
+  // user[uploaded_avatar_id],服务端据此把该上传设成用户新头像;不传/0 = 保持旧头像。
+  async updateProfile(username: string, fields: ProfileEditableData, avatarUploadId: number = 0): Promise<NetworkResult<boolean>> {
     const parts: string[] = [];
     parts.push(`user[name]=${encodeURIComponent(fields.name)}`);
     parts.push(`user[title]=${encodeURIComponent(fields.title)}`);
     parts.push(`user[website]=${encodeURIComponent(fields.website)}`);
     parts.push(`user[location]=${encodeURIComponent(fields.location)}`);
     parts.push(`user[bio_raw]=${encodeURIComponent(fields.bioRaw)}`);
+    // 换过头像才带 uploaded_avatar_id(服务端据此把该 upload 设成用户新头像)。
+    if (avatarUploadId > 0) {
+      parts.push(`user[uploaded_avatar_id]=${avatarUploadId}`);
+    }
     const body: string = parts.join('&');
     const path: string = `/u/${encodeURIComponent(username)}.json`;
     const response: NetworkResult<string> = await this.bridge.putForm(path, body);

@@ -4,6 +4,7 @@ import { ProfileEditableData, UserProfileDetail } from '../../models/UserProfile
 import { UserProfileService } from '../../services/user/UserProfileService';
 import { UserProfileCache } from '../../services/user/UserProfileCache';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
+import { UploadOutcome, UploadService } from '../../services/upload/UploadService';
 import { NetworkResult } from '../../services/network/NetworkTypes';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { showToast as promptToast } from '../../common/utils/Toast';
@@ -41,6 +42,12 @@ export struct ProfileEditPage {
   @State private loading: boolean = true;
   @State private loadFailed: boolean = false;
   @State private saving: boolean = false;
+  // 当前头像模板({size} 占位),预填自 /u/{u}.json;换头像成功后改为真实直链。
+  @State private avatarTemplate: string = '';
+  // 本次会话新上传的头像 upload id;0=未换头像(保存时不带 uploaded_avatar_id)。
+  @State private avatarUploadId: number = 0;
+  // 选图上传中(防重复点击 + 显示「上传中…」)。
+  @State private avatarUploading: boolean = false;
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
@@ -60,12 +67,40 @@ export struct ProfileEditPage {
       this.website = data.website;
       this.location = data.location;
       this.bioRaw = data.bioRaw;
+      this.avatarTemplate = data.avatarTemplate ? data.avatarTemplate : '';
+      this.avatarUploadId = 0;
       Log.i(`${LOG_TAG} editable loaded username=${data.username}`);
     } else {
       this.loadFailed = true;
       const reason: string = result.error ? result.error.message : '加载失败';
       promptToast(this.getUIContext(), reason, 2500);
       Log.i(`${LOG_TAG} editable load failed status=${result.statusCode}`);
+    }
+  }
+
+  // 换头像:相册选一张 → 走既有图片上传优化链路 → 记 upload id,保存资料时随 PUT 提交。
+  // 上传失败(超限/白名单/网络)复用 UploadOutcome.error 直接展示,不让用户猜。
+  private async pickAvatar(): Promise<void> {
+    if (this.avatarUploading) {
+      return;
+    }
+    const uploadService: UploadService = new UploadService(this.bridge);
+    const uris: string[] = await uploadService.pickImages(1);
+    if (uris.length === 0) {
+      return; // 用户取消
+    }
+    this.avatarUploading = true;
+    try {
+      const outcome: UploadOutcome = await uploadService.uploadImageUri(uris[0]);
+      if (outcome.file && outcome.file.id > 0) {
+        this.avatarUploadId = outcome.file.id;
+        // 立即用真实 CDN 直链预览,不等保存成功。
+        this.avatarTemplate = outcome.file.url;
+      } else {
+        promptToast(this.getUIContext(), outcome.error ? outcome.error : '图片上传失败', 2500);
+      }
+    } finally {
+      this.avatarUploading = false;
     }
   }
 
@@ -83,7 +118,7 @@ export struct ProfileEditPage {
       username: this.username
     };
     const service: UserProfileService = new UserProfileService(this.bridge);
-    const result: NetworkResult<boolean> = await service.updateProfile(this.username, fields);
+    const result: NetworkResult<boolean> = await service.updateProfile(this.username, fields, this.avatarUploadId);
     this.saving = false;
     if (result.success && result.data) {
       // 服务端返回的详情刷新缓存:回退时「我的」页/他人主页能看到新简介与名字。
@@ -182,8 +217,47 @@ export struct ProfileEditPage {
 
   // 字段卡片:每行 label + 输入框,行间发丝线。
   @Builder
+  private AvatarRow() {
+    Row() {
+      Text('头像')
+        .fontSize(15)
+        .fontColor($r('app.color.text_primary'))
+        .width(64)
+      Row() {
+        if (this.avatarTemplate.length > 0) {
+          Image(this.avatarTemplate.includes('{size}') ? this.avatarTemplate.replace('{size}', '96') : this.avatarTemplate)
+            .width(56)
+            .height(56)
+            .borderRadius(28)
+            .backgroundColor($r('app.color.surface_muted'))
+            .objectFit(ImageFit.Cover)
+        } else {
+          Circle()
+            .width(56)
+            .height(56)
+            .fill($r('app.color.surface_muted'))
+        }
+        Text(this.avatarUploading ? '上传中…' : '更换头像')
+          .fontSize(13)
+          .fontColor($r('app.color.brand'))
+          .margin({ left: 12 })
+      }
+      .layoutWeight(1)
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.pickAvatar();
+      })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 12, bottom: 12 })
+  }
+
+  @Builder
   private FieldGroup() {
     Column() {
+      this.AvatarRow()
+      this.HairlineInset()
       this.FieldRow('姓名', '昵称/显示名', this.name, (value: string) => { this.name = value; })
       this.HairlineInset()
       this.FieldRow('头衔', '如「活跃用户」', this.title, (value: string) => { this.title = value; })
