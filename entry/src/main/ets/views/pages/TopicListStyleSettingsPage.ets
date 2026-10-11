@@ -76,10 +76,10 @@ export struct TopicListStyleSettingsPage {
   onBack: () => void = () => {};
   // 五个可调值的页内镜像:滑块要双向绑定,故各存一份 @State,变更后同步进 prefs。
   @State private titleFontSize: number = 17;
-  @State private titleFontWeight: number = TITLE_FONT_WEIGHT_MEDIUM;
+  @State private titleFontWeight: number = TITLE_FONT_WEIGHT_REGULAR;
   @State private lineHeightRatio: number = 1.35;
   @State private rowPadding: number = 8;
-  @State private avatarSize: number = 48;
+  @State private avatarSize: number = 40;
   // 预览用的假数据:两条覆盖了列表上会出现的全部元素(内联图标、未读药丸、蓝点、
   // 多行标题、分类标签、时间),调任一项都能立刻看出影响面。
   @State private previewTopics: Topic[] = [];

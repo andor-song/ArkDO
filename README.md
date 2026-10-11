@@ -184,6 +184,10 @@ hvigorw assembleHap --mode module -p product=default
 **能发新帖吗？**
 目前只支持回复，不支持发新主题、不支持上传图片。私信走内嵌网页。
 
+## 更新日志
+
+各版本变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 参与贡献
 
 欢迎 Issue 和 PR。已知问题见 `docs/known-issues.md`。

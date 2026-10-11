@@ -30,6 +30,7 @@ export const TOPIC_LIST_AVATAR_SIZE_KEY: string = 'topicListAvatarSize';
 // 头像下限是还能认出人脸的最小直径,上限已与两行标题等高。
 //
 // 默认值一律等于改造前的硬编码值,保证不动设置的老用户升级后列表分毫不变。
+// 例外:1.0.0 起标题字重默认改「常规」、头像默认由 48 调小到 40,兼顾紧凑排版。
 // ---------------------------------------------------------------------------
 
 /** 标题字号。默认 17 即 Metrics 的 FONT_BODY_LARGE。 */
@@ -41,7 +42,7 @@ export const TITLE_FONT_SIZE_DEFAULT: number = 17;
 export const TITLE_FONT_WEIGHT_REGULAR: number = 400;
 export const TITLE_FONT_WEIGHT_MEDIUM: number = 500;
 export const TITLE_FONT_WEIGHT_SEMI_BOLD: number = 600;
-export const TITLE_FONT_WEIGHT_DEFAULT: number = TITLE_FONT_WEIGHT_MEDIUM;
+export const TITLE_FONT_WEIGHT_DEFAULT: number = TITLE_FONT_WEIGHT_REGULAR;
 
 /** 行高倍率。存倍率而非绝对行高:改字号时行高自动跟随,不会出现「字变大了行距没跟上」。 */
 export const LINE_HEIGHT_RATIO_MIN: number = 1.15;
@@ -55,10 +56,10 @@ export const ROW_PADDING_MIN: number = 4;
 export const ROW_PADDING_MAX: number = 20;
 export const ROW_PADDING_DEFAULT: number = 8;
 
-/** 头像直径。 */
+/** 头像直径。默认 40:1.0.0 起由 48 调小,列表更紧凑。 */
 export const AVATAR_SIZE_MIN: number = 32;
 export const AVATAR_SIZE_MAX: number = 56;
-export const AVATAR_SIZE_DEFAULT: number = 48;
+export const AVATAR_SIZE_DEFAULT: number = 40;
 
 /** 帖子列表行的一整套可调样式。 */
 export interface TopicListStyle {
@@ -106,7 +107,7 @@ export function normalizeTitleFontWeight(value: number): number {
   if (value === TITLE_FONT_WEIGHT_REGULAR || value === TITLE_FONT_WEIGHT_SEMI_BOLD) {
     return value;
   }
-  return TITLE_FONT_WEIGHT_MEDIUM;
+  return TITLE_FONT_WEIGHT_REGULAR;
 }
 
 // ---------------------------------------------------------------------------
