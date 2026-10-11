@@ -64,7 +64,8 @@ import { REALTIME_TOPICS_ENABLED_STORAGE_KEY } from '../../services/realtime/Rea
 import { BADGE_FILTER_ENABLED_STORAGE_KEY } from '../../services/home/BadgeFilterPrefs';
 import { FaIconDefinition, FaIconView, getFaIcon } from '../components/FaIcon';
 import { SEARCH_ICON_GEOMETRY_ID } from '../components/SearchOverlay';
-import { ACTIVE_FORUM_NAME_KEY, ACTIVE_FORUM_TICK, SEARCH_OVERLAY_VISIBLE_KEY } from '../../common/constants/StorageKeys';
+import { ACTIVE_FORUM_NAME_KEY, ACTIVE_FORUM_TICK, 
+  CATEGORY_SHEET_VISIBLE_KEY, SEARCH_OVERLAY_VISIBLE_KEY } from '../../common/constants/StorageKeys';
 import { SYS_BOTTOM_INSET_KEY, SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { PostRichContent } from '../components/PostRichContent';
 import {
@@ -105,22 +106,6 @@ import {
 
 const LOG_TAG: string = '[ArkDO][Home]';
 const DIAG_TAG: string = '[ARKDO_CF_DIAG]';
-// 侧边抽屉宽度(关闭时向左平移此距离移出屏幕)。
-const DRAWER_WIDTH: number = 288;
-// ===== 从左边缘右滑跟手拉出版块抽屉 =====
-// 起手区宽度(vp):按下点距屏幕左边小于它,右滑才认作「拉抽屉」,否则中屏随手右滑就把抽屉带出来了。
-// 别再往小调:实测「贴着边缘滑」的按下点落在 30~45,而不是贴着 0——最靠边的那几毫米被系统侧滑
-// 返回的热区吃掉,触点根本派发不进来。留出这段够不着的余量,起手区才有实际可用宽度。
-// (391vp 屏宽下约占 14%,而中屏右滑实测 downX≈245,离得很远,不会误触。)
-const DRAWER_EDGE_WIDTH: number = 56;
-// 松手判定阈值:拉出/推回超过抽屉宽度这个比例即补完动作,否则回弹。开与关同一比例,两向手感对称。
-const DRAWER_COMMIT_RATIO: number = 0.4;
-// 松手判定阈值:横向甩速(vp/s)超过即直接补完,不看距离。
-const DRAWER_COMMIT_VELOCITY: number = 800;
-// ↓↓↓ 手感就调这三个:补完时长、回弹时长、收尾曲线。与个人中心左滑那套(RootTabPage)取值一致。 ↓↓↓
-const DRAWER_COMMIT_MS: number = 280;
-const DRAWER_REBOUND_MS: number = 220;
-const DRAWER_SETTLE_CURVE: Curve = Curve.Friction;
 // 版本公告弹窗:true=每次启动都弹(调试用);false=同一版本只弹一次(上线值)。
 const ANNOUNCE_ALWAYS_SHOW: boolean = false;
 // 调试用:把自身 versionCode 减去这个数,好让公告帖里最新那楼变成"更高版本",
@@ -211,28 +196,31 @@ export struct HomePage {
   @State private requiresChallenge: boolean = false;
   @State private loadFailed: boolean = false;
   @State private categories: TopicCategory[] = [];
-  // 侧边版块抽屉开关。
+  // 底部筛选面板展开态(由 animateDrawer 翻转;也供主体手势闸判定「面板是否已展开」)。
   @State private showSideBar: boolean = false;
-  // 抽屉内容是否挂载。与 showSideBar 分开:开抽屉时先于动画置真,关抽屉时等滑出动画播完才置假,
-  // 保证内容的挂载/卸载都发生在屏幕左外、看不见的位置。见 build 里抽屉那段的注释。
+  // 面板内容是否挂载。与 showSideBar 分开:开面板时先于动画置真,关面板时等滑出动画播完才置假,
+  // 保证内容的挂载/卸载都发生在面板完全滑出屏幕下沿、看不见的位置。见 build 里面板那段的注释。
   @State private drawerMounted: boolean = false;
-  // 版块树的展开态。放在本页而非抽屉内部:抽屉内容会随开合挂载/卸载,状态留在里面会被一起丢掉。
+  // 版块树的展开态。放在本页而非面板内部:面板内容会随开合挂载/卸载,状态留在里面会被一起丢掉。
   @State private drawerExpandedIds: number[] = [];
-  // 抽屉展开进度 0~1(0=完全在屏外,1=完全展开)。同时驱动抽屉位移与遮罩浓度,拖拽期间直接跟手,
-  // 开合动画期间由 animateTo 插值。位移 = (progress - 1) * DRAWER_WIDTH。
+  // 面板展开进度 0~1(0=完全在屏下沿外,1=完全贴底展开)。同时驱动面板位移与遮罩浓度,
+  // 开合动画期间由 animateTo 插值。位移 = (1 - progress) * 100%,百分比相对面板自身高度。
   @State private drawerProgress: number = 0;
+  // 分类筛选底部面板可见态镜像:宿主(RootTabPage)在「分类」tab 被选中时写 true,本页 @Watch
+  // 接住后拉面板;本页所有关面板路径统一写 false 回落。底部 tab 栏的让位由宿主读同一 key 决定。
+  @StorageProp(CATEGORY_SHEET_VISIBLE_KEY) @Watch('onCategorySheetVisible')
+  private categorySheetOpen: boolean = false;
   // 本轮左滑是否已被接管:onActionStart 里判定一次,后续 update/end 据此放行。
   private swipeTracking: boolean = false;
-  // 本轮边缘右滑(拉抽屉)是否已被接管。与 swipeTracking 同由 onActionStart 二选一置真。
-  private drawerSwiping: boolean = false;
-  // 最近一次按下的横坐标(vp,即距屏幕左边的距离)。判「是否从左边缘起手」用。-1 = 还没按下过。
+  // 最近一次按下的横坐标(vp,即距屏幕左边的距离)。-1 = 还没按下过。
+  // 个人中心手势按位移与方向判定,不依赖按下点;保留这份记录供后续手势/调试读取。
   private touchDownX: number = -1;
   // 当前生效的列表条件:过滤器 × 版块 × 标签三个维度正交(不是互斥的单选),拼装规则见 TopicListQuery。
   @State private listQuery: TopicListQuery = createDefaultTopicListQuery();
-  // 抽屉里正在编辑的那份草稿。放在本页而非抽屉内部:抽屉内容随开合挂载/卸载,状态留在里面会被一起丢掉
-  // (与 drawerExpandedIds 同理)。开抽屉时从 listQuery 拷一份,点「查看结果」才提交回 listQuery。
+  // 面板里正在编辑的那份草稿。放在本页而非面板内部:面板内容随开合挂载/卸载,状态留在里面会被一起丢掉
+  // (与 drawerExpandedIds 同理)。开面板时从 listQuery 拷一份,点「查看结果」才提交回 listQuery。
   @State private draftQuery: TopicListQuery = createDefaultTopicListQuery();
-  // 抽屉「我的站点」区:入口开关 + 要展示的站点(打开抽屉时刷新)。
+  // 面板「我的站点」区:入口开关 + 要展示的站点(打开面板时刷新)。
   @State private sitesEntryEnabled: boolean = true;
   @State private drawerSites: SiteDef[] = [];
   // 头像铃铛未读数:由 NotificationEventBus 广播驱动(NotificationService 前台轮询产出)。
@@ -270,7 +258,7 @@ export struct HomePage {
   // 「点分类/标签快速筛选」开关(实验性功能页,默认关)。开着时帖子行上的徽章可点。
   // 当前论坛名镜像:切站后首页标题自动跟着变。
   @StorageProp(ACTIVE_FORUM_NAME_KEY) private activeForumName: string = '';
-  // 切站信号。抽屉的版块树、筛选条件里的版块/标签都是站点级数据,必须整批复位重取。
+  // 切站信号。面板的版块树、筛选条件里的版块/标签都是站点级数据,必须整批复位重取。
   @StorageProp(ACTIVE_FORUM_TICK) @Watch('onActiveForumChanged') private activeForumTick: number = 0;
   @StorageProp(BADGE_FILTER_ENABLED_STORAGE_KEY) private badgeFilterEnabled: boolean = false;
   // 传感器只发布明确的左右手结果；本页把结果转成 RelativeContainer 约束，保证换边可平滑插值。
@@ -291,7 +279,7 @@ export struct HomePage {
   @Prop @Watch('handleHostReadyEpoch') hostReadyEpoch: number = 0;
   @Prop accountUser: User = { id: 0, username: '' };
   @Prop isLoggedIn: boolean = false;
-  // 侧栏自选的标签/版块,透传给筛选抽屉置顶。宿主(RootTabPage)持有:会话检查与通知轮询都会刷新它。
+  // 侧栏自选的标签/版块,透传给筛选面板置顶。宿主(RootTabPage)持有:会话检查与通知轮询都会刷新它。
   @Prop sidebarTags: SidebarTag[] = [];
   @Prop sidebarCategoryIds: number[] = [];
   @Prop isCheckingSession: boolean = false;
@@ -310,7 +298,7 @@ export struct HomePage {
   // 搜索 Flow 可见态镜像:一镜到底期间隐藏顶栏源图标,把几何交给搜索页里的目标图标(geometryTransition)。
   @StorageProp(SEARCH_OVERLAY_VISIBLE_KEY) private searchOverlayVisible: boolean = false;
   // 窗口常驻全屏布局:主体内容自行避让状态栏(padding 加在带背景的主体列,背景填满状态栏条);
-  // 遮罩与抽屉不加,天然盖满整屏。
+  // 遮罩与面板不加,天然盖满整屏。
   @StorageProp(SYS_TOP_INSET_KEY) private sysTopInset: number = 0;
   // 列表区 Stack 铺进了底部安全区(expandSafeArea BOTTOM),悬浮按钮得自己躲开手势条,
   // 否则 16vp 的底边距会把它压在导航指示条上。
@@ -322,9 +310,9 @@ export struct HomePage {
   onOpenTopicById: (topicId: number, postNumber?: number) => void = () => {};
   // 点未读徽标:带目标楼号打开详情,直接定位到第一条未读楼。
   onOpenTopicAtPost: (topic: Topic, postNumber: number) => void = () => {};
-  // 抽屉「我的站点」标题行:打开站点管理页。
+  // 面板「我的站点」标题行:打开站点管理页。
   onOpenSites: () => void = () => {};
-  // 抽屉站点行:打开该站点(走通用 WebView 页)。siteId 用于缓存该站 favicon。
+  // 面板站点行:打开该站点(走通用 WebView 页)。siteId 用于缓存该站 favicon。
   onOpenSite: (url: string, title: string, siteId: string) => void = () => {};
   private handledSessionVersion: number = SessionEventBus.getCurrentVersion();
   private unsubscribeSessionChanged?: () => void = undefined;
@@ -529,7 +517,7 @@ export struct HomePage {
   }
 
   build() {
-    // 自绘抽屉:Stack 底层为主体,上层为遮罩 + 侧边抽屉(靠 translate 滑入/滑出)。
+    // 自绘底部面板:Stack 底层为主体,上层为遮罩 + 底部面板(靠 translate 上滑/下滑)。
     // 不用 SideBarContainer——其 overlay 遮罩不拦截点击、内滚也不灵。
     Stack({ alignContent: Alignment.TopStart }) {
       HdsNavigation() {
@@ -556,9 +544,9 @@ export struct HomePage {
       .height('100%')
       .backgroundColor($r('app.color.page_bg'))
 
-      // 遮罩:抽屉在场时铺满,拦截并点击关闭,防止点穿到帖子列表。
-      // 挂载条件跟抽屉内容同一个闸(drawerMounted)而非 showSideBar:边缘拖拽期间抽屉只出来一半,
-      // 遮罩得同步跟着浓起来;浓度直接绑 drawerProgress,跟手与开合动画共用同一个源。
+      // 遮罩:面板在场时铺满,拦截并点击关闭,防止点穿到帖子列表。
+      // 挂载条件跟面板内容同一个闸(drawerMounted)而非 showSideBar:面板半开时遮罩得同步跟着浓起来;
+      // 浓度直接绑 drawerProgress,与开合动画共用同一个源。
       if (this.drawerMounted) {
         Column()
           .width('100%')
@@ -567,87 +555,86 @@ export struct HomePage {
           .opacity(this.drawerProgress)
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .onClick(() => {
-            this.closeDrawer();
+            // 点遮罩落面板:走存储键回落(触发 @Watch → animateDrawer(false) → 滑出后卸载内容)。
+            this.closeCategorySheet();
           })
       }
 
-      // 侧边抽屉。外壳常驻、内容按需挂载:
-      //  · 外壳(这个 Column)一直在,承载宽度/位移/拖拽手势。滑入滑出动画作用在它身上,
-      //    所以 animateTo 永远拿得到动画起点——若把带 translate 的节点本身做成条件渲染,
-      //    挂载与翻转 showSideBar 落在同一帧,动画起点缺失,抽屉会直接闪现在最终位置。
-      //  · 内容(CategoryDrawer)只在抽屉真正用到时才挂:它内部是 Scroll + 四层嵌套 ForEach
-      //    (入口/站点/顶级版块/子版块),全量构建无回收,几十个节点。常驻的话每次返回首页的
-      //    转场里这些节点都要参与绘制,而转场期间两个页面同屏、每帧预算本来就紧张。
-      //    挂载与卸载都发生在外壳位于屏幕左外(translate=-DRAWER_WIDTH)时,看不到内容突现/突消。
+      // 底部筛选面板。容量整层铺满只为定位(justifyContent 靠底),面板本体在外层做 translate:
+      //  · 容量 Column 常驻、满屏透明,只管把面板钉到屏幕底部(本仓底部悬浮物统一手法,见
+      //    RootTabPage 底部 tab 栏 / TopicDetailPage 底部浮条)。面板在它内部靠 FlexAlign.End 贴底。
+      //  · 面板(内层 Column)承载 78% 高度与上下位移:进度 0 时 translate y=100% 整体沉到屏下沿
+      //    之外,1 时回贴自然位(屏底)。translate 百分比相对面板自身高度,故屏幕底部位置天然成立,
+      //    无需 position 或改根 Stack 对齐方式。
+      //  · 面板常驻、内容按需挂载:滑入滑出动画作用在面板身上,animateTo 永远拿得到动画起点——
+      //    若把带 translate 的节点本身做成条件渲染,挂载与翻转 showSideBar 落在同一帧,动画起点
+      //    缺失,面板会直接闪现在最终位置。内容(CategoryDrawer)只在真正用到时才挂:它内部是
+      //    Scroll + 四层嵌套 ForEach,全量构建无回收,几十个节点,常驻会让每次返回首页的转场
+      //    每帧预算吃紧。挂载/卸载都发生在面板沉入屏下沿之外时,看不到内容突现/突消。
       Column() {
-        if (this.drawerMounted) {
-          CategoryDrawer({
-            bridge: this.bridge,
-            isArkWebReady: this.isArkWebReady,
-            categories: this.categories,
-            isLoggedIn: this.isLoggedIn,
-            // 侧栏自选的标签/版块:来自 /session/current.json,会话检查与通知轮询都会更新(不另发请求)。
-            // 没登录或没在网页版配置过就是空数组,抽屉自行退回原来的热门标签。
-            myTags: this.sidebarTags,
-            myCategoryIds: this.sidebarCategoryIds,
-            sitesEntryEnabled: this.sitesEntryEnabled,
-            sites: this.drawerSites,
-            // 草稿与生效值都提到本页持有:抽屉内容按需卸载后,编辑中的选择不能跟着一起丢。
-            draft: this.draftQuery,
-            applied: this.listQuery,
-            expandedIds: this.drawerExpandedIds,
-            onToggleExpand: (categoryId: number) => {
-              this.handleDrawerToggleExpand(categoryId);
-            },
-            onDraftChange: (next: TopicListQuery) => {
-              this.draftQuery = next;
-            },
-            onApply: () => {
-              this.handleApplyDraftQuery();
-            },
-            onClose: () => {
-              this.closeDrawer();
-            },
-            onNotice: (message: string) => {
-              this.showToast(message);
-            },
-            onRequireLogin: () => {
-              this.handleDrawerRequireLogin();
-            },
-            onOpenSites: () => {
-              this.closeDrawer();
-              this.onOpenSites();
-            },
-            onOpenSite: (url: string, title: string, siteId: string) => {
-              this.closeDrawer();
-              this.onOpenSite(url, title, siteId);
-            }
-          })
+        Column() {
+          if (this.drawerMounted) {
+            CategoryDrawer({
+              bridge: this.bridge,
+              isArkWebReady: this.isArkWebReady,
+              categories: this.categories,
+              isLoggedIn: this.isLoggedIn,
+              // 底部面板布局:圆角 / 底部安全区 / 顶部拖拽条由组件内部按此开关切换。
+              panelMode: true,
+              // 侧栏自选的标签/版块:来自 /session/current.json,会话检查与通知轮询都会更新(不另发请求)。
+              // 没登录或没在网页版配置过就是空数组,面板自行退回原来的热门标签。
+              myTags: this.sidebarTags,
+              myCategoryIds: this.sidebarCategoryIds,
+              sitesEntryEnabled: this.sitesEntryEnabled,
+              sites: this.drawerSites,
+              // 草稿与生效值都提到本页持有:面板内容按需卸载后,编辑中的选择不能跟着一起丢。
+              draft: this.draftQuery,
+              applied: this.listQuery,
+              expandedIds: this.drawerExpandedIds,
+              onToggleExpand: (categoryId: number) => {
+                this.handleDrawerToggleExpand(categoryId);
+              },
+              onDraftChange: (next: TopicListQuery) => {
+                this.draftQuery = next;
+              },
+              // 查看结果:先提草稿落生效并重载,再关面板(存储键回落 → @Watch 走动画收尾)。
+              onApply: () => {
+                this.handleApplyDraftQuery();
+                this.closeCategorySheet();
+              },
+              onClose: () => {
+                this.closeCategorySheet();
+              },
+              onNotice: (message: string) => {
+                this.showToast(message);
+              },
+              onRequireLogin: () => {
+                this.handleDrawerRequireLogin();
+              },
+              onOpenSites: () => {
+                this.closeCategorySheet();
+                this.onOpenSites();
+              },
+              onOpenSite: (url: string, title: string, siteId: string) => {
+                this.closeCategorySheet();
+                this.onOpenSite(url, title, siteId);
+              }
+            })
+          }
         }
+        .width('100%')
+        .height('78%')
+        // 进度 0 时整体在屏幕下沿外,1 时贴底归位;中间值即跟手位置。
+        // 百分比相对面板自身高度:关闭态自然沉出屏底,不需要手算 vp。
+        .translate({ y: `${(1 - this.drawerProgress) * 100}%` })
       }
-      .width(DRAWER_WIDTH)
+      .width('100%')
       .height('100%')
-      // 进度 0 时整体在屏幕左外,1 时贴左边缘归位;中间值即跟手位置。
-      .translate({ x: (this.drawerProgress - 1) * DRAWER_WIDTH })
-      .gesture(
-        // 横向拖:向左拖动抽屉,过阈值即关闭,否则弹回。仅横向,不干扰内部竖向滚动。
-        // 这条只管「已展开后往回推」:边缘拉出走的是主体那条 pan(起手时抽屉还在屏外,命中不到这里)。
-        PanGesture({ direction: PanDirection.Horizontal })
-          .onActionUpdate((event: GestureEvent) => {
-            if (this.showSideBar) {
-              this.drawerProgress = clampUnit(1 + event.offsetX / DRAWER_WIDTH);
-            }
-          })
-          .onActionEnd((event: GestureEvent) => {
-            this.handleDrawerPanEnd(event.velocityX);
-          })
-          .onActionCancel(() => {
-            // 被系统打断:按零速松手处理(照阈值判开/关),别把抽屉卡在半开。
-            this.handleDrawerPanEnd(0);
-          })
-      )
+      .justifyContent(FlexAlign.End)
+      // 容量只负责定位,空白区域不可挡列表的手势与点击。
+      .hitTestBehavior(HitTestMode.Transparent)
 
-      // 发帖浮层:挂在根 Stack 最顶层,盖住顶栏/列表/抽屉。不进 Navigation 栈,返回键由 Index 拦截。
+      // 发帖浮层:挂在根 Stack 最顶层,盖住顶栏/列表/面板。不进 Navigation 栈,返回键由 Index 拦截。
       // 淡入淡出(无一镜到底源可配对——首页没有内联输入条,不像详情页从回复条生长)。
       if (this.showComposer) {
         ComposerPage({
@@ -858,48 +845,33 @@ export struct HomePage {
       this.listViewportH = Number(newArea.height);
       this.swipeAreaWidth = newArea.width as number;
     })
-    // 记录每次按下的横坐标。判「是不是从左边缘起手」只能靠按下点,而手势回调里拿不到可靠的按下点:
-    // PanGesture 的 onActionStart 已经是走完识别阈值之后,fingerList 也不保证有值。onTouch 的
-    // Down 事件则必定带着触点、且拿到的就是真正的按下位置,不用拿位移反推。
-    // 与主体这条 pan 挂在同一个节点上,坐标系天然一致(根 Stack 铺满窗口,windowX 即本地 X)。
+    // 记录每次按下的横坐标。个人中心手势按位移与方向判定,不依赖按下点;
+    // 保留这份触点记录供后续调试/判定读取。与主体这条 pan 挂在同一个节点上,
+    // 坐标系天然一致(根 Stack 铺满窗口,windowX 即本地 X)。
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down && event.touches.length > 0) {
         this.touchDownX = event.touches[0].windowX;
       }
     })
-    // 主体上的横向跟手手势,一条 pan 兼管两个方向:
-    //   · 向左  → 拉出个人中心(位移换算成 0~1 进度上抛,由宿主驱动 Navigation 的交互式转场)
-    //   · 按下点落在左边缘、向右 → 拉出版块抽屉(本页自绘,进度直接驱动 drawerProgress)
-    // 两件事合在一条 pan 上,而不是给抽屉单挂一条:识别器落在哪个节点上能被派发到,是要碰运气的
-    // (给边缘窄条单挂一条 PanGesture 实测就没被识别,右滑无人接管,反而漏成了点开帖子);
-    // 而这条 pan 挂在主体根节点上、左滑拉个人中心一直好用,是已经验证过能收到横向拖动的位置。
+    // 主体上的横向跟手手势:向左 → 拉出个人中心(位移换算成 0~1 进度上抛,
+    // 由宿主驱动 Navigation 的交互式转场)。左边缘右滑拉旧左侧抽屉的分支已随抽屉改版移除。
     // 方向归属在起手时一锤定音,后续 update/end 照它走,中途不改判。起手 10vp 才认,与 List 的
-    // 竖向滚动靠方向隔离。
+    // 竖向滚动靠方向隔离。面板展开/发帖浮层盖着时不抢手势(面板开合走存储键动画,不走这里)。
     .gesture(
       PanGesture({ direction: PanDirection.Horizontal, distance: 10 })
         .onActionStart((event: GestureEvent) => {
           this.swipeTracking = false;
-          this.drawerSwiping = false;
-          // 抽屉开着/正拉出时不归这里(往回推是抽屉自己那条 pan 的事),发帖浮层盖着时同理,不抢。
           if (this.showSideBar || this.drawerMounted || this.showComposer || this.swipeAreaWidth <= 0) {
             return;
           }
           if (event.offsetX < 0) {
             this.swipeTracking = true;
             this.onProfileSwipeStart();
-            return;
-          }
-          if (this.isEdgeTouchDown()) {
-            this.drawerSwiping = true;
-            // 内容先挂上(此刻抽屉整体还在屏外,看不见),之后每帧直接改 drawerProgress 跟手。
-            this.prepareDrawerContent();
           }
         })
         .onActionUpdate((event: GestureEvent) => {
           if (this.swipeTracking) {
             this.onProfileSwipeUpdate(this.swipeProgressOf(event.offsetX));
-          } else if (this.drawerSwiping) {
-            this.drawerProgress = clampUnit(event.offsetX / DRAWER_WIDTH);
           }
         })
         .onActionEnd((event: GestureEvent) => {
@@ -907,28 +879,16 @@ export struct HomePage {
             this.swipeTracking = false;
             // velocityX 向左为负,取反换成「向左甩得多快」。
             this.onProfileSwipeEnd(this.swipeProgressOf(event.offsetX), -event.velocityX);
-          } else if (this.drawerSwiping) {
-            this.drawerSwiping = false;
-            this.endDrawerSwipe(event.velocityX);
           }
         })
         .onActionCancel(() => {
-          // 手势被系统打断:两边都当回弹处理,别把转场/抽屉悬在半路。
+          // 手势被系统打断:当回弹处理,别把个人中心转场悬在半路。
           if (this.swipeTracking) {
             this.swipeTracking = false;
             this.onProfileSwipeEnd(0, 0);
-          } else if (this.drawerSwiping) {
-            this.drawerSwiping = false;
-            this.settleDrawer(false);
           }
         })
     )
-  }
-
-  // 按下点是否落在左边缘起手区。用 onTouch 记下的真实按下点,不拿手势位移反推——
-  // 反推(当前位置 - 累计位移)会算出负数,判定恒假,抽屉永远拉不出来。
-  private isEdgeTouchDown(): boolean {
-    return this.touchDownX >= 0 && this.touchDownX <= DRAWER_EDGE_WIDTH;
   }
 
   @Builder
@@ -965,7 +925,7 @@ export struct HomePage {
   @Builder
   private HomeTitleBarContent() {
     Row() {
-      // 环境未就绪("准备环境中...")时抽屉尚无意义,隐藏汉堡入口(标题左移填满,就绪后再出现)。
+      // 环境未就绪("准备环境中...")时面板尚无意义,隐藏汉堡入口(标题左移填满,就绪后再出现)。
       if (this.isArkWebReady) {
         this.MenuButton()
       }
@@ -1189,7 +1149,7 @@ export struct HomePage {
    * 套上边界之后同样的内容读起来就是"这一行有一枚标记",观感完全不同。顺带还有两个好处:
    * 胶囊边界自己就是分隔,不再需要那个中点;以后要加第四个维度,多一枚胶囊即可。
    *
-   * 点整行回抽屉接着改(省得去够左上角的汉堡)。胶囊本身暂不单独响应——
+   * 点整行回面板接着改(省得去够左上角的汉堡)。胶囊本身暂不单独响应——
    * 「点某一枚只改那一维」是个合理期待,但那要先想清楚点了是清空还是进对应 Tab,留到后面再说。
    */
   @Builder
@@ -1250,7 +1210,7 @@ export struct HomePage {
     return fallback ? fallback : { id: 'tag', rawfilePath: 'fa_icons/tag.svg' };
   }
 
-  // 左上角汉堡入口:打开版块抽屉(三条发丝线,无需依赖 sys.symbol 资源)。
+  // 左上角汉堡入口:打开筛选面板(三条发丝线,无需依赖 sys.symbol 资源)。
   @Builder
   private MenuButton() {
     Button() {
@@ -1351,37 +1311,43 @@ export struct HomePage {
     )
   }
 
-  // 打开抽屉前刷新一次抽屉配置(设置页/站点管理页可能刚改过),挂载内容,带滑入动画。
+  // 打开筛选面板:统一写存储键置真,由 @Watch onCategorySheetVisible 接住后准备内容并起滑入动画。
+  // 顶部汉堡/标题行与「分类」tab 共用同一入口(旧版此处直接拉旧左侧抽屉,现已改为底部面板)。
   private openDrawer(): void {
-    this.prepareDrawerContent();
-    this.animateDrawer(true);
+    AppStorage.setOrCreate(CATEGORY_SHEET_VISIBLE_KEY, true);
   }
 
-  // 抽屉登场前的准备:重读配置 + 草稿对齐当前条件 + 同步展开态 + 挂载内容。点汉堡和边缘拖拽共用。
-  // 内容此刻还在屏幕左外(drawerProgress 仍为 0),挂载过程看不见。
+  // 分类 tab 信号回落处理:true → 准备内容 + 滑入;false → 滑出,onFinish 里卸载内容。
+  // 全程复用旧抽屉的状态机(drawerMounted / drawerProgress / showSideBar),动画源与旧版同一套。
+  private onCategorySheetVisible(): void {
+    if (this.categorySheetOpen) {
+      this.prepareDrawerContent();
+      this.animateDrawer(true);
+    } else {
+      this.animateDrawer(false);
+    }
+  }
+
+  // 关闭筛选面板:写存储键置假,触发 @Watch → animateDrawer(false) → onFinish 卸载内容。
+  // 底部 tab 栏的让位恢复由宿主(RootTabPage)读同一 key 自动完成,本页只管把面板收掉。
+  private closeCategorySheet(): void {
+    AppStorage.setOrCreate(CATEGORY_SHEET_VISIBLE_KEY, false);
+  }
+
+  // 面板登场前的准备:重读配置 + 草稿对齐当前条件 + 同步展开态 + 挂载内容。点汉堡与「分类」tab 共用。
+  // 内容此刻还在屏幕下沿外(drawerProgress 仍为 0),挂载过程看不见。
   private prepareDrawerContent(): void {
     this.refreshDrawerPrefs();
-    // 每次开抽屉都从生效条件重新拷一份草稿:上次没点确认就滑走的那些改动就此丢弃(等同「取消」)。
+    // 每次开面板都从生效条件重新拷一份草稿:上次没点确认就滑走的那些改动就此丢弃(等同「取消」)。
     this.draftQuery = cloneTopicListQuery(this.listQuery);
     this.syncDrawerAutoExpand();
     this.drawerProgress = 0;
     this.drawerMounted = true;
   }
 
-  // 左边缘右滑松手:拉出过阈值、或向右甩得够快,就补完展开;否则滑回屏外收场。
-  private endDrawerSwipe(velocityX: number): void {
-    const commit: boolean = this.drawerProgress >= DRAWER_COMMIT_RATIO || velocityX >= DRAWER_COMMIT_VELOCITY;
-    this.settleDrawer(commit);
-  }
-
-  // 跟手结束后的收尾:把进度补到 0 或 1。补完/回弹各用一套时长,曲线同个人中心那套。
-  private settleDrawer(open: boolean): void {
-    this.animateDrawer(open, open ? DRAWER_COMMIT_MS : DRAWER_REBOUND_MS, DRAWER_SETTLE_CURVE);
-  }
-
   // 若当前看的是某个子版块,自动展开它的父版块,让选中项在树里可见。
-  // 原先写在 CategoryDrawer.aboutToAppear 里,而抽屉是随首页一起构建的、那时还没有任何选中版块,
-  // 等于从没生效过;改为按需挂载后放在这里,每次开抽屉判定一次,才真正起到"让选中项可见"的作用。
+  // 原先写在 CategoryDrawer.aboutToAppear 里,而面板是随首页一起构建的、那时还没有任何选中版块,
+  // 等于从没生效过;改为按需挂载后放在这里,每次开面板判定一次,才真正起到"让选中项可见"的作用。
   private syncDrawerAutoExpand(): void {
     const selected: TopicCategory | undefined = this.listQuery.category;
     if (!selected || selected.parentCategoryId === undefined) {
@@ -1396,7 +1362,7 @@ export struct HomePage {
     this.drawerExpandedIds = next;
   }
 
-  // 抽屉里点展开箭头:展开态由本页持有,这里做增删。
+  // 面板里点展开箭头:展开态由本页持有,这里做增删。
   private handleDrawerToggleExpand(categoryId: number): void {
     const next: number[] = this.drawerExpandedIds.slice();
     const index: number = next.indexOf(categoryId);
@@ -1413,20 +1379,16 @@ export struct HomePage {
     return this.getUIContext().getHostContext() as common.Context;
   }
 
-  // 抽屉配置统一重读:站点入口开关 + 要展示的站点。
-  // 子页改完 pop 回来不会重建本页,靠每次开抽屉重读 preferences 拿最新值(无需 AppStorage tick)。
+  // 面板配置统一重读:站点入口开关 + 要展示的站点。
+  // 子页改完 pop 回来不会重建本页,靠每次开面板重读 preferences 拿最新值(无需 AppStorage tick)。
   private refreshDrawerPrefs(): void {
     this.sitesEntryEnabled = SitePrefs.isEntryEnabled(this.hostContext());
     this.drawerSites = SitePrefs.drawerSites(this.hostContext());
   }
 
-  private closeDrawer(): void {
-    this.animateDrawer(false);
-  }
-
-  // 抽屉开合动画:在 animateTo 里把 drawerProgress 推到 0/1,抽屉平移、遮罩浓淡都跟着走;
-  // showSideBar 同步翻转,供遮罩点击、主体手势闸判定「抽屉是否已展开」。
-  // 关闭动画播完才卸载抽屉内容——否则内容会在滑出途中凭空消失。onFinish 里以当时的 showSideBar
+  // 面板开合动画:在 animateTo 里把 drawerProgress 推到 0/1,面板上下位移、遮罩浓淡都跟着走;
+  // showSideBar 同步翻转,供遮罩点击、主体手势闸判定「面板是否已展开」。
+  // 关闭动画播完才卸载面板内容——否则内容会在滑出途中凭空消失。onFinish 里以当时的 showSideBar
   // 为准而非捕获的 show:关闭动画未播完就被重新打开时,不能把刚挂上的内容又卸掉。
   private animateDrawer(show: boolean, duration: number = 220, curve: Curve = Curve.EaseOut): void {
     this.getUIContext().animateTo({
@@ -1443,21 +1405,9 @@ export struct HomePage {
     });
   }
 
-  // 展开后往回推的松手判定:推回过阈值、或向左甩得够快则关闭,否则弹回展开态。
-  private handleDrawerPanEnd(velocityX: number): void {
-    if (!this.showSideBar) {
-      return;
-    }
-    if (this.drawerProgress <= 1 - DRAWER_COMMIT_RATIO || velocityX <= -DRAWER_COMMIT_VELOCITY) {
-      this.settleDrawer(false);
-      return;
-    }
-    this.settleDrawer(true);
-  }
-
-  // 抽屉点「查看结果」:提交草稿、关抽屉、整列重载。与当前条件无差异时抽屉侧就不会走到这里。
+  // 面板点「查看结果」:提交草稿、整列重载。面板收尾由调用方 onApply 接 closeCategorySheet 完成。
+  // 与当前条件无差异时面板侧就不会走到这里。
   private handleApplyDraftQuery(): void {
-    this.closeDrawer();
     if (sameTopicListQuery(this.draftQuery, this.listQuery)) {
       return;
     }
@@ -1466,7 +1416,7 @@ export struct HomePage {
   }
 
   /**
-   * 点帖子行上的分类/标签徽章 = 把它加进当前条件,等同于在抽屉里选中它再点「查看结果」。
+   * 点帖子行上的分类/标签徽章 = 把它加进当前条件,等同于在面板里选中它再点「查看结果」。
    * 只改被点的那一维,其余原样保留(在「未读」里点分类,得到的是「该分类的未读」)。
    *
    * 已经在按它筛选时静默忽略:列表不会有任何变化,重发一次请求纯属浪费,
@@ -1500,9 +1450,9 @@ export struct HomePage {
     this.resetAndReload();
   }
 
-  // 点了受限版块/需登录入口:关抽屉并提示登录(账号入口在右上角头像)。
+  // 点了受限版块/需登录入口:关面板并提示登录(账号入口在右上角头像)。
   private handleDrawerRequireLogin(): void {
-    this.closeDrawer();
+    this.closeCategorySheet();
     this.showToast('登录后可查看该版块');
   }
 
