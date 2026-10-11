@@ -9,14 +9,11 @@ import { SidebarTag, User } from '../../models/User';
 import { Topic, TopicCategory, TopicTag } from '../../models/Topic';
 import { TopicListItem } from '../components/TopicListItem';
 import { ListFooter } from '../components/ListFooter';
-import { UserAvatar } from '../components/UserAvatar';
-import { NotificationBell } from '../components/NotificationBell';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
 import { NetworkResult } from '../../services/network/NetworkTypes';
 import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { LoadStateView } from '../components/LoadStateView';
 import { TopicReadState, TopicReadStateEventBus } from '../../services/session/TopicReadStateEventBus';
-import { NotificationEventBus, NotificationSnapshot } from '../../services/notification/NotificationEventBus';
 import {
   extractMessageBusCategoryId,
   extractMessageBusCreatedAt,
@@ -33,12 +30,8 @@ import { FeedKey } from '../../services/site/FeedPrefs';
 import {
   cloneTopicListQuery,
   createDefaultTopicListQuery,
-  hasTopicListSummary,
-  isDefaultTopicListQuery,
   sameTopicListQuery,
   topicListPrimaryTitle,
-  topicListSummaryLead,
-  topicListSummaryTag,
   TopicListQuery
 } from '../../services/topic/TopicListQuery';
 import { SiteDef, SitePrefs } from '../../services/site/SitePrefs';
@@ -64,18 +57,13 @@ import { REALTIME_TOPICS_ENABLED_STORAGE_KEY } from '../../services/realtime/Rea
 import { BADGE_FILTER_ENABLED_STORAGE_KEY } from '../../services/home/BadgeFilterPrefs';
 import { FaIconDefinition, FaIconView, getFaIcon } from '../components/FaIcon';
 import { SEARCH_ICON_GEOMETRY_ID } from '../components/SearchOverlay';
-import { ACTIVE_FORUM_NAME_KEY, ACTIVE_FORUM_TICK, 
-  CATEGORY_SHEET_VISIBLE_KEY, SEARCH_OVERLAY_VISIBLE_KEY } from '../../common/constants/StorageKeys';
+import {
+  ACTIVE_FORUM_TICK,
+  CATEGORY_SHEET_VISIBLE_KEY,
+  SEARCH_OVERLAY_VISIBLE_KEY
+} from '../../common/constants/StorageKeys';
 import { SYS_BOTTOM_INSET_KEY, SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { PostRichContent } from '../components/PostRichContent';
-import {
-  getCategoryColor,
-  getCategoryIcon,
-  getCategoryLogo,
-  getTagColor,
-  getTagIcon,
-  resolveBadgeAssetUrl
-} from '../components/TopicBadgeUtils';
 import {
   AnnouncementScanResult,
   VersionAnnouncement,
@@ -136,30 +124,6 @@ const INCOMING_PROMPT_EXIT_MS: number = 180;
 const INCOMING_INSERT_MS: number = 360;
 // 单条增量行的兜底高度(含分割线)。真机测到实际高度前先用它算揭示距离，避免第一帧跳变。
 const INCOMING_INSERT_ROW_ESTIMATE: number = 96;
-// 顶栏主标题(版块/标签名)的字号区间:装得下用大的,长名字自适应往下缩,缩到下限还装不下才截断。
-// 默认标题(论坛名/域名)也走这套:长度虽短,但长论坛名同样需要缩字,不写死 26。
-// 独占一行时给 16(用户两次反馈 21/18 仍偏大,顶栏标题对齐鸿蒙常用页标题档 16);要带副行时收到 15,
-// 和 12 的副行拉开层次但不至于一大一小失衡。min 同步收小,长名缩字仍留有余量。
-const TITLE_MAX_FONT_SIZE: number = 16;
-const TITLE_MIN_FONT_SIZE: number = 12;
-const TITLE_WITH_SUMMARY_MAX_FONT_SIZE: number = 15;
-const TITLE_WITH_SUMMARY_MIN_FONT_SIZE: number = 11;
-// 副行胶囊:高度压到 20 是为了两行合计仍落在 MINI 顶栏高度内(标题 19 + 间距 1 + 胶囊 20)。
-// 实机若发现被裁,优先动这三个数。
-const SUMMARY_FONT_SIZE: number = 12;
-const SUMMARY_CHIP_HEIGHT: number = 20;
-const SUMMARY_CHIP_ICON_SIZE: number = 10;
-const TITLE_ICON_SIZE: number = 17;
-
-// 顶栏副行里一枚条件胶囊的入参。
-interface QueryChipParams {
-  label: string;
-  // 无图标时传 undefined(排序胶囊就没有图标)。
-  icon?: FaIconDefinition;
-  // 十六进制色;空串 = 跟随文字色。
-  iconColor: string;
-}
-
 // 把比例夹到 0~1。跟手手势里到处要用:手指可以拖过头,进度不能。
 function clampUnit(value: number): number {
   return Math.min(1, Math.max(0, value));
@@ -223,9 +187,6 @@ export struct HomePage {
   // 面板「我的站点」区:入口开关 + 要展示的站点(打开面板时刷新)。
   @State private sitesEntryEnabled: boolean = true;
   @State private drawerSites: SiteDef[] = [];
-  // 头像铃铛未读数:由 NotificationEventBus 广播驱动(NotificationService 前台轮询产出)。
-  @State private unreadNotifications: number = 0;
-  private unsubscribeNotifications?: () => void = undefined;
   private unsubscribeMessageBus?: () => void = undefined;
   private categoryIndex: CategoryIndex = new CategoryIndex();
   // 帖子列表的 Scroller:回顶按钮要用它跳回顶部,滚动阈值判定也靠它读当前偏移。
@@ -256,8 +217,6 @@ export struct HomePage {
   @StorageProp(REALTIME_TOPICS_ENABLED_STORAGE_KEY) @Watch('onRealtimeTopicsEnabledChanged')
   private realtimeTopicsEnabled: boolean = false;
   // 「点分类/标签快速筛选」开关(实验性功能页,默认关)。开着时帖子行上的徽章可点。
-  // 当前论坛名镜像:切站后首页标题自动跟着变。
-  @StorageProp(ACTIVE_FORUM_NAME_KEY) private activeForumName: string = '';
   // 切站信号。面板的版块树、筛选条件里的版块/标签都是站点级数据,必须整批复位重取。
   @StorageProp(ACTIVE_FORUM_TICK) @Watch('onActiveForumChanged') private activeForumTick: number = 0;
   @StorageProp(BADGE_FILTER_ENABLED_STORAGE_KEY) private badgeFilterEnabled: boolean = false;
@@ -321,17 +280,6 @@ export struct HomePage {
   private pendingSessionRefresh: boolean = false;
   // 用户点 incoming 提示时若列表请求在途，等当前请求结束再做增量加载；成功前不丢 topic ID。
   @State private pendingIncomingRefresh: boolean = false;
-  // 调试用:输入帖子 ID 直接跳转详情(有些帖子已从最新列表里翻走,无法在列表中找到)。
-  private jumpDialogController: CustomDialogController = new CustomDialogController({
-    builder: TopicJumpDialog({
-      onConfirm: (topicId: number) => {
-        this.jumpToTopic(topicId);
-      }
-    }),
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    customStyle: true
-  });
   // 版本公告弹层:命中当前 versionCode 的回复后展示其正文。
   @State private announceVisible: boolean = false;
   @State private announceCooked: string = '';
@@ -355,13 +303,6 @@ export struct HomePage {
       // 从详情页返回时同步该主题的已读状态(消蓝点、更新未读徽标)。
       this.unsubscribeTopicReadState = TopicReadStateEventBus.subscribe((state: TopicReadState) => {
         this.handleTopicReadStateChanged(state);
-      });
-    }
-    if (!this.unsubscribeNotifications) {
-      // 先取当前已知值(避免首帧空窗),再订阅后续变化。
-      this.unreadNotifications = NotificationEventBus.current().unread;
-      this.unsubscribeNotifications = NotificationEventBus.subscribe((snapshot: NotificationSnapshot) => {
-        this.unreadNotifications = snapshot.unread;
       });
     }
     if (!this.unsubscribeMessageBus) {
@@ -400,10 +341,6 @@ export struct HomePage {
     if (this.unsubscribeTopicReadState) {
       this.unsubscribeTopicReadState();
       this.unsubscribeTopicReadState = undefined;
-    }
-    if (this.unsubscribeNotifications) {
-      this.unsubscribeNotifications();
-      this.unsubscribeNotifications = undefined;
     }
     if (this.unsubscribeMessageBus) {
       this.unsubscribeMessageBus();
@@ -922,40 +859,46 @@ export struct HomePage {
     return homeIncomingTopicsCount(this.incomingTopicsState);
   }
 
+  // 搜索放大镜图标:FaIcon 统一取图,未注册时回退到内嵌 SVG。
+  private searchIcon(): FaIconDefinition {
+    const def: FaIconDefinition | undefined = getFaIcon('magnifying-glass');
+    return def ? def : { id: 'magnifying-glass', rawfilePath: 'fa_icons/magnifying-glass.svg' };
+  }
+
+  // 顶栏:仅一条微信式搜索胶囊横条,常驻(未登录 / ArkWeb 未就绪也显示,搜索对匿名开放)。
+  // 移除了汉堡/分类标题/铃铛/头像:筛选入口已下沉到底部「分类」tab,账号/通知入口在个人中心。
   @Builder
   private HomeTitleBarContent() {
     Row() {
-      // 环境未就绪("准备环境中...")时面板尚无意义,隐藏汉堡入口(标题左移填满,就绪后再出现)。
-      if (this.isArkWebReady) {
-        this.MenuButton()
-      }
-
-      this.FeedTitle()
-
-      // 搜索入口:环境就绪后常驻(搜索匿名可用,不随登录态隐藏)。
-      if (this.isArkWebReady) {
-        this.SearchButton()
-      }
-
-      // 仅在会话已确认且已登录时显示铃铛(未登录/未确认不出现)。
-      if (this.hasCheckedSession && this.isLoggedIn) {
-        NotificationBell({
-          unreadCount: this.unreadNotifications,
-          onBellClick: () => {
-            // 打开通知页(进页会发 recent=true 让服务端 bump seen);本地先乐观清零红点。
-            this.unreadNotifications = 0;
-            this.onOpenNotifications();
-          }
+      // 放大镜沿用一镜到底:搜索 Flow 可见时把源图标 if 掉(几何交给搜索页前导图标),
+      // 二者同 geometryTransition id、由同一 animateTo 驱动插值;占位文字不参与,胶囊始终可见。
+      if (!this.searchOverlayVisible) {
+        FaIconView({
+          icon: this.searchIcon(),
+          color: $r('app.color.text_tertiary'),
+          iconSize: 16
         })
+          .geometryTransition(SEARCH_ICON_GEOMETRY_ID, { follow: true })
+          .transition(TransitionEffect.OPACITY)
       }
 
-      this.AccountEntry()
+      Text('搜索帖子、用户…')
+        .fontSize(15)
+        .fontColor($r('app.color.text_tertiary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+        .margin({ left: 8 })
     }
     .width('100%')
-    .height('100%')
+    .height(40)
     .padding({ left: 12, right: 12 })
+    .backgroundColor($r('app.color.surface_muted'))
+    .borderRadius(20)
     .alignItems(VerticalAlign.Center)
-    .hitTestBehavior(HitTestMode.Transparent)
+    .onClick(() => {
+      this.onOpenSearch();
+    })
   }
 
   // 版本公告弹层:标题 + 命中回复的完整富文本正文(含 [vXXXX] 版本号,超长可滚动)。
@@ -1004,317 +947,6 @@ export struct HomePage {
     }
     .width('100%')
     .padding({ left: 20, right: 20, bottom: 24 })
-  }
-
-  // 顶栏标题区。全默认(全站 · 最新 · 不限标签)时与改造前完全一致——单行大标题,「ArkDO」末尾的 O
-  // 换成 linux.do 三色圆 logo(内联 ImageSpan 保持基线对齐;logo 为固定色 SVG,深色模式下不翻转以保留品牌配色)。
-  //
-  // 一旦有筛选条件就长出第二行条件摘要,主标题相应收一号(18 → 17),两行合计仍落在 MINI 顶栏高度内。
-  // 默认态零视觉负担、有条件时才占位,这样"清爽"和"看得见当前在筛什么"才能同时成立。
-  @Builder
-  private FeedTitle() {
-    Column({ space: 1 }) {
-      if (isDefaultTopicListQuery(this.listQuery)) {
-        // 默认态标题 = 当前论坛名(用户没起名就是域名)。多站之后「我在哪个论坛」比
-        // 「App 叫什么」重要得多;App 名在闪屏与设置页里都有,不必再占这行。
-        // 兜底成 APP_NAME:镜像尚未写入的那一帧不留空标题。
-        // 与筛选态同一套字号/自适应机制(21→15):论坛名也会是长字符串,长名自动缩号而不是
-        // 写死 26 撑爆顶栏——两态观感统一,顶栏也因此透气一些。
-        Text(this.activeForumName.length > 0 ? this.activeForumName : AppConstants.APP_NAME)
-          .fontSize(TITLE_MAX_FONT_SIZE)
-          .minFontSize(TITLE_MIN_FONT_SIZE)
-          .maxFontSize(TITLE_MAX_FONT_SIZE)
-          .heightAdaptivePolicy(TextHeightAdaptivePolicy.MAX_LINES_FIRST)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-      } else {
-        Row() {
-          this.QueryTitleIcon()
-          Text(this.currentFeedTitle())
-            // 版块名可以很长(「积分乐园, Lv1」这种带后缀的),而顶栏右边还站着搜索/铃铛/头像,
-            // 留给标题的宽度本就不多。宁可自适应缩字号也别直接截成「积分乐园, …」——
-            // 截断丢的是尾部的区分信息(Lv1),缩字号只是小一点,还认得出是哪个版块。
-            // MAX_LINES_FIRST = 优先保住 maxLines(1),为此可以一路缩到 minFontSize。
-            .fontSize(this.titleMaxFontSize())
-            .minFontSize(this.titleMinFontSize())
-            .maxFontSize(this.titleMaxFontSize())
-            .heightAdaptivePolicy(TextHeightAdaptivePolicy.MAX_LINES_FIRST)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-
-        if (hasTopicListSummary(this.listQuery)) {
-          this.QuerySummaryRow()
-        }
-      }
-    }
-    .layoutWeight(1)
-    .alignItems(HorizontalAlign.Start)
-    .justifyContent(FlexAlign.Center)
-  }
-
-  // 主标题的前导图标:与帖子卡片上的徽章同一套视觉——版块走「专属图标 → 上传 logo → 兜底色点」,
-  // 标签走「专属图标 → 通用小标签图标」。只按过滤器筛(未读/热门)时没有可画的东西,整个图标位不占。
-  @Builder
-  private QueryTitleIcon() {
-    if (this.listQuery.category !== undefined) {
-      Row() {
-        if (this.titleCategoryIcon() !== undefined) {
-          FaIconView({
-            icon: this.titleCategoryIcon() as FaIconDefinition,
-            color: getCategoryColor(this.listQuery.category as TopicCategory),
-            iconSize: this.titleIconSize()
-          })
-        } else if (this.titleCategoryLogo().length > 0) {
-          Image(resolveBadgeAssetUrl(this.titleCategoryLogo()))
-            .width(this.titleIconSize())
-            .height(this.titleIconSize())
-            .objectFit(ImageFit.Contain)
-        } else {
-          Circle()
-            .width(this.titleIconSize() - 5)
-            .height(this.titleIconSize() - 5)
-            .fill(getCategoryColor(this.listQuery.category as TopicCategory))
-        }
-      }
-      .width(this.titleIconSize() + 5)
-      .justifyContent(FlexAlign.Center)
-      .margin({ right: 7 })
-    } else if (this.listQuery.tag !== undefined) {
-      Row() {
-        FaIconView({
-          icon: this.tagIcon((this.listQuery.tag as TopicTag).name),
-          color: getTagColor((this.listQuery.tag as TopicTag).name),
-          iconSize: this.titleIconSize() - 1
-        })
-      }
-      .width(this.titleIconSize() + 5)
-      .justifyContent(FlexAlign.Center)
-      .margin({ right: 7 })
-    }
-  }
-
-  // 前导图标不随副行有无变化:标题字号只差两号,图标跟着跳反而显得晃。
-  private titleIconSize(): number {
-    return TITLE_ICON_SIZE;
-  }
-
-  private titleMaxFontSize(): number {
-    return hasTopicListSummary(this.listQuery) ? TITLE_WITH_SUMMARY_MAX_FONT_SIZE : TITLE_MAX_FONT_SIZE;
-  }
-
-  private titleMinFontSize(): number {
-    return hasTopicListSummary(this.listQuery) ? TITLE_WITH_SUMMARY_MIN_FONT_SIZE : TITLE_MIN_FONT_SIZE;
-  }
-
-  // 副行的一枚小胶囊。@Builder 的参数必须打包成单个对象:多个/基本类型参数是按值传递,
-  // 捕获一次就不再重算,条件变了胶囊不会跟着刷新。
-  @Builder
-  private QueryChip(p: QueryChipParams) {
-    Row({ space: 4 }) {
-      if (p.icon !== undefined) {
-        FaIconView({
-          icon: p.icon as FaIconDefinition,
-          color: p.iconColor.length > 0 ? p.iconColor : $r('app.color.text_secondary'),
-          iconSize: SUMMARY_CHIP_ICON_SIZE
-        })
-      }
-      Text(p.label)
-        .fontSize(SUMMARY_FONT_SIZE)
-        .fontColor($r('app.color.text_secondary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .height(SUMMARY_CHIP_HEIGHT)
-    // 带图标时左内边距收一点:图标本身已经贡献了视觉留白。
-    .padding({ left: p.icon !== undefined ? 6 : 8, right: 8 })
-    .constraintSize({ maxWidth: '60%' })
-    .backgroundColor($r('app.color.surface_muted'))
-    .borderRadius(SUMMARY_CHIP_HEIGHT / 2)
-    .alignItems(VerticalAlign.Center)
-  }
-
-  /**
-   * 副行:主标题下面那一行,每个条件各占一枚小胶囊。
-   *
-   * 做成胶囊而不是裸文字,是因为「未读」这种两个字的副标题裸着挂在标题下面会显得是"没写完";
-   * 套上边界之后同样的内容读起来就是"这一行有一枚标记",观感完全不同。顺带还有两个好处:
-   * 胶囊边界自己就是分隔,不再需要那个中点;以后要加第四个维度,多一枚胶囊即可。
-   *
-   * 点整行回面板接着改(省得去够左上角的汉堡)。胶囊本身暂不单独响应——
-   * 「点某一枚只改那一维」是个合理期待,但那要先想清楚点了是清空还是进对应 Tab,留到后面再说。
-   */
-  @Builder
-  private QuerySummaryRow() {
-    Row({ space: 6 }) {
-      if (topicListSummaryLead(this.listQuery).length > 0) {
-        this.QueryChip({
-          label: topicListSummaryLead(this.listQuery),
-          icon: undefined,
-          iconColor: ''
-        })
-      }
-
-      if (topicListSummaryTag(this.listQuery) !== undefined) {
-        this.QueryChip({
-          label: (topicListSummaryTag(this.listQuery) as TopicTag).name,
-          icon: this.tagIcon((topicListSummaryTag(this.listQuery) as TopicTag).name),
-          iconColor: this.tagIconColor((topicListSummaryTag(this.listQuery) as TopicTag).name)
-        })
-      }
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
-    .onClick(() => {
-      this.openDrawer();
-    })
-  }
-
-  // 版块图标要带上父版块做兜底(子版块自己常常没图标,得回退到父版块那一套)。
-  private titleCategoryIcon(): FaIconDefinition | undefined {
-    const category: TopicCategory | undefined = this.listQuery.category;
-    if (category === undefined) {
-      return undefined;
-    }
-    return getCategoryIcon(category, CategoryIndex.findParent(this.categories, category.id));
-  }
-
-  private titleCategoryLogo(): string {
-    const category: TopicCategory | undefined = this.listQuery.category;
-    if (category === undefined) {
-      return '';
-    }
-    return getCategoryLogo(category, CategoryIndex.findParent(this.categories, category.id));
-  }
-
-  // 没有专属图标时回空串,让通用小标签图标跟着胶囊的文字色走——固定的灰在深色模式下会比文字暗一档。
-  private tagIconColor(name: string): string {
-    return getTagIcon(name) !== undefined ? getTagColor(name) : '';
-  }
-
-  // 没登记过专属图标的标签退回通用小标签图标,图标位始终有东西,标题不会一会儿缩进一会儿不缩。
-  private tagIcon(name: string): FaIconDefinition {
-    const own: FaIconDefinition | undefined = getTagIcon(name);
-    if (own !== undefined) {
-      return own;
-    }
-    const fallback: FaIconDefinition | undefined = getFaIcon('tag');
-    return fallback ? fallback : { id: 'tag', rawfilePath: 'fa_icons/tag.svg' };
-  }
-
-  // 左上角汉堡入口:打开筛选面板(三条发丝线,无需依赖 sys.symbol 资源)。
-  @Builder
-  private MenuButton() {
-    Button() {
-      Column({ space: 4 }) {
-        Divider().width(18).strokeWidth(2).color($r('app.color.text_primary'))
-        Divider().width(18).strokeWidth(2).color($r('app.color.text_primary'))
-        Divider().width(18).strokeWidth(2).color($r('app.color.text_primary'))
-      }
-      .justifyContent(FlexAlign.Center)
-    }
-    .width(42)
-    .height(42)
-    .borderRadius(21)
-    .backgroundColor(Color.Transparent)
-    .padding(0)
-    .margin({ right: 10 })
-    .onClick(() => {
-      this.openDrawer();
-    })
-  }
-
-  // 顶栏搜索入口:放大镜图标,点击一镜到底打开 SearchFlow 根覆盖层。
-  // SearchFlow 可见时把源图标 if 掉(几何交给搜索页前导图标),二者同 geometryTransition id、由同一 animateTo 驱动插值。
-  @Builder
-  private SearchButton() {
-    Button() {
-      if (!this.searchOverlayVisible) {
-        FaIconView({ icon: this.searchIcon(), color: $r('app.color.text_primary'), iconSize: 20 })
-          .geometryTransition(SEARCH_ICON_GEOMETRY_ID, { follow: true })
-          .transition(TransitionEffect.OPACITY)
-      }
-    }
-    .width(42)
-    .height(42)
-    .borderRadius(21)
-    .backgroundColor(Color.Transparent)
-    .padding(0)
-    .margin({ right: 4 })
-    .onClick(() => {
-      this.onOpenSearch();
-    })
-  }
-
-  private searchIcon(): FaIconDefinition {
-    const def: FaIconDefinition | undefined = getFaIcon('magnifying-glass');
-    return def ? def : { id: 'magnifying-glass', rawfilePath: 'fa_icons/magnifying-glass.svg' };
-  }
-
-  private jumpToTopic(topicId: number): void {
-    Log.i(`${LOG_TAG} debug jump to topic topicId=${topicId}`);
-    this.onOpenTopicById(topicId);
-  }
-
-  // 入口无条件可点:环境未就绪/会话检查中只换图标,不禁用也不留空白。
-  // 网络不通时这里是够到 DoH 配置的唯一通路,一旦拦下用户就被关在门外只能干等超时。
-  @Builder
-  private AccountEntry() {
-    Button() {
-      Stack() {
-        if (this.isCheckingSession) {
-          LoadingProgress()
-            .width(22)
-            .height(22)
-            .color($r('app.color.brand'))
-        } else if (this.isLoggedIn) {
-          UserAvatar({
-            user: this.accountUser,
-            avatarSize: 34
-          })
-        } else {
-          SymbolGlyph($r('sys.symbol.person'))
-            .fontSize(28)
-            .fontColor([$r('app.color.brand')])
-            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-        }
-      }
-      .width(38)
-      .height(38)
-      .alignContent(Alignment.Center)
-    }
-    .width(42)
-    .height(42)
-    .borderRadius(21)
-    .backgroundColor(Color.Transparent)
-    .padding(0)
-    // 放行溢出:头像光圈会扩散到 42 之外,默认圆角裁剪会切掉,需关闭裁剪。
-    .clip(false)
-    .onClick(() => {
-      this.onAccountClick();
-    })
-    // 长按头像:弹出输入框填帖子 ID,直接跳转到指定帖子详情。
-    // Button 自带点击识别器会抢占触摸,须用 priorityGesture 让长按优先于内置手势。
-    .priorityGesture(
-      LongPressGesture({ repeat: false, duration: 500 })
-        .onAction(() => {
-          this.jumpDialogController.open();
-        })
-    )
-  }
-
-  // 打开筛选面板:统一写存储键置真,由 @Watch onCategorySheetVisible 接住后准备内容并起滑入动画。
-  // 顶部汉堡/标题行与「分类」tab 共用同一入口(旧版此处直接拉旧左侧抽屉,现已改为底部面板)。
-  private openDrawer(): void {
-    AppStorage.setOrCreate(CATEGORY_SHEET_VISIBLE_KEY, true);
   }
 
   // 分类 tab 信号回落处理:true → 准备内容 + 滑入;false → 滑出,onFinish 里卸载内容。
@@ -1624,7 +1256,8 @@ export struct HomePage {
     return new TopicService(this.bridge).getQueryPage(this.listQuery, page);
   }
 
-  // 顶栏主标题:版块名 → #标签名 → 过滤器名;全默认时显示应用名 ArkDO(FeedTitle 据此换 logo 版式)。
+  // 当前列表条件的可读标题:版块名 → #标签名 → 过滤器名;全默认时显示应用名 ArkDO。
+  // 顶栏已改为搜索胶囊,不再渲染此标题;现仅用于加载文案(listMessage)的插值。
   private currentFeedTitle(): string {
     const title: string = topicListPrimaryTitle(this.listQuery);
     return title.length > 0 ? title : AppConstants.APP_NAME;
@@ -2108,71 +1741,3 @@ export struct HomePage {
 
 }
 
-// 调试用输入框:填帖子 ID 直接跳转详情。
-@CustomDialog
-struct TopicJumpDialog {
-  controller: CustomDialogController;
-  onConfirm: (topicId: number) => void = () => {};
-  @State private idText: string = '';
-
-  build() {
-    Column() {
-      Text('跳转到帖子')
-        .fontSize(17)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .margin({ bottom: 16 })
-
-      TextInput({ placeholder: '输入帖子 ID' })
-        .type(InputType.Number)
-        .defaultFocus(true)
-        .fontSize(16)
-        .height(46)
-        .backgroundColor($r('app.color.surface_muted'))
-        .borderRadius(10)
-        .onChange((value: string) => {
-          this.idText = value;
-        })
-        .onSubmit(() => {
-          this.confirm();
-        })
-
-      Row({ space: 12 }) {
-        Button('取消')
-          .layoutWeight(1)
-          .height(44)
-          .fontSize(16)
-          .fontColor($r('app.color.text_secondary'))
-          .backgroundColor($r('app.color.surface_muted'))
-          .onClick(() => {
-            this.controller.close();
-          })
-
-        Button('跳转')
-          .layoutWeight(1)
-          .height(44)
-          .fontSize(16)
-          .fontColor(Color.White)
-          .backgroundColor($r('app.color.brand'))
-          .onClick(() => {
-            this.confirm();
-          })
-      }
-      .width('100%')
-      .margin({ top: 20 })
-    }
-    .width('80%')
-    .padding(20)
-    .backgroundColor($r('app.color.page_bg'))
-    .borderRadius(16)
-  }
-
-  private confirm(): void {
-    const topicId: number = parseInt(this.idText.trim(), 10);
-    if (isNaN(topicId) || topicId <= 0) {
-      return;
-    }
-    this.controller.close();
-    this.onConfirm(topicId);
-  }
-}
