@@ -80,7 +80,7 @@ export struct MessageCutoutCapsule {
         Row({ space: 5 }) {
           SymbolGlyph($r('sys.symbol.bell_fill'))
             .fontSize(13)
-            .fontColor($r('app.color.brand'))
+            .fontColor([$r('app.color.brand')])
           Text(this.formatCount())
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
