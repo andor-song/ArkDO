@@ -32,7 +32,8 @@ import {
   incomingTopicHighlightBackground
 } from './HomeIncomingTopicsPrompt';
 import { APP_IS_DARK_STORAGE_KEY } from '../../common/theme/ThemeManager';
-import { CARD_RADIUS } from '../../common/theme/Metrics';
+// 卡片模式本地紧凑圆角:卡片瘦身后视觉收敛,仅本文件生效,不动全局 Metrics.CARD_RADIUS。
+const CARD_RADIUS_COMPACT: number = 12;
 
 const INCOMING_HIGHLIGHT_FADE_MS: number = 600;
 
@@ -223,6 +224,14 @@ export struct TopicListItem {
                 Blank()
               }
 
+              // 回复数(卡右时间左侧):postsCount/replyCount 都有值且 >0 才显示,否则不占位。
+              if (this.replyCountText().length > 0) {
+                Text(this.replyCountText())
+                  .fontSize(secondaryFontSize(this.titleFontSize))
+                  .fontColor($r('app.color.text_secondary'))
+                  .margin({ left: 8 })
+              }
+
               if (this.getRelativeTime().length > 0) {
                 Text(this.getRelativeTime())
                   .fontSize(secondaryFontSize(this.titleFontSize))
@@ -251,7 +260,7 @@ export struct TopicListItem {
             ? incomingTopicHighlightBackground(this.incomingHighlightActive, this.appIsDark)
             : $r('app.color.card_bg'))
           : incomingTopicHighlightBackground(this.incomingHighlightActive, this.appIsDark))
-        .borderRadius(this.cardMode ? CARD_RADIUS : 0)
+        .borderRadius(this.cardMode ? CARD_RADIUS_COMPACT : 0)
         .animation({ duration: INCOMING_HIGHLIGHT_FADE_MS, curve: Curve.EaseOut })
         .alignItems(VerticalAlign.Top)
 
@@ -274,7 +283,8 @@ export struct TopicListItem {
       })
     }
     // 卡片模式:卡与卡之间上下各留半缝隙(两个相邻行拼出整缝),让浅灰底透出来(飞书式)。
-    .margin({ top: this.cardMode ? 6 : 0, bottom: this.cardMode ? 6 : 0 })
+    // 6→3:整体缝隙 12→6 约减半,对齐 0.9.x 的密排密度。
+    .margin({ top: this.cardMode ? 3 : 0, bottom: this.cardMode ? 3 : 0 })
     .translate({ y: incomingInsertTranslateY(this.incomingInsertProgress, this.incomingInsertDistance) })
     .opacity(incomingInsertOpacity(this.incomingInsertProgress, this.incomingInsertFadeIn))
     .onAreaChange((_oldValue: Area, newValue: Area) => {
@@ -349,6 +359,12 @@ export struct TopicListItem {
       cursor = bestPos + bestLen;
     }
     return segments;
+  }
+
+  // 回复数字符串:优先 postsCount(帖子总数即楼层数),缺省回退 replyCount;都无或为 0 返回空串。
+  private replyCountText(): string {
+    const n: number | undefined = this.topic.postsCount ?? this.topic.replyCount;
+    return (n !== undefined && n > 0) ? `${n} 回复` : '';
   }
 
   private getRelativeTime(): string {
