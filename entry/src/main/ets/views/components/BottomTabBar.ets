@@ -3,7 +3,7 @@ import { SYS_BOTTOM_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { BOTTOM_TAB_BAR_HEIGHT } from '../../common/theme/Metrics';
 
 // ===== 飞书/微信式底部导航栏 =====
-// 4 个一级 tab 等分:首页 / 论坛 / 通知 / 我的。选中深色高亮、未选中灰色,
+// 4 个一级 tab 等分:首页 / 分类 / 通知 / 我的。选中深色高亮、未选中灰色,
 // 顶部 1vp 分隔线、底部跟随 HOME 指示条安全区。通知 tab 订阅事件总线显示红点角标。
 // 悬浮在 RootTabPage 根 Stack 底部,选中态由宿主单向驱动(@Prop current),
 // 仅四个一级 tab 在栈顶时由宿主挂载。
@@ -16,12 +16,12 @@ const TAB_ICON_BOX: number = 32;
 
 export enum BottomTabId {
   HOME = 0,
-  FORUMS = 1,
+  CATEGORIES = 1,
   NOTIFICATIONS = 2,
   PROFILE = 3
 }
 
-const TAB_LABELS: string[] = ['首页', '论坛', '通知', '我的'];
+const TAB_LABELS: string[] = ['首页', '分类', '通知', '我的'];
 
 @Component
 export struct BottomTabBar {
@@ -50,7 +50,7 @@ export struct BottomTabBar {
   private onSymbol(index: number): Resource {
     switch (index) {
       case BottomTabId.HOME: return $r('sys.symbol.house');
-      case BottomTabId.FORUMS: return $r('sys.symbol.forum');
+      case BottomTabId.CATEGORIES: return $r('sys.symbol.funnel');
       case BottomTabId.NOTIFICATIONS: return $r('sys.symbol.bell_fill');
       case BottomTabId.PROFILE: return $r('sys.symbol.person');
       default: return $r('sys.symbol.house');
@@ -60,7 +60,7 @@ export struct BottomTabBar {
   private offSymbol(index: number): Resource {
     switch (index) {
       case BottomTabId.HOME: return $r('sys.symbol.house');
-      case BottomTabId.FORUMS: return $r('sys.symbol.forum');
+      case BottomTabId.CATEGORIES: return $r('sys.symbol.funnel');
       case BottomTabId.NOTIFICATIONS: return $r('sys.symbol.bell');
       case BottomTabId.PROFILE: return $r('sys.symbol.person');
       default: return $r('sys.symbol.house');

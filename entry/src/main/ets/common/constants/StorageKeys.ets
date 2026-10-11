@@ -19,6 +19,10 @@
 export const SEARCH_OVERLAY_VISIBLE_KEY: string = 'searchOverlayVisible';
 export const SEARCH_OVERLAY_BACK_TICK_KEY: string = 'searchOverlayBackTick';
 
+// 首页分类筛选底部面板可见态。分类 tab 点击后置 true,面板打开期间隐藏底部 tab 栏;
+// 面板本体在 HomePage(后续任务实现),这里只负责信号,与 SEARCH_OVERLAY 同一套 AppStorage 机制。
+export const CATEGORY_SHEET_VISIBLE_KEY: string = 'categorySheetVisible';
+
 // 图片预览(根级,层级最高,返回键优先消费)。
 export const IMAGE_VIEWER_VISIBLE_KEY: string = 'imageViewerVisible';
 export const IMAGE_VIEWER_BACK_TICK_KEY: string = 'imageViewerBackTick';

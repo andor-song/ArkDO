@@ -85,7 +85,7 @@ import { TopicDetailPage } from './TopicDetailPage';
 import { bumpTick, COMPOSER_OVERLAY_BACK_TICK_KEY, COMPOSER_OVERLAY_VISIBLE_KEY, DRAFTS_COMPOSER_BACK_TICK_KEY,
   DRAFTS_COMPOSER_VISIBLE_KEY, DRAFTS_REFRESH_TICK_KEY, IMAGE_VIEWER_BACK_TICK_KEY, IMAGE_VIEWER_VISIBLE_KEY,
   PROFILE_DRAFT_COUNT_KEY, PROFILE_PM_BACK_TICK_KEY, PROFILE_PM_VISIBLE_KEY, SEARCH_OVERLAY_BACK_TICK_KEY,
-  SEARCH_OVERLAY_VISIBLE_KEY, SETTINGS_DOH_TICK, SITES_TICK } from '../../common/constants/StorageKeys';
+  SEARCH_OVERLAY_VISIBLE_KEY, SETTINGS_DOH_TICK, SITES_TICK, CATEGORY_SHEET_VISIBLE_KEY } from '../../common/constants/StorageKeys';
 import { DraftEventBus } from '../../services/draft/DraftEventBus';
 import { WebViewPage } from './WebViewPage';
 import { showToast as promptToast } from '../../common/utils/Toast';
@@ -144,6 +144,8 @@ export struct RootTabPage {
   @State private bottomTabIndex: number = BottomTabId.HOME;
   // 已注入 interception(避免重复设置)。
   private bottomTabInterceptionSet: boolean = false;
+  // 首页分类筛选底部面板可见态镜像:面板打开期间底部 tab 栏让位(逻辑见 build() 合成条件)。
+  @StorageProp(CATEGORY_SHEET_VISIBLE_KEY) private categorySheetVisible: boolean = false;
   // 预览返回键信号:Index @Entry 拦截后 bump,经 @Param 透传给 ImageViewer(翻回上一张/首图关闭)。
   @StorageProp(IMAGE_VIEWER_BACK_TICK_KEY) private viewerBackTick: number = 0;
   // 主窗口引用:图片预览期间隐藏/恢复状态栏用(打开时获取,关闭后释放)。
@@ -465,10 +467,10 @@ export struct RootTabPage {
       // 容器整层铺满但 hitTest 透明,按钮以外的区域不挡列表手势;
       // 内容靠 justify-content 钉到屏幕底部(含 HOME 安全区,由 BottomTabBar 内部处理)。
       // 合成有效显隐:一级 tab 在栈顶(showBottomTab),且不是宽屏双栏、没有全屏浮层
-      // (搜索 Flow / 图片浏览器)、不在左滑跟手中。四处任一成立都先让出底部——
-      // 搜索/图片是整窗覆盖层,tab 在上层会穿帮;左滑跟手中 tab 高亮会闪现/干扰回弹。
+      // (搜索 Flow / 图片浏览器)、不在左滑跟手中、分类筛选面板未打开。任一成立都先让出底部——
+      // 搜索/图片是整窗覆盖层,tab 在上层会穿帮;左滑跟手中 tab 高亮会闪现/干扰回弹;面板打开时 tab 栏避让。
       if (this.showBottomTab && !this.appIsWide && !this.showImageViewer
-        && !this.showSearchFlow && !this.profileSwipeActive) {
+        && !this.showSearchFlow && !this.profileSwipeActive && !this.categorySheetVisible) {
         Column() {
           BottomTabBar({
             current: this.bottomTabIndex,
@@ -1646,7 +1648,7 @@ export struct RootTabPage {
   }
 
   // ===== 底部飞书式导航栏 =====
-  // 通过 Navigation interception 的 didShow 跟踪栈顶:一级 tab(首页/论坛/通知/我的)
+  // 通过 Navigation interception 的 didShow 跟踪栈顶:一级 tab(首页/分类/通知/我的)
   // 在 navBar 或对应路由在栈顶时显示 TabBar,进详情/Web/设置等二级页隐藏。
   private installBottomTabInterception(): void {
     if (this.bottomTabInterceptionSet) {
@@ -1672,11 +1674,6 @@ export struct RootTabPage {
     // 一级 tab 的 NavDestination:显示并同步选中。其余一律隐藏。
     const ctx: NavDestinationContext = to as NavDestinationContext;
     const topName: string = ctx.pathInfo.name;
-    if (topName === AppRouteName.FORUMS) {
-      this.showBottomTab = true;
-      this.bottomTabIndex = BottomTabId.FORUMS;
-      return;
-    }
     if (topName === AppRouteName.NOTIFICATIONS) {
       this.showBottomTab = true;
       this.bottomTabIndex = BottomTabId.NOTIFICATIONS;
@@ -1696,8 +1693,10 @@ export struct RootTabPage {
       case BottomTabId.HOME:
         this.popHomeFromTab();
         break;
-      case BottomTabId.FORUMS:
-        this.navPathStack.pushPath(new NavPathInfo(AppRouteName.FORUMS, buildForumsRouteParam('bottomTab')));
+      case BottomTabId.CATEGORIES:
+        // 分类改由首页底部面板承载(面板本体在 HomePage,后续任务实现):这里只上抛可见态信号,
+        // 不进导航栈。面板打开期间 build() 里的 categorySheetVisible 条件会让 tab 栏让位。
+        AppStorage.setOrCreate(CATEGORY_SHEET_VISIBLE_KEY, true);
         break;
       case BottomTabId.NOTIFICATIONS:
         this.navPathStack.pushPath(new NavPathInfo(AppRouteName.NOTIFICATIONS, buildNotificationsRouteParam('bottomTab')));
