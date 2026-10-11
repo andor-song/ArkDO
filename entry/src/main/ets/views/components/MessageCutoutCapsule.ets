@@ -62,8 +62,8 @@ export struct MessageCutoutCapsule {
     if (this.hasCutout()) {
       return this.cutoutLeftVp + this.cutoutWidthVp / 2;
     }
-    // 无挖孔退化:水平居中。容器占满窗宽,onAreaChange 给的是物理像素,px2vp 换回 vp。
-    return this.containerWidthPx === 0 ? 0 : px2vp(this.containerWidthPx) / 2;
+    // 无挖孔退化:水平居中。容器占满窗宽,onAreaChange 给的是物理像素,经 UIContext 换回 vp。
+    return this.containerWidthPx === 0 ? 0 : this.getUIContext().px2vp(this.containerWidthPx) / 2;
   }
 
   private capsuleTop(): number {
