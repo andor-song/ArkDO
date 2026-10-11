@@ -1,6 +1,7 @@
 import { SidebarTag, User } from '../../models/User';
 import { NameCollator } from '../../common/utils/NameCollator';
 import { ChallengeState, JsonNetworkClient, NetworkResult } from '../network/NetworkTypes';
+import { WebSessionManager } from '../web/WebSessionManager';
 import { forwardFailure, unexpectedResponse } from '../network/NetworkResults';
 
 const CURRENT_SESSION_PATH: string = '/session/current.json';
@@ -60,6 +61,15 @@ export class AuthService {
       // 若把这条 404 当失败上抛,登出后登录态永远清不掉,只能杀进程重启。
       // 同时要求 challengeState=NONE:CF 若用 404 壳子返回挑战页,仍按失败走过盾链路,不误判成登出。
       if (response.statusCode === CURRENT_SESSION_ANONYMOUS_STATUS && response.challengeState === ChallengeState.NONE) {
+        // `_t` 还在就不算确认登出。Discourse 的 `_t` 每约 10 分钟轮换一次,宿主长时间不导航时
+        // cookie 仓里的 `_t` 可能已被服务端作废,但进程的磁盘快照/内存里还留着旧值——此时服务端
+        // 对 /session/current.json 回 404 不代表登录真没了,只是 `_t` 陈旧。若把 404 直接当「确认
+        // 未登录」上抛,通知轮询每约 5 分钟的一次 404 就会把登录态掀掉(用户感知 = 用着用着被登出、
+        // 老要重新登录),而且没有任何迟滞/重试。只有 `_t` 确实不在了,404 才是确认登出;`_t` 还在
+        // 一律按失败处理,上层保留上一次登录态,宿主下一次导航/重载拿到新 `_t` 后自然恢复。
+        if (WebSessionManager.hasCookie('_t')) {
+          return forwardFailure<User | undefined>(response);
+        }
         return {
           success: true,
           statusCode: response.statusCode,

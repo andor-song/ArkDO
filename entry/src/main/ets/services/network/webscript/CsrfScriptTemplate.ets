@@ -62,7 +62,15 @@ export function buildCsrfScript(options: CsrfScriptOptions): string {
           headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
         }).then((r) => r.json()).then((j) => (j && j.csrf) ? j.csrf : '').catch(() => '');
       };
-      Promise.resolve(readCsrf()).then((token) => {
+      const readCsrfWithRetry = () => {
+        return readCsrf().then((token) => {
+          if (token) {
+            return token;
+          }
+          return readCsrf();
+        });
+      };
+      Promise.resolve(readCsrfWithRetry()).then((token) => {
         let csrf = token;
         csrfSource = token ? 'session' : 'none';
         if (!csrf) {
@@ -70,6 +78,15 @@ export function buildCsrfScript(options: CsrfScriptOptions): string {
           csrfSource = csrf ? 'meta' : 'none';
         }
         csrfLength = csrf ? csrf.length : 0;
+        // 取不到 CSRF 就 fail-fast,绝不空 token 裸发:Discourse 对无/失效 CSRF 的写请求
+        // 一律回 403 BAD CSRF,而 JSON 403 不会被 detectChallenge 识别成挑战(challengeState=NONE),
+        // 上层不会触发任何恢复链路,只能眼睁睁看回复失败。取不到多半是会话过期(宿主 cookie 仓里
+        // 的 _t 失效),
+        // 直接带诊断信息失败,让上层提示重登,比发出一个注定 403 的请求强。
+        if (!csrf) {
+          fail('CSRF token unavailable source=' + csrfSource + ' - write aborted, session may be expired, please re-login');
+          return;
+        }
 ${options.prelude}        const fetchOptions = {
           method: ${options.methodExpr},
           credentials: 'include',
