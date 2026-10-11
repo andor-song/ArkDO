@@ -1776,7 +1776,12 @@ export struct HomePage {
     }
 
     this.requiresChallenge = result.error?.requiresChallenge === true;
-    this.footerMessage = result.error?.message ? `${result.error.message}，上拉重试` : '加载失败，上拉重试';
+    // 与首次加载同款友好文案:不把桥层「ArkWeb 请求超时。」类原始错误透传给用户。
+    // 原始错误进诊断日志,便于排查。
+    this.footerMessage = this.requiresChallenge
+      ? '内容加载遇到访问验证，请稍后重试'
+      : '加载失败，请检查网络后重试';
+    Log.i(`${LOG_TAG} load more failed err=${result.error?.message ?? 'unknown'}`);
     this.runPendingSessionRefresh();
     this.runPendingIncomingRefresh();
   }
