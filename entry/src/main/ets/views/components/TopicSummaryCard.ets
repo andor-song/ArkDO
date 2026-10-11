@@ -37,8 +37,8 @@ export struct TopicSummaryCard {
         }
         Span(this.title)
       }
-        // 18:详情摘要标题。原 22 相对列表标题(17)/顶栏(16)过大,收敛到 18 更协调。
-        .fontSize(18)
+        // 17:详情摘要标题。原 22 过大,收敛到 17,与列表标题/顶栏层级更协调。
+        .fontSize(17)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
         .width('100%')

@@ -12,7 +12,7 @@ const PREF_KEY_ROW_PADDING: string = 'topic_list_row_padding';
 // 一次性默认值迁移标记:1.0.5 把行留白默认由 8 收紧到 5。老用户盘上可能已落盘过旧默认 8
 // (只要进过一次设置页拖过任意滑块就会 flush)。用标记位保证「旧默认值」只被纠正一次,
 // 之后用户自己再拖到的任意值(含 8)都会被尊重,不会被反复覆盖。
-const PREF_KEY_ROW_PADDING_MIGRATED: string = 'topic_list_row_padding_migrated';
+const PREF_KEY_ROW_PADDING_MIGRATED: string = 'topic_list_row_padding_migrated_v2';
 // 旧默认行留白:迁移时据此识别「仍是出厂默认、未被用户主动改过」的情况。
 const ROW_PADDING_LEGACY_DEFAULT: number = 8;
 const PREF_KEY_AVATAR_SIZE: string = 'topic_list_avatar_size';
@@ -233,7 +233,11 @@ export class TopicListStylePrefs {
         // 只在未迁移过、且盘上值恰为旧默认时生效;用户手动改过的值不动。迁移后写标记位并落盘。
         const migrated: boolean = store.getSync(PREF_KEY_ROW_PADDING_MIGRATED, false) as boolean;
         if (!migrated) {
-          if (TopicListStylePrefs.cached.rowPadding === ROW_PADDING_LEGACY_DEFAULT) {
+          // 旧默认(8)及其相邻一格(7)都视为「出厂附近、未刻意细调」,一并收紧到新默认 5。
+          // 7 也纳入:旧版本默认就是 8,停在 7 的多半只是随手试过一格,收紧后更贴近用户要的密排;
+          // 更小(6 及以下)或更大(9 及以上)的值判定为用户刻意设置,一律不动。
+          const rowPad: number = TopicListStylePrefs.cached.rowPadding;
+          if (rowPad === ROW_PADDING_LEGACY_DEFAULT || rowPad === ROW_PADDING_LEGACY_DEFAULT - 1) {
             TopicListStylePrefs.cached.rowPadding = ROW_PADDING_DEFAULT;
             store.putSync(PREF_KEY_ROW_PADDING, ROW_PADDING_DEFAULT);
           }
