@@ -23,21 +23,22 @@ export struct TopicSummaryCard {
         // 书签排在已解决之前:烘 #919191 专用 SVG,ImageSpan 内联随标题文字换行同排。
         if (this.bookmarked) {
           ImageSpan($rawfile('fa_icons/bookmark-gray.svg'))
-            .width(20)
-            .height(20)
+            .width(16)
+            .height(16)
             .margin({ right: 6 })
             .verticalAlign(ImageSpanAlignment.CENTER)
         }
         if (this.solved) {
           ImageSpan($rawfile('fa_icons/far-square-check-green.svg'))
-            .width(20)
-            .height(20)
+            .width(16)
+            .height(16)
             .margin({ right: 6 })
             .verticalAlign(ImageSpanAlignment.CENTER)
         }
         Span(this.title)
       }
-        .fontSize(22)
+        // 18:详情摘要标题。原 22 相对列表标题(17)/顶栏(16)过大,收敛到 18 更协调。
+        .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
         .width('100%')

@@ -283,8 +283,8 @@ export struct TopicListItem {
       })
     }
     // 卡片模式:卡与卡之间上下各留半缝隙(两个相邻行拼出整缝),让浅灰底透出来(飞书式)。
-    // 3→1.5:整体缝隙由 12→6 再压到 6→3,进一步贴近 0.9.x 的密排密度。
-    .margin({ top: this.cardMode ? 1.5 : 0, bottom: this.cardMode ? 1.5 : 0 })
+    // 3→1:卡缝再压到合计 2vp(0.9.x 级密排),配合卡内 rowPadding 默认降到 5,整屏信息量显著提升。
+    .margin({ top: this.cardMode ? 1 : 0, bottom: this.cardMode ? 1 : 0 })
     .translate({ y: incomingInsertTranslateY(this.incomingInsertProgress, this.incomingInsertDistance) })
     .opacity(incomingInsertOpacity(this.incomingInsertProgress, this.incomingInsertFadeIn))
     .onAreaChange((_oldValue: Area, newValue: Area) => {

@@ -9,6 +9,12 @@ const PREF_KEY_TITLE_FONT_SIZE: string = 'topic_list_title_font_size';
 const PREF_KEY_TITLE_FONT_WEIGHT: string = 'topic_list_title_font_weight';
 const PREF_KEY_LINE_HEIGHT_RATIO: string = 'topic_list_line_height_ratio';
 const PREF_KEY_ROW_PADDING: string = 'topic_list_row_padding';
+// 一次性默认值迁移标记:1.0.5 把行留白默认由 8 收紧到 5。老用户盘上可能已落盘过旧默认 8
+// (只要进过一次设置页拖过任意滑块就会 flush)。用标记位保证「旧默认值」只被纠正一次,
+// 之后用户自己再拖到的任意值(含 8)都会被尊重,不会被反复覆盖。
+const PREF_KEY_ROW_PADDING_MIGRATED: string = 'topic_list_row_padding_migrated';
+// 旧默认行留白:迁移时据此识别「仍是出厂默认、未被用户主动改过」的情况。
+const ROW_PADDING_LEGACY_DEFAULT: number = 8;
 const PREF_KEY_AVATAR_SIZE: string = 'topic_list_avatar_size';
 
 // AppStorage 镜像 key:帖子列表行(TopicListItem)用 @StorageProp 逐个绑定,拖动滑块即时重排。
@@ -51,10 +57,10 @@ export const LINE_HEIGHT_RATIO_STEP: number = 0.05;
 // 1.35 × 17 四舍五入正好 23,与改造前的 lineHeight(23) 逐像素一致。
 export const LINE_HEIGHT_RATIO_DEFAULT: number = 1.35;
 
-/** 每行内容区的上下留白。 */
+/** 每行内容区的上下留白。默认 5:1.0.5 起由 8 调小,卡内留白更薄,列表更密。 */
 export const ROW_PADDING_MIN: number = 4;
 export const ROW_PADDING_MAX: number = 20;
-export const ROW_PADDING_DEFAULT: number = 8;
+export const ROW_PADDING_DEFAULT: number = 5;
 
 /** 头像直径。默认 40:1.0.0 起由 48 调小,列表更紧凑。 */
 export const AVATAR_SIZE_MIN: number = 32;
@@ -161,12 +167,12 @@ export function avatarGap(avatarSize: number): number {
 /** 分类/标签/时间那一行与标题的间距:默认 6(随行留白松紧)。原为默认 3,标题行高
  * 23 而下方 3vp 就贴徽章行、再 3vp 贴时间,信息层级挤在一起是首页"糙感"主因。 */
 export function metaRowGap(rowPadding: number): number {
-  return Math.max(6, Math.round(clampRowPadding(rowPadding) / 2));
+  return Math.max(4, Math.round(clampRowPadding(rowPadding) / 2));
 }
 
 /** 搜索摘要与标题的间距:默认 6。 */
 export function blurbGap(rowPadding: number): number {
-  return Math.max(6, Math.round(clampRowPadding(rowPadding) * 3 / 4));
+  return Math.max(4, Math.round(clampRowPadding(rowPadding) * 3 / 4));
 }
 
 /** 全默认的一套样式。 */
@@ -223,6 +229,17 @@ export class TopicListStylePrefs {
           avatarSize: clampAvatarSize(
             TopicListStylePrefs.readNumber(store, PREF_KEY_AVATAR_SIZE, AVATAR_SIZE_DEFAULT))
         };
+        // 一次性迁移:把「仍是旧出厂默认 8」的行留白收紧到新默认 5(卡内留白更薄)。
+        // 只在未迁移过、且盘上值恰为旧默认时生效;用户手动改过的值不动。迁移后写标记位并落盘。
+        const migrated: boolean = store.getSync(PREF_KEY_ROW_PADDING_MIGRATED, false) as boolean;
+        if (!migrated) {
+          if (TopicListStylePrefs.cached.rowPadding === ROW_PADDING_LEGACY_DEFAULT) {
+            TopicListStylePrefs.cached.rowPadding = ROW_PADDING_DEFAULT;
+            store.putSync(PREF_KEY_ROW_PADDING, ROW_PADDING_DEFAULT);
+          }
+          store.putSync(PREF_KEY_ROW_PADDING_MIGRATED, true);
+          store.flush();
+        }
         TopicListStylePrefs.loaded = true;
       } catch (error) {
         // 读失败按默认处理:纯外观设置,不该因存储异常影响启动。
