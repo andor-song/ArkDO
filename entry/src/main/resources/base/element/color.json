@@ -291,6 +291,26 @@
     {
       "name": "page_bg_alt",
       "value": "#F5F6F8"
+    },
+    {
+      "name": "tab_bar_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "tab_bar_sep",
+      "value": "#E5E5E5"
+    },
+    {
+      "name": "tab_fg_on",
+      "value": "#191919"
+    },
+    {
+      "name": "tab_fg_off",
+      "value": "#9E9EA1"
+    },
+    {
+      "name": "tab_badge",
+      "value": "#FF4C4C"
     }
   ]
 }
