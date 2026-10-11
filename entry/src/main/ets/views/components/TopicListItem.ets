@@ -32,6 +32,7 @@ import {
   incomingTopicHighlightBackground
 } from './HomeIncomingTopicsPrompt';
 import { APP_IS_DARK_STORAGE_KEY } from '../../common/theme/ThemeManager';
+import { CARD_RADIUS } from '../../common/theme/Metrics';
 
 const INCOMING_HIGHLIGHT_FADE_MS: number = 600;
 
@@ -60,6 +61,9 @@ export struct TopicListItem {
   searchHighlights: string[] = [];
   // 首页取消 List 外层留白后由内容层补回；其他列表仍沿用各自的外层 padding。
   contentHorizontalPadding: number = 0;
+  // 卡片模式(飞书/微信式浅灰底+白卡):true 时本行渲染成白色圆角卡片、卡间留缝、去分割线。
+  // 首页/已读页/搜索传 true;设置页预览不传(=false,保持它在自己的 cardStyle 卡片里的平面渲染)。
+  cardMode: boolean = false;
   // 首页增量置顶高亮使用统一截止时间。懒加载条目晚创建时只播放剩余时长，过期后不重播。
   @Prop @Watch('onIncomingHighlightChanged') incomingHighlightUntil: number = 0;
   @Prop incomingInsertProgress: number = 1;
@@ -241,14 +245,23 @@ export struct TopicListItem {
           top: this.rowPadding,
           bottom: this.rowPadding
         })
-        .backgroundColor(incomingTopicHighlightBackground(this.incomingHighlightActive, this.appIsDark))
+        // 卡片模式:平时白卡底,增量置顶高亮时仍显示浅蓝底色(冷启动把新话题顶上来的高亮不能被吃掉)。
+        .backgroundColor(this.cardMode
+          ? (this.incomingHighlightActive
+            ? incomingTopicHighlightBackground(this.incomingHighlightActive, this.appIsDark)
+            : $r('app.color.card_bg'))
+          : incomingTopicHighlightBackground(this.incomingHighlightActive, this.appIsDark))
+        .borderRadius(this.cardMode ? CARD_RADIUS : 0)
         .animation({ duration: INCOMING_HIGHLIGHT_FADE_MS, curve: Curve.EaseOut })
         .alignItems(VerticalAlign.Top)
 
-        Divider()
-          .color($r('app.color.border'))
-          .strokeWidth(0.5)
-          .margin({ left: this.contentHorizontalPadding, right: this.contentHorizontalPadding })
+        // 卡片模式:去掉行间分割线(卡与卡靠留缝区分,飞书式);平面模式保留原分割线。
+        if (!this.cardMode) {
+          Divider()
+            .color($r('app.color.border'))
+            .strokeWidth(0.5)
+            .margin({ left: this.contentHorizontalPadding, right: this.contentHorizontalPadding })
+        }
       }
       .width('100%')
       .onClick(() => {
@@ -260,6 +273,8 @@ export struct TopicListItem {
         }
       })
     }
+    // 卡片模式:卡与卡之间上下各留半缝隙(两个相邻行拼出整缝),让浅灰底透出来(飞书式)。
+    .margin({ top: this.cardMode ? 6 : 0, bottom: this.cardMode ? 6 : 0 })
     .translate({ y: incomingInsertTranslateY(this.incomingInsertProgress, this.incomingInsertDistance) })
     .opacity(incomingInsertOpacity(this.incomingInsertProgress, this.incomingInsertFadeIn))
     .onAreaChange((_oldValue: Area, newValue: Area) => {

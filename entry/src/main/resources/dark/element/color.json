@@ -279,6 +279,18 @@
     {
       "name": "link_clicks_fg",
       "value": "#9A9A9A"
+    },
+    {
+      "name": "card_bg",
+      "value": "#1F2227"
+    },
+    {
+      "name": "card_separator",
+      "value": "#2A2D33"
+    },
+    {
+      "name": "page_bg_alt",
+      "value": "#15171B"
     }
   ]
 }

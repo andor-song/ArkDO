@@ -709,6 +709,7 @@ export struct HomePage {
               category: CategoryIndex.find(this.categories, topic.categoryId),
               parentCategory: CategoryIndex.findParent(this.categories, topic.categoryId),
               contentHorizontalPadding: 12,
+              cardMode: true,
               incomingHighlightUntil: this.incomingTopicHighlightDeadline(topic.id),
               incomingInsertProgress: this.incomingInsertProgress,
               incomingInsertDistance: this.incomingInsertActive &&
@@ -842,7 +843,7 @@ export struct HomePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_bg'))
+    .backgroundColor($r('app.color.page_bg_gray'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     // 同时记录列表视口和手势宽度,避免同一组件挂两个 onAreaChange 时后者覆盖前者。
     .onAreaChange((_oldArea: Area, newArea: Area) => {

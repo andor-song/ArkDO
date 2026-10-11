@@ -419,6 +419,8 @@ export struct SearchOverlay {
               topic: topic,
               category: CategoryIndex.find(this.categories, topic.categoryId),
               parentCategory: CategoryIndex.findParent(this.categories, topic.categoryId),
+              contentHorizontalPadding: 12,
+              cardMode: true,
               searchHighlights: this.highlights,
               onTopicClick: (selected: Topic) => {
                 this.handleResultClick(selected);

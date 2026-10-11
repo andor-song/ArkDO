@@ -82,7 +82,7 @@ export struct ReadTopicsPage {
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP, LayoutSafeAreaEdge.BOTTOM])
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_bg'))
+    .backgroundColor($r('app.color.page_bg_gray'))
   }
 
   @Builder
@@ -119,6 +119,7 @@ export struct ReadTopicsPage {
               topic: topic,
               category: CategoryIndex.find(this.categories, topic.categoryId),
               parentCategory: CategoryIndex.findParent(this.categories, topic.categoryId),
+              cardMode: true,
               onTopicClick: (selectedTopic: Topic) => {
                 selectedTopic.unseen = false;
                 this.onTopicClick(selectedTopic);
