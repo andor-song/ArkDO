@@ -2,6 +2,8 @@ import { KeyboardAvoidMode } from '@kit.ArkUI';
 import { inputMethod } from '@kit.IMEKit';
 import { common } from '@kit.AbilityKit';
 import { Log } from '../../services/logging/Log';
+// 登录闸门:搜索接口对未登录用户返回 403 not_logged_in,经 LoginGate 弹登录页/订阅登录态翻转。
+import { LoginGate } from '../../services/session/LoginGate';
 import { Topic, TopicCategory } from '../../models/Topic';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
 import { NetworkResult } from '../../services/network/NetworkTypes';
@@ -84,11 +86,16 @@ export struct SearchOverlay {
   @State private hasSearched: boolean = false;
   @State private errorMessage: string = '';
   @State private requiresChallenge: boolean = false;
+  // 未登录态:搜索接口对未登录用户返回 403 not_logged_in(见 NetworkResult.notLoggedIn 注释),
+  // 服务端语义是「请先登录」而非网络故障——此时显示「去登录」引导而不是「搜索失败」灰字。
+  @State private notLoggedIn: boolean = false;
   private currentPage: number = 1;
   private debounceTimer: number = -1;
   // 请求序号:边打字边搜时丢弃过期响应(只认最后一次)。
   private searchSeq: number = 0;
   private seenTopicIds: Set<number> = new Set();
+  // 登录成功自动重拉:aboutToAppear 订阅、aboutToDisappear 退订(见 onBecameLoggedIn 注释)。
+  private unsubscribeBecameLoggedIn?: () => void = undefined;
 
   aboutToAppear(): void {
     // 输入框在顶、键盘在底:用系统 RESIZE 让结果区自动收缩,顶部搜索条不被顶走。
@@ -96,6 +103,17 @@ export struct SearchOverlay {
     this.history = SearchHistoryStore.load(this.hostContext());
     this.loadCategories();
     this.focusInput();
+    // 登录成功自动重拉:未登录引导空态里点「立即登录」→ 登录页 → 回来自动重搜,
+    // 不用先关掉搜索页再进。重复订阅幂等(先退旧的再订新的,同通知页写法)。
+    if (this.unsubscribeBecameLoggedIn) {
+      this.unsubscribeBecameLoggedIn();
+      this.unsubscribeBecameLoggedIn = undefined;
+    }
+    this.unsubscribeBecameLoggedIn = LoginGate.subscribeBecameLoggedIn(() => {
+      if (this.notLoggedIn && this.canSearch()) {
+        this.runSearch(true);
+      }
+    });
   }
 
   // 加载分类树(结果项徽标用);通常 HomePage 已加载并缓存,这里 loadIfNeeded 快速返回。
@@ -108,6 +126,11 @@ export struct SearchOverlay {
   }
 
   aboutToDisappear(): void {
+    // 退订登录态翻转信号,避免组件已销毁后回调还在跑。
+    if (this.unsubscribeBecameLoggedIn) {
+      this.unsubscribeBecameLoggedIn();
+      this.unsubscribeBecameLoggedIn = undefined;
+    }
     this.clearDebounce();
     this.hideKeyboard();
     // 还原默认避让,避免影响后续其它页面。
@@ -480,17 +503,23 @@ export struct SearchOverlay {
         .justifyContent(FlexAlign.Center)
         .hitTestBehavior(HitTestMode.Transparent)
       } else if (this.errorMessage.length > 0 && this.resultCount() === 0) {
-        Column() {
-          Text(this.errorMessage)
-            .fontSize(15)
-            .fontColor($r('app.color.warning'))
-            .textAlign(TextAlign.Center)
+        if (this.notLoggedIn) {
+          // 未登录:显示「去登录」引导块而不是灰字报错(403 not_logged_in 属账号层拒绝,
+          // 与网络失败/CF 挑战正交,给登录入口才是对的)。
+          this.LoginGuide()
+        } else {
+          Column() {
+            Text(this.errorMessage)
+              .fontSize(15)
+              .fontColor($r('app.color.warning'))
+              .textAlign(TextAlign.Center)
+          }
+          .width('100%')
+          .height('100%')
+          .padding({ top: this.searchBarBottomOffset() })
+          .justifyContent(FlexAlign.Center)
+          .hitTestBehavior(HitTestMode.Transparent)
         }
-        .width('100%')
-        .height('100%')
-        .padding({ top: this.searchBarBottomOffset() })
-        .justifyContent(FlexAlign.Center)
-        .hitTestBehavior(HitTestMode.Transparent)
       } else if (this.hasSearched && !this.isSearching && this.resultCount() === 0) {
         Column() {
           Text(this.emptyResultText())
@@ -508,6 +537,56 @@ export struct SearchOverlay {
     .width('100%')
     .height('100%')
     .align(Alignment.TopStart)
+  }
+
+  // 未登录引导空态:与通知页 LoginGuide 同一套 —— 圆形图标 + 标题 + 副文案 + 「立即登录」按钮。
+  // 登录入口走全局 LoginGate.requestLogin():RootTabPage 已订阅会弹登录页;
+  // 登录成功后本页 subscribeBecameLoggedIn 自动重搜(见 aboutToAppear),无需手动重进。
+  @Builder
+  private LoginGuide() {
+    Column({ space: 0 }) {
+      Column() {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(32)
+          .fontColor([$r('app.color.text_faint')])
+      }
+      .width(68)
+      .height(68)
+      .justifyContent(FlexAlign.Center)
+      .borderRadius(34)
+      .border({ width: 1, color: $r('app.color.border') })
+
+      Text('未登录')
+        .fontSize(19)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .margin({ top: 16 })
+
+      Text('登录后即可搜索帖子与用户')
+        .fontSize(13)
+        .fontColor($r('app.color.text_secondary'))
+        .textAlign(TextAlign.Center)
+        .margin({ top: 6 })
+        .padding({ left: 24, right: 24 })
+
+      Button('立即登录')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Color.White)
+        .backgroundColor($r('app.color.ld_accent'))
+        .height(42)
+        .padding({ left: 44, right: 44 })
+        .borderRadius(21)
+        .margin({ top: 22 })
+        .onClick(() => {
+          LoginGate.requestLogin();
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ top: this.searchBarBottomOffset(), left: 24, right: 24 })
+    .justifyContent(FlexAlign.Center)
+    .hitTestBehavior(HitTestMode.Transparent)
   }
 
   @Builder
@@ -662,6 +741,7 @@ export struct SearchOverlay {
     this.searchSeq = seq;
     this.isSearching = true;
     this.errorMessage = '';
+    this.notLoggedIn = false;
     this.hasSearched = true;
 
     const result: NetworkResult<User[]> =
@@ -677,9 +757,16 @@ export struct SearchOverlay {
       return;
     }
     this.userResults = [];
-    this.requiresChallenge = result.error?.requiresChallenge === true;
-    this.errorMessage = this.requiresChallenge ? '搜索遇到访问验证，请稍后重试' : '搜索失败，请检查网络后重试';
-    Log.i(`${LOG_TAG} user search failed status=${result.statusCode}`);
+    if (result.notLoggedIn === true) {
+      // 未登录(403 not_logged_in):服务端语义是「请先登录」而非网络故障,引导登录而不是报错。
+      this.notLoggedIn = true;
+      this.errorMessage = '登录后即可搜索';
+    } else {
+      this.requiresChallenge = result.error?.requiresChallenge === true;
+      this.notLoggedIn = false;
+      this.errorMessage = this.requiresChallenge ? '搜索遇到访问验证，请稍后重试' : '搜索失败，请检查网络后重试';
+    }
+    Log.i(`${LOG_TAG} user search failed status=${result.statusCode} notLoggedIn=${result.notLoggedIn}`);
   }
 
   private async runTopicSearch(reset: boolean): Promise<void> {
@@ -695,6 +782,7 @@ export struct SearchOverlay {
       this.isSearching = true;
       this.errorMessage = '';
       this.requiresChallenge = false;
+      this.notLoggedIn = false;
       this.hasSearched = true;
       // 高亮词按本次搜索词定格(不随后续输入漂移;高级语法会被 parseHighlights 过滤掉)。
       this.highlights = this.parseHighlights(term);
@@ -727,10 +815,17 @@ export struct SearchOverlay {
     }
 
     this.requiresChallenge = result.error?.requiresChallenge === true;
-    if (reset) {
-      this.errorMessage = this.requiresChallenge ? '搜索遇到访问验证，请稍后重试' : '搜索失败，请检查网络后重试';
+    if (result.notLoggedIn === true) {
+      // 未登录(403 not_logged_in):服务端语义是「请先登录」而非网络故障,引导登录而不是报错。
+      this.notLoggedIn = true;
+      this.errorMessage = '登录后即可搜索';
+    } else {
+      this.notLoggedIn = false;
+      if (reset) {
+        this.errorMessage = this.requiresChallenge ? '搜索遇到访问验证，请稍后重试' : '搜索失败，请检查网络后重试';
+      }
     }
-    Log.i(`${LOG_TAG} search failed page=${page} status=${result.statusCode} requiresChallenge=${this.requiresChallenge}`);
+    Log.i(`${LOG_TAG} search failed page=${page} status=${result.statusCode} requiresChallenge=${this.requiresChallenge} notLoggedIn=${result.notLoggedIn}`);
   }
 
   // 去重收集(同一主题不同页可能重复出现)。
@@ -768,6 +863,8 @@ export struct SearchOverlay {
     this.isSearching = false;
     this.isLoadingMore = false;
     this.errorMessage = '';
+    // 复位未登录态:清空/切类型后回到历史或新结果,不残留旧引导。
+    this.notLoggedIn = false;
   }
 
   private clearQuery(): void {

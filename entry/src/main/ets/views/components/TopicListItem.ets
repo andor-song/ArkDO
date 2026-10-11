@@ -283,8 +283,8 @@ export struct TopicListItem {
       })
     }
     // 卡片模式:卡与卡之间上下各留半缝隙(两个相邻行拼出整缝),让浅灰底透出来(飞书式)。
-    // 6→3:整体缝隙 12→6 约减半,对齐 0.9.x 的密排密度。
-    .margin({ top: this.cardMode ? 3 : 0, bottom: this.cardMode ? 3 : 0 })
+    // 3→1.5:整体缝隙由 12→6 再压到 6→3,进一步贴近 0.9.x 的密排密度。
+    .margin({ top: this.cardMode ? 1.5 : 0, bottom: this.cardMode ? 1.5 : 0 })
     .translate({ y: incomingInsertTranslateY(this.incomingInsertProgress, this.incomingInsertDistance) })
     .opacity(incomingInsertOpacity(this.incomingInsertProgress, this.incomingInsertFadeIn))
     .onAreaChange((_oldValue: Area, newValue: Area) => {

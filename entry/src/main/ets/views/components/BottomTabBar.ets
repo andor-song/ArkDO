@@ -5,6 +5,7 @@ import { BOTTOM_TAB_BAR_HEIGHT } from '../../common/theme/Metrics';
 // ===== 飞书/微信式底部导航栏 =====
 // 4 个一级 tab 等分:首页 / 分类 / 通知 / 我的。选中深色高亮、未选中灰色,
 // 顶部 1vp 分隔线、底部跟随 HOME 指示条安全区。通知 tab 订阅事件总线显示红点角标。
+// 分类 tab 用 2×2 四格方块(square_grid_2x2)图标,表意「分类筛选」。
 // 悬浮在 RootTabPage 根 Stack 底部,选中态由宿主单向驱动(@Prop current),
 // 仅四个一级 tab 在栈顶时由宿主挂载。
 
@@ -50,7 +51,7 @@ export struct BottomTabBar {
   private onSymbol(index: number): Resource {
     switch (index) {
       case BottomTabId.HOME: return $r('sys.symbol.house');
-      case BottomTabId.CATEGORIES: return $r('sys.symbol.funnel');
+      case BottomTabId.CATEGORIES: return $r('sys.symbol.square_grid_2x2');
       case BottomTabId.NOTIFICATIONS: return $r('sys.symbol.bell_fill');
       case BottomTabId.PROFILE: return $r('sys.symbol.person');
       default: return $r('sys.symbol.house');
@@ -60,7 +61,7 @@ export struct BottomTabBar {
   private offSymbol(index: number): Resource {
     switch (index) {
       case BottomTabId.HOME: return $r('sys.symbol.house');
-      case BottomTabId.CATEGORIES: return $r('sys.symbol.funnel');
+      case BottomTabId.CATEGORIES: return $r('sys.symbol.square_grid_2x2');
       case BottomTabId.NOTIFICATIONS: return $r('sys.symbol.bell');
       case BottomTabId.PROFILE: return $r('sys.symbol.person');
       default: return $r('sys.symbol.house');
@@ -91,7 +92,7 @@ export struct BottomTabBar {
   @Builder
   private TabItem(label: string, index: number) {
     Column({ space: 2 }) {
-      Stack({ alignContent: Alignment.TopEnd }) {
+      Stack({ alignContent: Alignment.Center }) {
         SymbolGlyph(index === this.current ? this.onSymbol(index) : this.offSymbol(index))
           .fontSize(TAB_ICON_SIZE)
           .fontColor([index === this.current ? $r('app.color.tab_fg_on') : $r('app.color.tab_fg_off')])
@@ -102,7 +103,7 @@ export struct BottomTabBar {
             .width(7)
             .height(7)
             .fill($r('app.color.tab_badge'))
-            .margin({ top: 1, right: -1 })
+            .position({ x: 21, y: 1 })
         }
       }
       .width(TAB_ICON_BOX)
