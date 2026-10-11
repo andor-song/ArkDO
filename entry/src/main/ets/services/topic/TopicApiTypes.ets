@@ -345,6 +345,12 @@ export interface CreateTopicPayload {
   nested_post: boolean;
 }
 
+// 编辑主题时的可选元数据。仅楼主编辑首楼时可传;不传则主题分类/标签保持不变。
+export interface UpdateTopicOptions {
+  categoryId?: number;
+  tags?: string[];
+}
+
 // /tags/filter/search 的响应外壳。
 export interface DiscourseTagFilterResponse {
   results?: DiscourseTagResult[];

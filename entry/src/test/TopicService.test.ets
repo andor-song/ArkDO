@@ -392,6 +392,46 @@ export default function topicServiceTest() {
       const result = await service.getReactionUsers(19741741, 0);
 
       expect(result.success).assertFalse();
+
+    // 改已发主题分类/标签:PUT /posts/{id} 的 form body 里带 topic[category_id]/topic[tags]。
+    // tags 是逗号分隔字符串(Discourse TopicUpdater 接受字符串后 split)。
+    it('updatePostAppendsTopicCategoryAndTagsWhenGiven', 0, async () => {
+      // TopicPost 没有 raw 字段,正文渲染用 cookedHtml(cooked→mapPosts)。
+      const payload: string = '{"post":{"id":5,"post_number":1,"topic_id":100,"cooked":"<p>新正文</p>"}}';
+      const bridge: FakeBridge = new FakeBridge({
+        success: true,
+        statusCode: 200,
+        challengeState: ChallengeState.NONE,
+        data: payload
+      });
+      const service: TopicService = new TopicService(bridge);
+
+      const result = await service.updatePost(5, 100, '新正文', '旧正文', { categoryId: 4, tags: ['公告', 'long'] });
+
+      expect(bridge.postedPath).assertEqual('/posts/5');
+      expect(bridge.postedBody).assertEqual(
+        'post%5Bedit_reason%5D=&post%5Braw%5D=%E6%96%B0%E6%AD%A3%E6%96%87&post%5Btopic_id%5D=100&' +
+        'post%5Boriginal_text%5D=%E6%97%A7%E6%AD%A3%E6%96%87&post%5Blocale%5D=&' +
+        'topic%5Bcategory_id%5D=4&topic%5Btags%5D=%E5%85%AC%E5%91%8A%2Clong');
+      expect(result.success).assertTrue();
+      expect(result.data?.cookedHtml).assertEqual('<p>新正文</p>');
+    });
+
+    it('updatePostOmitsTopicFieldsWhenNotGiven', 0, async () => {
+      const payload: string = '{"post":{"id":5,"post_number":1,"topic_id":100,"raw":"新正文"}}';
+      const bridge: FakeBridge = new FakeBridge({
+        success: true,
+        statusCode: 200,
+        challengeState: ChallengeState.NONE,
+        data: payload
+      });
+      const service: TopicService = new TopicService(bridge);
+
+      const result = await service.updatePost(5, 100, '新正文', '旧正文');
+
+      expect(bridge.postedBody.includes('topic%5B')).assertFalse();
+      expect(result.success).assertTrue();
+    });
       expect(result.error?.code).assertEqual(NetworkErrorCode.UNEXPECTED_RESPONSE);
     });
   });

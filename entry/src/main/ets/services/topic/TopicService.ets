@@ -9,7 +9,7 @@ import { buildTopicListPath, TopicListQuery } from './TopicListQuery';
 import { buildLinkClicks } from './LinkClicks';
 import { forwardFailure, unexpectedResponse } from '../network/NetworkResults';
 import { discourseErrorMessage } from '../network/DiscourseErrors';
-import { CreatePostResponse, CreatePrivateMessagePayload, CreateReplyPayload, CreateTopicPayload,
+import { CreatePostResponse, CreatePrivateMessagePayload, CreateReplyPayload, CreateTopicPayload, UpdateTopicOptions,
   DiscourseAcceptedAnswer,
   DiscourseBadgeDef, DiscourseBookmarkDeleteResponse, DiscourseBookmarkResponse, DiscourseBoost,
   DiscourseBoostUser, DiscourseGroupedSearchResult, DiscourseLatestResponse, DiscoursePendingPost,
@@ -882,6 +882,8 @@ export class TopicService {
   /**
    * 编辑某楼。PUT /posts/{id},form body(对齐抓包):
    *   post[raw] / post[original_text] / post[topic_id] / post[edit_reason] / post[locale]
+   * 可选 topic 参数(改已发主题的分类/标签,仅楼主编辑首楼时有意义):
+   *   topic[category_id] / topic[tags](逗号分隔字符串)
    *
    * original_text 是**乐观并发的基线**,不是可省的装饰:PostsController#update 里
    * `original_text.present? && original_text != post.raw` 就直接 409 edit_conflict。
@@ -894,7 +896,8 @@ export class TopicService {
     postId: number,
     topicId: number,
     raw: string,
-    originalRaw: string
+    originalRaw: string,
+    topicOptions?: UpdateTopicOptions
   ): Promise<NetworkResult<TopicPost>> {
     const parts: string[] = [];
     parts.push('post%5Bedit_reason%5D=');
@@ -902,6 +905,14 @@ export class TopicService {
     parts.push(`post%5Btopic_id%5D=${topicId}`);
     parts.push(`post%5Boriginal_text%5D=${encodeURIComponent(originalRaw)}`);
     parts.push('post%5Blocale%5D=');
+    if (topicOptions !== undefined) {
+      if (topicOptions.categoryId !== undefined && topicOptions.categoryId >= 0) {
+        parts.push(`topic%5Bcategory_id%5D=${topicOptions.categoryId}`);
+      }
+      if (topicOptions.tags !== undefined && topicOptions.tags.length > 0) {
+        parts.push(`topic%5Btags%5D=${encodeURIComponent(topicOptions.tags.join(','))}`);
+      }
+    }
     const referrer: string = `${AppConstants.BASE_URL}/t/topic/${topicId}`;
     const response: NetworkResult<string> = await this.bridge.putForm(`/posts/${postId}`, parts.join('&'), {
       notifyChallenge: true,
