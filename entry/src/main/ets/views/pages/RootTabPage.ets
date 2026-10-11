@@ -92,6 +92,7 @@ import { showToast as promptToast } from '../../common/utils/Toast';
 import { MATH_HOST_ACTIVE_KEY } from '../../services/content/MathRenderService';
 import { PushCoordinator } from '../../services/push/PushCoordinator';
 import { SCRIM } from '../../common/theme/Palette';
+import { MessageCutoutCapsule } from '../components/MessageCutoutCapsule';
 
 const LOG_TAG: string = '[ArkDO][Root]';
 const DIAG_TAG: string = '[ARKDO_CF_DIAG]';
@@ -435,6 +436,19 @@ export struct RootTabPage {
         // 挂载/卸载不带任何 transition:开关场动效(hero 飞入飞回,或降级的淡入淡出)
         // 全部由 ImageViewer 自己在内部跑完——外层再套一层 opacity 会把飞行中的图一起淡掉。
         // 相应地 onClose 是「动效已播完」的信号,收到就能直接卸载。
+      }
+
+      // 前摄挖孔未读胶囊:仅「会话已检查过且确实登录且有未读」时浮在挖孔正下方。
+      // 未读计数由组件内部订阅 NotificationEventBus(轮询/实时通道都会发),点按跳通知页。
+      // 未登录/未检查时不挂,避免冷启动首帧在状态栏附近闪现。
+      if (this.hasCheckedSession && this.currentUser !== undefined) {
+        MessageCutoutCapsule({
+          onOpen: () => {
+            this.navPathStack.pushPath(new NavPathInfo(AppRouteName.NOTIFICATIONS, buildNotificationsRouteParam('cutoutCapsule')));
+          }
+        })
+          .width('100%')
+          .height('100%')
       }
 
     }

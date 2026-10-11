@@ -5,6 +5,13 @@ import display from '@ohos.display';
 // 各组件需要状态栏高度时也统一读这里(不再各自 getWindowAvoidArea)。
 export const SYS_TOP_INSET_KEY: string = 'sysTopInsetVp';
 export const SYS_BOTTOM_INSET_KEY: string = 'sysBottomInsetVp';
+// 前摄挖孔避让区(screen 坐标, vp)。挖孔通常在顶部居中或侧边,由 TYPE_CUTOUT 报成若干矩形;
+// 取并集包围盒后拆成四个标量(而非打包对象)——AppStorage 改对象字段不穿透 @StorageProp,
+// 标量键是唯一可靠形态。无挖孔(模拟器/侧边挖孔不遮挡)时四值全为 0。
+export const CUTOUT_LEFT_INSET_KEY: string = 'cutoutLeftVp';
+export const CUTOUT_TOP_INSET_KEY: string = 'cutoutTopVp';
+export const CUTOUT_WIDTH_INSET_KEY: string = 'cutoutWidthVp';
+export const CUTOUT_HEIGHT_INSET_KEY: string = 'cutoutHeightVp';
 
 /**
  * 常驻沉浸式窗口:启动即 setWindowLayoutFullScreen(true),整个 App 生命周期不再切换窗口布局模式。
@@ -36,7 +43,8 @@ export class ImmersiveWindow {
       win.on('avoidAreaChange', (data: window.AvoidAreaOptions) => {
         // 只关心系统栏与挖孔区(键盘避让由各输入组件自理)。
         if (data.type === window.AvoidAreaType.TYPE_SYSTEM
-          || data.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR) {
+          || data.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR
+          || data.type === window.AvoidAreaType.TYPE_CUTOUT) {
           ImmersiveWindow.syncInsets(win);
         }
       });
@@ -79,6 +87,34 @@ export class ImmersiveWindow {
       }
       AppStorage.setOrCreate(SYS_TOP_INSET_KEY, sys.topRect.height / density);
       AppStorage.setOrCreate(SYS_BOTTOM_INSET_KEY, indicator.bottomRect.height / density);
+      // 挖孔避让区:四块矩形(顶/左/右/底)取并集包围盒。多数机型是顶部居中的单块;
+      // 横屏/异形屏可能拆到侧边,并集兜住各种形态。坐标按物理像素从窗口左上角起,除密度成 vp。
+      const cutout: window.AvoidArea = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_CUTOUT);
+      let cutLeft: number = Number.MAX_VALUE;
+      let cutTop: number = Number.MAX_VALUE;
+      let cutRight: number = 0;
+      let cutBottom: number = 0;
+      const cutRects: (window.Rect)[] = [cutout.topRect, cutout.leftRect, cutout.rightRect, cutout.bottomRect];
+      for (let index: number = 0; index < cutRects.length; index++) {
+        const rect: window.Rect = cutRects[index];
+        if (rect.width > 0 && rect.height > 0) {
+          cutLeft = Math.min(cutLeft, rect.left);
+          cutTop = Math.min(cutTop, rect.top);
+          cutRight = Math.max(cutRight, rect.left + rect.width);
+          cutBottom = Math.max(cutBottom, rect.top + rect.height);
+        }
+      }
+      if (cutRight > cutLeft && cutBottom > cutTop) {
+        AppStorage.setOrCreate(CUTOUT_LEFT_INSET_KEY, cutLeft / density);
+        AppStorage.setOrCreate(CUTOUT_TOP_INSET_KEY, cutTop / density);
+        AppStorage.setOrCreate(CUTOUT_WIDTH_INSET_KEY, (cutRight - cutLeft) / density);
+        AppStorage.setOrCreate(CUTOUT_HEIGHT_INSET_KEY, (cutBottom - cutTop) / density);
+      } else {
+        AppStorage.setOrCreate(CUTOUT_LEFT_INSET_KEY, 0);
+        AppStorage.setOrCreate(CUTOUT_TOP_INSET_KEY, 0);
+        AppStorage.setOrCreate(CUTOUT_WIDTH_INSET_KEY, 0);
+        AppStorage.setOrCreate(CUTOUT_HEIGHT_INSET_KEY, 0);
+      }
     } catch (err) {
     }
   }
