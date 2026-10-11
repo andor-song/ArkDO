@@ -10,6 +10,7 @@ import { LoadStateView } from '../components/LoadStateView';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { ListFooter } from '../components/ListFooter';
 import { BOTTOM_TAB_BAR_HEIGHT } from '../../common/theme/Metrics';
+import { APP_IS_WIDE_STORAGE_KEY } from '../../common/utils/BreakpointManager';
 import { immersiveTitleBarContentTopSpacer } from '../../common/ui/ImmersiveTitleBarLayout';
 import {
   ImmersiveLightArea,
@@ -23,6 +24,8 @@ const PAGE_SIZE: number = 30;
 
 @Component
 export struct NotificationPage {
+  // 宽屏(平板横屏 Split 双栏)下底部导航栏隐藏,列表尾部不再让位(BOTTOM_TAB_BAR_HEIGHT)。
+  @StorageProp(APP_IS_WIDE_STORAGE_KEY) private appIsWide: boolean = false;
   // 窗口常驻全屏布局:根列自行避让状态栏(padding 在带背景的根列上,背景填满状态栏条)。
   @StorageProp(SYS_TOP_INSET_KEY) private sysTopInset: number = 0;
   bridge: JsonNetworkClient | undefined = undefined;
@@ -144,7 +147,8 @@ export struct NotificationPage {
         .clip(false)
         .scrollBar(BarState.Off)
         // 一级 tab 页底部有飞书式导航栏悬浮覆盖;列表尾部留出 TabBar 高度,最后一条不被遮。
-        .contentEndOffset(BOTTOM_TAB_BAR_HEIGHT)
+        // 宽屏双栏下 TabBar 隐藏,不预留封底空档。
+        .contentEndOffset(this.appIsWide ? 0 : BOTTOM_TAB_BAR_HEIGHT)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .onReachEnd(() => {
           this.loadMore();

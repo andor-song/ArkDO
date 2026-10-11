@@ -4,6 +4,7 @@ import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { Log } from '../../services/logging/Log';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { BOTTOM_TAB_BAR_HEIGHT, CARD_GAP, CARD_PADDING, CARD_RADIUS, PAGE_MARGIN } from '../../common/theme/Metrics';
+import { APP_IS_WIDE_STORAGE_KEY } from '../../common/utils/BreakpointManager';
 import { SiteUrl } from '../../services/site/SiteUrl';
 import { immersiveTitleBarContentTopSpacer } from '../../common/ui/ImmersiveTitleBarLayout';
 import {
@@ -152,6 +153,8 @@ struct ForumEditDialog {
  */
 @Component
 export struct ForumsPage {
+  // 宽屏(平板横屏 Split 双栏)下底部导航栏隐藏,列表尾部不再让位(BOTTOM_TAB_BAR_HEIGHT)。
+  @StorageProp(APP_IS_WIDE_STORAGE_KEY) private appIsWide: boolean = false;
   // 窗口常驻全屏布局:内容层自行避让状态栏(背景层已天然铺满整屏)。
   @StorageProp(SYS_TOP_INSET_KEY) private sysTopInset: number = 0;
   onBack: () => void = () => {};
@@ -213,7 +216,8 @@ export struct ForumsPage {
     .edgeEffect(EdgeEffect.Spring)
     .align(Alignment.Top)
     // 一级 tab 页底部有飞书式导航栏悬浮覆盖;滚动尾部留出 TabBar 高度,最后一项不被遮。
-    .contentEndOffset(BOTTOM_TAB_BAR_HEIGHT)
+    // 宽屏双栏下 TabBar 隐藏,不预留封底空档。
+    .contentEndOffset(this.appIsWide ? 0 : BOTTOM_TAB_BAR_HEIGHT)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 

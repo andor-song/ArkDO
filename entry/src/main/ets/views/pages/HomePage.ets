@@ -96,6 +96,7 @@ import {
 } from '../../common/ui/ImmersiveLightMaterial';
 import { buildImmersiveTitleBarStyle } from '../../common/ui/ImmersiveTitleBarStyle';
 import { BOTTOM_TAB_BAR_HEIGHT } from '../../common/theme/Metrics';
+import { APP_IS_WIDE_STORAGE_KEY } from '../../common/utils/BreakpointManager';
 import {
   SMART_REACH_ANIMATION_DURATION,
   SMART_REACH_LEFT_HAND_STORAGE_KEY,
@@ -314,6 +315,8 @@ export struct HomePage {
   // 列表区 Stack 铺进了底部安全区(expandSafeArea BOTTOM),悬浮按钮得自己躲开手势条,
   // 否则 16vp 的底边距会把它压在导航指示条上。
   @StorageProp(SYS_BOTTOM_INSET_KEY) private sysBottomInset: number = 0;
+  // 宽屏(平板横屏 Split 双栏)下底部导航栏隐藏,列表尾部/FAB 不再让位(BOTTOM_TAB_BAR_HEIGHT)。
+  @StorageProp(APP_IS_WIDE_STORAGE_KEY) private appIsWide: boolean = false;
   onTopicClick: (topic: Topic) => void = () => {};
   // 按帖子 ID 直接跳转详情(通用入口,不依赖完整 Topic 对象)。带楼号时落地即定位并高亮该楼。
   onOpenTopicById: (topicId: number, postNumber?: number) => void = () => {};
@@ -761,8 +764,8 @@ export struct HomePage {
         .enableScrollInteraction(!this.incomingInsertActive)
         .padding({ bottom: 0 })
         // 一级 tab 页底部有飞书式导航栏悬浮覆盖;给列表尾部留出 TabBar 高度,
-        // 让最后一条帖子能滚到 TabBar 上方,不被遮挡。
-        .contentEndOffset(BOTTOM_TAB_BAR_HEIGHT)
+        // 让最后一条帖子能滚到 TabBar 上方,不被遮挡。宽屏下 TabBar 隐藏,不预留封底空档。
+        .contentEndOffset(this.appIsWide ? 0 : BOTTOM_TAB_BAR_HEIGHT)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .onReachEnd(() => {
           this.loadMoreTopics();
@@ -836,7 +839,8 @@ export struct HomePage {
           }
             .id('smartReachHomeFabCluster')
             .alignRules(this.fabAlignRules)
-            .margin({ left: 16, right: 16, bottom: 16 + BOTTOM_TAB_BAR_HEIGHT + this.sysBottomInset })
+            // 窄屏底部有 TabBar,把 FAB 抬到它上方;宽屏 TabBar 隐藏,无需让位(避免悬高)。
+            .margin({ left: 16, right: 16, bottom: 16 + (this.appIsWide ? 0 : BOTTOM_TAB_BAR_HEIGHT) + this.sysBottomInset })
             .alignItems(VerticalAlign.Center)
         }
         .width('100%')
