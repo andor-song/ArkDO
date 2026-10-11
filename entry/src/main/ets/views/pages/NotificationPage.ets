@@ -41,15 +41,37 @@ export struct NotificationPage {
   @State private hasMore: boolean = true;
   @State private loadFailed: boolean = false;
   @State private message: string = '';
+  // 未登录态:通知接口是登录专享(403 not_logged_in),此时显示「去登录」引导而不是「加载失败」。
+  @State private notLoggedIn: boolean = false;
   private api?: NotificationApi = undefined;
   private loading: boolean = false;
   private scroller: Scroller = new Scroller();
+  // 登录成功自动重拉:用户从本空态点「立即登录」→ 登录页登录 → 回来不用手动重进就能看到列表。
+  private unsubscribeBecameLoggedIn?: () => void = undefined;
 
   aboutToAppear(): void {
     if (this.bridge) {
       this.api = new NotificationApi(this.bridge);
     }
+    // 登录成功后自动重拉:通知接口 403 not_logged_in 时本页显示「去登录」引导;用户在登录页
+    // 完成登录返回,这里无需再手动重进页面就把列表拉出来。重复订阅是幂等的(先退订旧的)。
+    if (this.unsubscribeBecameLoggedIn) {
+      this.unsubscribeBecameLoggedIn();
+      this.unsubscribeBecameLoggedIn = undefined;
+    }
+    this.unsubscribeBecameLoggedIn = LoginGate.subscribeBecameLoggedIn(() => {
+      this.notLoggedIn = false;
+      // 登录态刚翻真:直接重拉首页列表(此时 cookie 已带 _t,不会再见 403)。
+      this.loadInitial();
+    });
     this.loadInitial();
+  }
+
+  aboutToDisappear(): void {
+    if (this.unsubscribeBecameLoggedIn) {
+      this.unsubscribeBecameLoggedIn();
+      this.unsubscribeBecameLoggedIn = undefined;
+    }
   }
 
   build() {
@@ -100,16 +122,21 @@ export struct NotificationPage {
   private Content() {
     if (this.items.length === 0) {
       Column() {
-        LoadStateView({
-          isLoading: this.isInitialLoading,
-          loadingText: '加载中…',
-          message: this.message.length > 0 ? this.message : '通知加载失败,请重试',
-          showRetry: this.loadFailed,
-          emptyTitle: '暂无通知',
-          onRetry: () => {
-            this.loadInitial();
-          }
-        })
+        // 未登录:显示「去登录」引导(带登录按钮),而不是「加载失败」。登录成功后订阅回调自动重拉。
+        if (this.notLoggedIn) {
+          this.LoginGuide()
+        } else {
+          LoadStateView({
+            isLoading: this.isInitialLoading,
+            loadingText: '加载中…',
+            message: this.message.length > 0 ? this.message : '通知加载失败,请重试',
+            showRetry: this.loadFailed,
+            emptyTitle: '暂无通知',
+            onRetry: () => {
+              this.loadInitial();
+            }
+          })
+        }
       }
       .width('100%')
       .height('100%')
@@ -206,6 +233,15 @@ export struct NotificationPage {
     this.isRefreshing = false;
 
     if (!result.success || result.data === undefined) {
+      if (result.notLoggedIn) {
+        // 未登录(403 not_logged_in):这是「引导登录」而非「重试」——显示登录按钮,不显示重试。
+        this.notLoggedIn = true;
+        this.loadFailed = false;
+        this.message = '登录后即可查看通知';
+        Log.i(`${LOG_TAG} initial load not logged in status=${result.statusCode}`);
+        return;
+      }
+      this.notLoggedIn = false;
       this.loadFailed = true;
       this.message = '通知加载失败,请重试';
       Log.i(`${LOG_TAG} initial load failed status=${result.statusCode}`);
@@ -293,4 +329,53 @@ export struct NotificationPage {
       slug: src.slug, iconId: src.iconId, iconColor: src.iconColor
     };
   }
+  // 未登录引导空态:与「我的」页一致 —— 圆环人像 + 标题 + 副标题 + 「立即登录」按钮。
+  // 登录入口走全局 LoginGate.requestLogin():RootTabPage 已订阅,会弹出登录页;登录成功后
+  // 本页订阅的 subscribeBecameLoggedIn 自动重拉(见 aboutToAppear),无需手动返回重进。
+  @Builder
+  private LoginGuide() {
+    Column({ space: 0 }) {
+      Column() {
+        SymbolGlyph($r('sys.symbol.bell'))
+          .fontSize(32)
+          .fontColor([$r('app.color.text_faint')])
+      }
+      .width(68)
+      .height(68)
+      .justifyContent(FlexAlign.Center)
+      .borderRadius(34)
+      .border({ width: 1, color: $r('app.color.border') })
+
+      Text('未登录')
+        .fontSize(19)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .margin({ top: 16 })
+
+      Text('登录后即可查看回复、@与私信通知')
+        .fontSize(13)
+        .fontColor($r('app.color.text_secondary'))
+        .textAlign(TextAlign.Center)
+        .margin({ top: 6 })
+        .padding({ left: 24, right: 24 })
+
+      Button('立即登录')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Color.White)
+        .backgroundColor($r('app.color.ld_accent'))
+        .height(42)
+        .padding({ left: 44, right: 44 })
+        .borderRadius(21)
+        .margin({ top: 22 })
+        .onClick(() => {
+          LoginGate.requestLogin();
+        })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 24, right: 24 })
+  }
+
 }

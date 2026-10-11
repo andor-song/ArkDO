@@ -883,10 +883,16 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
 
     if (statusCode < 200 || statusCode >= 300) {
       logNetwork(`${method} ${path} unexpected status=${statusCode}`);
+      // 鉴权失败识别:Discourse 对未登录请求回 403 + JSON {"error_type":"not_logged_in",
+      // "errors":["您需要登录才能执行此操作。"]}。这是**账号层**判定,与 CF 挑战(流量层)正交。
+      // 在桥这一层统一解析(它握着原始 body),任何调用方都能从 result.notLoggedIn 区分
+      // 「去登录」和「重试」两种引导,不必各自翻体。
+      const notLoggedIn: boolean = this.isNotLoggedInBody(body, statusCode);
       return {
         success: false,
         statusCode: statusCode,
         challengeState: ChallengeState.NONE,
+        notLoggedIn: notLoggedIn,
         // 失败态也把 body 带上。Discourse 的 422 会在 body 里给 {"errors":["新用户不能上传附件"]}
         // 这类**能直接展示给用户**的原因;原先这里丢掉 body,上层只能显示「站点返回 HTTP 422」,
         // 用户完全不知道自己踩了哪条规则。success 仍为 false,既有调用方不会误读 data。
@@ -908,6 +914,21 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
 
     logNetwork(`${method} ${path} success status=${statusCode} bodyLength=${body.length}`);
     return result;
+  }
+
+  // 判定响应体是否是 Discourse 的「未登录」错误。仅当 HTTP 状态为 401/403 且正文含明确的
+  // not_logged_in 特征(JSON error_type 字段或 errors 数组)才判真,避免把网络/解析失败误判。
+  private isNotLoggedInBody(body: string, statusCode: number): boolean {
+    if (statusCode !== 401 && statusCode !== 403) {
+      return false;
+    }
+    if (!body) {
+      return false;
+    }
+    if (body.indexOf('not_logged_in') >= 0) {
+      return true;
+    }
+    return body.indexOf('您需要登录才能执行此操作') >= 0;
   }
 
   private logResponseBody(path: string, contentType: string, body: string, method: string, statusCode: number, challengeState: ChallengeState): void {

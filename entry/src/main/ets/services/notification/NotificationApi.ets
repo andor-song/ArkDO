@@ -89,6 +89,8 @@ export class NotificationApi {
         success: false,
         statusCode: response.statusCode,
         challengeState: response.challengeState,
+        // 桥层已把「未登录 403」翻译成 notLoggedIn 标记;透传给页面区分「去登录/重试」。
+        notLoggedIn: response.notLoggedIn,
         error: response.error
       };
     }

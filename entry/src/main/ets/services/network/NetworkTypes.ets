@@ -23,6 +23,11 @@ export interface NetworkResult<T> {
   challengeState: ChallengeState;
   data?: T;
   error?: NetworkError;
+  // 服务端明确判定「未登录」(Discourse 403 error_type=not_logged_in)时置 true。
+  // 与 requiresChallenge 正交:CF 挑战是流量层拦截,这个是账号层鉴权失败。
+  // 缺省 undefined = 未检出;false 亦可。仅当错误响应体里带明确的 not_logged_in 特征才置真,
+  // 避免把「网络/解析失败」误判成未登录。给上层(通知页等)区分「重试」和「去登录」两种引导。
+  notLoggedIn?: boolean;
 }
 
 // 注入式 fetch 的附加请求头。名与值都会被 JSON.stringify 后嵌进脚本字面量,调用方给原始字符串即可。
