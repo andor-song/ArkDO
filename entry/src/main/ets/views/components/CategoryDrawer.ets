@@ -102,6 +102,9 @@ export struct CategoryDrawer {
   // 分类异步加载,@Prop 才能在父组件更新后同步进抽屉(普通成员变量只在创建时赋值一次)。
   @Prop categories: TopicCategory[] = [];
   @Prop isLoggedIn: boolean = false;
+  // 底部面板布局:为 true 时 root 从「全高左侧抽屉」切换成「圆角底部面板」(底部安全区/拖拽条/顶部圆角),
+  // 为 false(默认)保持抽屉原样。面板本身的宿主定位由外侧容器负责,组件内部只管这几种布局差异。
+  @Prop panelMode: boolean = false;
   // 网页版侧栏自选的标签(current_user.sidebar_tags),置顶在标签页最前。空 = 未登录或没配置过。
   @Prop myTags: SidebarTag[] = [];
   // 同上,自选版块的 id(current_user.sidebar_category_ids)。只有 id,展示所需的名字/颜色去 categories 里查。
@@ -156,6 +159,15 @@ export struct CategoryDrawer {
 
   build() {
     Column() {
+      // 面板模式的顶部拖拽条:不是抽屉的一部分,只有 panelMode 才渲染;Column 默认水平居中,36 宽的小横条自然居中。
+      if (this.panelMode) {
+        Row()
+          .width(36)
+          .height(4)
+          .borderRadius(2)
+          .backgroundColor($r('app.color.text_faint'))
+      }
+
       this.DrawerHeader()
       this.FilterSection()
 
@@ -197,7 +209,16 @@ export struct CategoryDrawer {
     }
     .width('100%')
     .height('100%')
-    .padding({ top: this.sysTopInset })
+    // 面板模式:不再避让顶部状态栏(顶部换成 16 间距,圆角就是面板自己的上沿),改在底部让出安全区;
+    // 抽屉模式保持原样(顶部让出状态栏、底部不垫)。数值三元内联在属性位,避开 ArkTS 对资源存字段的限制。
+    .padding({
+      top: this.panelMode ? 16 : this.sysTopInset,
+      bottom: this.panelMode ? this.sysBottomInset + 8 : 0
+    })
+    .borderRadius({
+      topLeft: this.panelMode ? 20 : 0,
+      topRight: this.panelMode ? 20 : 0
+    })
     .backgroundColor($r('app.color.page_bg'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
