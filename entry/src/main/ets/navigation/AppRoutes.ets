@@ -19,8 +19,9 @@ export enum AppRouteName {
   NOTIFICATIONS = 'notifications',
   BOOKMARKS = 'bookmarks',
   DRAFTS = 'drafts',
-  // 私信收件箱:会话列表(GET /u/{username}/messages.json),入口在个人中心快捷入口。
   MESSAGES = 'messages',
+  // 原生聊天页(私信直聊频道):气泡列表+输入条,代替 WebView 打开 /chat/c/{title}/{id}。
+  CHAT = 'chat',
   ACTIVITY = 'activity',
   BADGES = 'badges',
   READ_TOPICS = 'readTopics',
@@ -268,6 +269,39 @@ export function isMessagesRouteParam(param: Object | undefined): boolean {
   }
   const candidate: MessagesRouteParam = param as MessagesRouteParam;
   return typeof candidate.username === 'string' && candidate.username.length > 0;
+}
+
+// 原生聊天页参数:直聊频道 id + 标题 + 当前登录者。channelId 是打开目的地的唯一 key;
+// currentUser 用于渲染时区分「自己/对方」气泡(不完全依赖每条消息的 user.id,乐观气泡需要)。
+export interface ChatRouteParam {
+  channelId: number;
+  title: string;
+  currentUserId?: number;
+  currentUsername?: string;
+  currentAvatarTemplate?: string;
+  currentDisplayName?: string;
+}
+
+export function buildChatRouteParam(channelId: number, title: string,
+  currentUserId?: number, currentUsername?: string, currentAvatarTemplate?: string,
+  currentDisplayName?: string): ChatRouteParam {
+  return {
+    channelId: channelId,
+    title: title,
+    currentUserId: currentUserId,
+    currentUsername: currentUsername,
+    currentAvatarTemplate: currentAvatarTemplate,
+    currentDisplayName: currentDisplayName
+  };
+}
+
+export function isChatRouteParam(param: Object | undefined): boolean {
+  if (!param) {
+    return false;
+  }
+  const candidate: ChatRouteParam = param as ChatRouteParam;
+  return typeof candidate.channelId === 'number' &&
+    (candidate.title === undefined || typeof candidate.title === 'string');
 }
 
 // 全部徽章页参数:目标用户名 + 徽章总数(用于标题「徽章 · N」,0 表示未知)。

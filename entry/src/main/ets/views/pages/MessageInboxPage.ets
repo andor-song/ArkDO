@@ -27,7 +27,7 @@ const PAGE_SIZE: number = 50;
 // 私信收件箱:列表页。数据源自适应(MessageService 内部:优先 Chat 直聊频道,
 // 否则回退传统 PM 收件箱)。
 // 行 = 参与者头像 + 会话标题 + 副行(参与者/@回复数/时间) + 未读蓝点。
-// 点行进目的地按行类型:chatUrl 非空 → 通用 WebViewPage 打开聊天页;否则原生主题详情页。
+// 点行进目的地按行类型:chat 会话(channelId 有效) → 原生聊天页;否则原生主题详情页。
 @Component
 export struct MessageInboxPage {
   @StorageProp(SYS_TOP_INSET_KEY) private sysTopInset: number = 0;
@@ -36,8 +36,8 @@ export struct MessageInboxPage {
   username: string = '';
   onBack: () => void = () => {};
   onOpenTopic: (topicId: number, title: string) => void = () => {};
-  // 打开聊天会话(带聊天页 WebView 地址与标题)。linux.do 等启用 chat 的站点用。
-  onOpenChat: (chatUrl: string, title: string) => void = () => {};
+  // 打开原生聊天页(带直聊频道 id 与标题)。chat 会话走它,代替旧 WebView /chat/c/...。
+  onOpenChat: (channelId: number, title: string) => void = () => {};
 
   @State private threads: MessageThread[] = [];
   @State private isInitialLoading: boolean = false;
@@ -195,9 +195,9 @@ export struct MessageInboxPage {
     .borderRadius(CARD_RADIUS)
     .margin({ top: 6, bottom: 6 })
     .onClick(() => {
-      // 聊天会话(chatUrl 非空)走 WebView 聊天页;传统私信主题走原生详情页。
-      if (item.chatUrl !== undefined && item.chatUrl.length > 0) {
-        this.onOpenChat(item.chatUrl, item.title);
+      // 聊天会话(chat 源)走原生聊天页;传统私信主题走原生详情页。
+      if (item.chatUrl !== undefined) {
+        this.onOpenChat(item.topicId, item.title);
       } else {
         this.onOpenTopic(item.topicId, item.title);
       }

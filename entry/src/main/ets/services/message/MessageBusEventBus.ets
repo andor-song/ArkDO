@@ -46,6 +46,21 @@ export interface MessageBusData {
   id?: number;
   post_number?: number;
   type?: string;
+  // ---- Discourse Chat 实时事件（聊天页用）----
+  // /chat/{channel_id} 频道（publisher.rb）：
+  //   · sent     data = { chat_message: <MessageSerializer>, type: 'sent', staged_id }
+  //   · edit/refresh/delete/restore/reaction ...  data = { ... , type: <action> }
+  // 这里的 chat_message 是 MessageSerializer 的原样对象（含 id/message/cooked/user/...），
+  // 由聊天页按需解析成 ChatMessage，不在此强建模——字段随站点版本会漂移，保持透传最稳。
+  chat_message?: object;
+  // sent 事件附带的本端暂存 id：发消息时我们传 staged_id，Web 端据此把临时气泡替换成
+  // 服务端正式消息（chat-channel-subscription-manager.js 同样读它对齐）。
+  staged_id?: number;
+  // /chat/user-tracking-state/{user_id} 频道 payload：任意频道有未读变化都会推。
+  channel_id?: number;
+  last_read_message_id?: number;
+  unread_count?: number;
+  mention_count?: number;
 }
 
 export interface MessageBusEvent {

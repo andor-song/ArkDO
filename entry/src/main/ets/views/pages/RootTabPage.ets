@@ -3,7 +3,7 @@ import { AppConstants, LinuxDoConstants } from '../../common/constants/AppConsta
 import { APP_IS_WIDE_STORAGE_KEY, APP_SPLIT_NAV_BAR_WIDTH_STORAGE_KEY, BreakpointManager,
   SPLIT_NAV_BAR_MAX_WIDTH } from '../../common/utils/BreakpointManager';
 import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildLabSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildReadingFontSizeSettingsRouteParam,
-  buildTopicListStyleSettingsRouteParam, buildLevelProgressRouteParam, buildNotificationsRouteParam, buildProfileEditRouteParam, buildProfileRouteParam, buildReadTopicsRouteParam, buildSettingsRouteParam, buildForumsRouteParam, buildSitesRouteParam, buildSolvedRouteParam, buildTopicDetailRouteParam, buildTopicDetailDraftRouteParam, buildTopicDetailEditDraftRouteParam, buildUserHistoryRouteParam, buildUserProfileRouteParam, buildWebRouteParam, isActivityRouteParam, isBadgesRouteParam, isBookmarksRouteParam, isDraftsRouteParam, DraftsRouteParam, isProfileEditRouteParam, isSolvedRouteParam, isTopicDetailRouteParam, isUserHistoryRouteParam, isUserProfileRouteParam, isWebRouteParam, LevelProgressRouteParam, ProfileEditRouteParam, SolvedRouteParam, TopicDetailRouteParam, UserHistoryRouteParam, UserProfileRouteParam, WebRouteParam, FollowListRouteParam, buildFollowListRouteParam, isFollowListRouteParam, MessagesRouteParam, buildMessagesRouteParam, isMessagesRouteParam } from '../../navigation/AppRoutes';
+  buildTopicListStyleSettingsRouteParam, buildLevelProgressRouteParam, buildNotificationsRouteParam, buildProfileEditRouteParam, buildProfileRouteParam, buildReadTopicsRouteParam, buildSettingsRouteParam, buildForumsRouteParam, buildSitesRouteParam, buildSolvedRouteParam, buildTopicDetailRouteParam, buildTopicDetailDraftRouteParam, buildTopicDetailEditDraftRouteParam, buildUserHistoryRouteParam, buildUserProfileRouteParam, buildWebRouteParam, isActivityRouteParam, isBadgesRouteParam, isBookmarksRouteParam, isDraftsRouteParam, DraftsRouteParam, isProfileEditRouteParam, isSolvedRouteParam, isTopicDetailRouteParam, isUserHistoryRouteParam, isUserProfileRouteParam, isWebRouteParam, LevelProgressRouteParam, ProfileEditRouteParam, SolvedRouteParam, TopicDetailRouteParam, UserHistoryRouteParam, UserProfileRouteParam, WebRouteParam, FollowListRouteParam, buildFollowListRouteParam, isFollowListRouteParam, MessagesRouteParam, buildMessagesRouteParam, isMessagesRouteParam, ChatRouteParam, buildChatRouteParam, isChatRouteParam } from '../../navigation/AppRoutes';
 import { LinkRouter, LinkTarget, LinkTargetKind } from '../../services/content/LinkRouter';
 import { DownloadService } from '../../services/content/DownloadService';
 import { DownloadEventBus, DownloadResult } from '../../services/content/DownloadEventBus';
@@ -81,6 +81,7 @@ import { SolvedPostsPage } from './SolvedPostsPage';
 import { UserHistoryListPage } from './UserHistoryListPage';
 import { FollowersListPage } from './FollowersListPage';
 import { MessageInboxPage } from './MessageInboxPage';
+import { ChatPage } from './ChatPage';
 import { TopicDetailPage } from './TopicDetailPage';
 import { bumpTick, COMPOSER_OVERLAY_BACK_TICK_KEY, COMPOSER_OVERLAY_VISIBLE_KEY, DRAFTS_COMPOSER_BACK_TICK_KEY,
   DRAFTS_COMPOSER_VISIBLE_KEY, DRAFTS_REFRESH_TICK_KEY, IMAGE_VIEWER_BACK_TICK_KEY, IMAGE_VIEWER_VISIBLE_KEY,
@@ -1264,15 +1265,29 @@ export struct RootTabPage {
           onOpenTopic: (topicId: number, title: string) => {
             this.openTopicDetailById(topicId, undefined, title, undefined, undefined);
           },
-          // Chat 直聊会话:通用 WebViewPage 打开聊天页(带登录态、可收发)。
-          onOpenChat: (chatUrl: string, title: string) => {
-            this.openWebPage(chatUrl, title);
+          // Chat 直聊会话:原生聊天页(气泡+输入+实时,不再走 WebView)。channelId=topicId。
+          onOpenChat: (channelId: number, title: string) => {
+            this.openChat(channelId, title);
           }
         })
       }
       .hideTitleBar(true)
       // NavDestination 自身背景默认铺满含状态栏区域;统一为 page_bg,让各二级页顶部状态栏
       // 与页内头部/导航栏同色(否则暗色下露出默认浅底,与内容不一致)。
+      .backgroundColor($r('app.color.page_bg'))
+    } else if (name === AppRouteName.CHAT && isChatRouteParam(param)) {
+      NavDestination() {
+        ChatPage({
+          bridge: this.bridge,
+          channelId: (param as ChatRouteParam).channelId,
+          title: (param as ChatRouteParam).title ?? '',
+          currentUser: this.chatCurrentUser(),
+          onBack: () => {
+            this.popNavigation();
+          }
+        })
+      }
+      .hideTitleBar(true)
       .backgroundColor($r('app.color.page_bg'))
     } else if (name === AppRouteName.PLACEHOLDER) {
       // 双栏右详情栏的空占位:仅在宽屏未选帖子时垫在栈底,让右栏显示品牌空态而非系统默认空白。
@@ -1641,6 +1656,24 @@ export struct RootTabPage {
     }
     Log.i(`${LOG_TAG} open web page host=${url.replace(/^https?:\/\/([^\/?#]+).*$/i, '$1')}`);
     this.navPathStack.pushPath(new NavPathInfo(AppRouteName.WEB, buildWebRouteParam(url, title, siteId)));
+  }
+
+  // 打开原生聊天页(直聊频道)。channelId 为 /chat/api/me/channels 的直聊频道 id。
+  private openChat(channelId: number, title: string): void {
+    if (!Number.isFinite(channelId) || channelId <= 0) {
+      return;
+    }
+    Log.i(`${LOG_TAG} open chat channel=${channelId}`);
+    const u: User | undefined = this.currentUser;
+    this.navPathStack.pushPath(new NavPathInfo(AppRouteName.CHAT, buildChatRouteParam(
+      channelId, title,
+      u?.id, u?.username, u?.avatarTemplate, u?.displayName
+    )));
+  }
+
+  // 当前登录者(用于聊天页渲染「自己/对方」气泡)。未登录时回 undefined(聊天页按匿名处理)。
+  private chatCurrentUser(): User | undefined {
+    return this.currentUser ?? undefined;
   }
 
   // 缓存站点 favicon:仅对「我的站点」打开的页面(带 siteId)落盘,其余一律丢弃。
