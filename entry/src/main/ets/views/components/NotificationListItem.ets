@@ -71,13 +71,16 @@ export struct NotificationListItem {
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
-    .padding({ left: this.cardMode ? 12 : 16, right: this.cardMode ? 12 : 16, top: 13, bottom: 13 })
+    // 卡片模式垂直内距取首页(5)与原始(13)的中间档 9:既不像首页帖卡那么密,也不回到原来偏厚。
+    // 平面模式沿用原 16 内距不变。
+    .padding({ left: this.cardMode ? 12 : 16, right: this.cardMode ? 12 : 16, top: this.cardMode ? 9 : 13, bottom: this.cardMode ? 9 : 13 })
     // 卡片模式:已读=白卡底;未读=淡蓝卡底(未读高亮不能被吃掉)。平面模式沿用原逻辑。
     .backgroundColor(this.cardMode
       ? (this.item.read ? $r('app.color.card_bg') : $r('app.color.info_soft_bg'))
       : (this.item.read ? $r('app.color.page_bg') : $r('app.color.info_soft_bg')))
     .borderRadius(this.cardMode ? CARD_RADIUS : 0)
-    .margin({ top: this.cardMode ? 6 : 0, bottom: this.cardMode ? 6 : 0 })
+    // 卡缝取中间档:上下各 3vp(两卡拼出 6vp 整缝),比首页帖卡缝松一些、比原 6/12 紧凑。
+    .margin({ top: this.cardMode ? 3 : 0, bottom: this.cardMode ? 3 : 0 })
     .onClick(() => {
       this.onItemClick(this.item);
     })

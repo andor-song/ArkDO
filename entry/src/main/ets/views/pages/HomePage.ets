@@ -764,7 +764,8 @@ export struct HomePage {
             .id('smartReachHomeFabCluster')
             .alignRules(this.fabAlignRules)
             // 窄屏底部有 TabBar,把 FAB 抬到它上方;宽屏 TabBar 隐藏,无需让位(避免悬高)。
-            .margin({ left: 16, right: 16, bottom: 16 + (this.appIsWide ? 0 : BOTTOM_TAB_BAR_HEIGHT) + this.sysBottomInset })
+            // 底边距 32vp(先后从 16→24→32 上调:真机上贴 TabBar 顶时被遮挡,再上移一档留足呼吸)。
+            .margin({ left: 16, right: 16, bottom: 32 + (this.appIsWide ? 0 : BOTTOM_TAB_BAR_HEIGHT) + this.sysBottomInset })
             .alignItems(VerticalAlign.Center)
         }
         .width('100%')
