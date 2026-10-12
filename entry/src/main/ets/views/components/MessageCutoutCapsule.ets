@@ -74,7 +74,10 @@ export struct MessageCutoutCapsule {
   }
 
   build() {
-    // 满屏透明容器:只拦截胶囊本身的触摸,其余放行给底层页面/导航。
+    // 本组件的「外壳」在根 Stack(RootTabPage)里是顶层兄弟,那里通过调用点
+    // .hitTestBehavior(HitTestMode.None) 让外壳不参与命中、不阻挡下层 Navigation(见
+    // RootTabPage 挂载处注释)。这里内部 Stack 保持 Transparent 即可:自身不拦兄弟、
+    // 子节点(胶囊)照常命中,胶囊仍然可点。
     Stack() {
       if (this.unread > 0 || this.highPriority > 0) {
         Row({ space: 5 }) {

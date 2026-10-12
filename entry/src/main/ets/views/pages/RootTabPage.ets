@@ -461,6 +461,12 @@ export struct RootTabPage {
         })
           .width('100%')
           .height('100%')
+          // 外壳必须不参与命中测试:该组件在根 Stack 里是顶层兄弟,若外壳为默认命中行为
+          // (命中树 nodeId 801, [1316x2832], isHit:1),会把下方 Navigation 整棵子树的命中
+          // 测试 block 掉——登录后内容区划不动点不动、只有底栏四键能点。
+          // HitTestMode.None:self 不命中、不阻挡兄弟,子节点(胶囊)照常命中,依然可点。
+          // 与上方 SearchFlow 隐藏时用 None 防挡全屏的做法一致。
+          .hitTestBehavior(HitTestMode.None)
       }
 
       // 底部飞书式导航栏:仅一级 tab 在栈顶时显示,悬浮于根 Stack 底部。
@@ -1694,8 +1700,13 @@ export struct RootTabPage {
         this.popHomeFromTab();
         break;
       case BottomTabId.CATEGORIES:
-        // 分类改由首页底部面板承载(面板本体在 HomePage,后续任务实现):这里只上抛可见态信号,
-        // 不进导航栈。面板打开期间 build() 里的 categorySheetVisible 条件会让 tab 栏让位。
+        // 分类面板挂在首页(HomePage)底部。若导航栈非空(「我的」/通知等一级页正压在首页上),
+        // 必须先清栈回首页,再开面板——否则面板在下层弹出看不见,而 categorySheetVisible 的让位
+        // 条件又会让底部 tab 栏消失,表现为「分类没出来、导航栏没了」。清栈后 didShow('navBar')
+        // 会把选中态同步回 HOME,随后面板正常在上层展开。
+        if (this.navPathStack.size() > 0) {
+          this.navPathStack.clear(false);
+        }
         AppStorage.setOrCreate(CATEGORY_SHEET_VISIBLE_KEY, true);
         break;
       case BottomTabId.NOTIFICATIONS:
