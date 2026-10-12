@@ -1263,6 +1263,10 @@ export struct RootTabPage {
           },
           onOpenTopic: (topicId: number, title: string) => {
             this.openTopicDetailById(topicId, undefined, title, undefined, undefined);
+          },
+          // Chat 直聊会话:通用 WebViewPage 打开聊天页(带登录态、可收发)。
+          onOpenChat: (chatUrl: string, title: string) => {
+            this.openWebPage(chatUrl, title);
           }
         })
       }
