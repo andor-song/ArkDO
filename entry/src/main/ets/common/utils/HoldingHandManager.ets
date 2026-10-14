@@ -44,6 +44,8 @@ export class HoldingHandManager {
       HoldingHandManager.enabled = false;
       Log.i(`${LOG_TAG} read enabled failed, fallback to disabled`);
     }
+    // 能力判定要在读盘之后发布(否则镜像里可能是旧结论)。
+    HoldingHandManager.publishStatus();
   }
 
   static isEnabled(): boolean {
@@ -52,7 +54,9 @@ export class HoldingHandManager {
 
   // 能力/开关状态:设置页据此把"设备不支持"讲出来,而不是让开关开了没反应(见 getStatus 注释)。
   static getStatus(): SmartReachStatus {
-    if (HoldingHandManager.unsupported) {
+    // **无条件探能力**:不能只在 start() 里探——start() 在开关关闭时直接返回,
+    // 于是"不支持"的机型在开关默认关时会被显示成可用,用户一点就写盘 true 并卡住(复核发现)。
+    if (HoldingHandManager.unsupported || !HoldingHandManager.isSupported()) {
       return 'unsupported';
     }
     return HoldingHandManager.enabled ? 'enabled' : 'disabled';
@@ -69,6 +73,11 @@ export class HoldingHandManager {
   // 用户在设置里切换开关：持久化并即时生效。开⇒(已激活且前台时)订阅传感器开始识别；
   // 关⇒停订阅并把布局复位到默认右侧。
   static setEnabled(context: common.Context, enabled: boolean): void {
+    if (enabled && HoldingHandManager.getStatus() === 'unsupported') {
+      // 不支持的设备上不允许写入 true:否则盘上是 true、界面置灰关不掉,还会在下次前台白白重试订阅。
+      HoldingHandManager.publishStatus();
+      return;
+    }
     HoldingHandManager.enabled = enabled;
     try {
       const store: preferences.Preferences = preferences.getPreferencesSync(context, { name: PREF_STORE_NAME });

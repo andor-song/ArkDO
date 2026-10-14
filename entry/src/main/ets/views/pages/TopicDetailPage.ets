@@ -17,6 +17,7 @@ import { ImageShareService } from '../../services/content/ImageShareService';
 import { User } from '../../models/User';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
 import { NetworkResult } from '../../services/network/NetworkTypes';
+import { AppStateEventBus } from '../../services/session/AppStateEventBus';
 import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { LoginGate } from '../../services/session/LoginGate';
 import { TopicReadController } from '../../services/reading/TopicReadController';
@@ -283,6 +284,8 @@ export struct TopicDetailPage {
   // 全屏 Markdown 编辑器浮层:内联挂在本页根 Stack(不走 Navigation),点内联输入条「展开」时
   // 由 animateTo 从输入条几何生长铺满全屏(一镜到底)。
   @State private showFullComposer: boolean = false;
+  // 退后台时撤回「我在回复」(presence 上行)的订阅句柄。
+  private unsubscribeAppStateForPresence?: () => void = undefined;
   // 全屏编辑器带入的初始正文(内联浮层已输入内容);顶栏标题/占位随定向回复目标而定。
   @State private composerInitialText: string = '';
   @State private composerHeaderTitle: string = '回复';
@@ -358,6 +361,14 @@ export struct TopicDetailPage {
 
     // 实时新楼：订阅全局 MessageBus 总线（按 channel 过滤本帖）。频道订阅本身在 detail 就位后
     // (loadTopicDetail 成功)才发起——那时才有 topicId 与 message_bus_last_id。
+    // 退后台立即撤回"我在回复":后台不该继续对外宣称正在打字。
+    if (!this.unsubscribeAppStateForPresence) {
+      this.unsubscribeAppStateForPresence = AppStateEventBus.subscribe((isForeground: boolean) => {
+        if (!isForeground) {
+          this.presence.setSelfPresent(false);
+        }
+      });
+    }
     if (!this.unsubscribeMessageBus) {
       this.unsubscribeMessageBus = MessageBusEventBus.subscribe((event: MessageBusEvent) => {
         this.handleMessageBusEvent(event);
@@ -380,6 +391,10 @@ export struct TopicDetailPage {
   }
 
   aboutToDisappear(): void {
+    if (this.unsubscribeAppStateForPresence) {
+      this.unsubscribeAppStateForPresence();
+      this.unsubscribeAppStateForPresence = undefined;
+    }
     // 停表 + 清定时器/订阅;已读回传与最后一次 timings 上报由它自己推迟到转场之后(见 TopicReadController)。
     this.readController.detach();
 
@@ -962,7 +977,8 @@ export struct TopicDetailPage {
         .borderRadius(INCOMING_BANNER_HEIGHT / 2)
         .shadow({ radius: 8, color: SHADOW_SOFT, offsetX: 0, offsetY: 2 })
         .onClick(() => {
-          if (this.topicReloadPending && this.incomingNewPostCount === 0) {
+          // 整帖刷新优先:openIncomingPosts 会清掉整帖刷新提示,两者同时挂着时先前的实现会把它静默吞掉。
+          if (this.topicReloadPending) {
             this.reloadTopicFromBus();
             return;
           }
@@ -1729,7 +1745,8 @@ export struct TopicDetailPage {
   // 用 @Watch 而不是在 4 个 openComposer* / 3 个关闭点各写一遍:那些点是散落的,漏一个就会
   // 一直亮着"正在回复"。开关关掉时 presence 已 stop,这里自然不再上报。
   private onComposerVisibilityChanged(): void {
-    this.presence.setSelfPresent(this.showComposer);
+    // 全屏编辑器展开时会先把 showComposer 置假而编辑仍在继续,所以两个都要看。
+    this.presence.setSelfPresent(this.showComposer || this.showFullComposer);
   }
 
   // 整帖刷新提示被点：清提示并整页重载(复用既有 loadTopicDetail；

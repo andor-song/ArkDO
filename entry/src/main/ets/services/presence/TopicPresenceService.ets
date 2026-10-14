@@ -130,6 +130,10 @@ export class TopicPresenceService {
    * 失败一律静默:这只是"别人能不能看到我在打字",不该影响任何主流程。
    */
   setSelfPresent(present: boolean): void {
+    this.sendPresenceState(present, false);
+  }
+
+  private sendPresenceState(present: boolean, force: boolean): void {
     if (!this.started || this.presenceChannel.length === 0) {
       this.selfPresent = false;
       return;
@@ -141,11 +145,15 @@ export class TopicPresenceService {
     if (clientId.length === 0) {
       return; // 长轮询还没起来:没有可用的 client_id,等下一次状态翻转
     }
-    const now: number = Date.now();
-    if (!this.uplinkThrottle.shouldSend(now)) {
-      return;
+    // **只节流上行,不节流撤回**:撤回被节流掉的话,别人那边会一直挂着"我在回复",
+    // 而且 selfPresent 会卡在 true,之后连 present=true 都被早退吞掉(复核发现的真 bug)。
+    if (!force) {
+      const now: number = Date.now();
+      if (!this.uplinkThrottle.shouldSend(now)) {
+        return;
+      }
+      this.uplinkThrottle.markSent(now);
     }
-    this.uplinkThrottle.markSent(now);
     this.selfPresent = present;
     const channel: string = encodeURIComponent(this.presenceChannel);
     const body: string = present
@@ -163,7 +171,7 @@ export class TopicPresenceService {
     if (!this.selfPresent) {
       return;
     }
-    this.setSelfPresent(false);
+    this.sendPresenceState(false, true);
     this.uplinkThrottle.reset();
   }
 
