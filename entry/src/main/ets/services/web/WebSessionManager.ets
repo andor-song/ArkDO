@@ -5,6 +5,10 @@ import { CookiePresence, containsCookie, presenceFromHeader } from './CookieProb
 
 const LOG_TAG: string = '[ArkDO][WebSession]';
 
+// 认证 cookie 名(Discourse 会话令牌)。集中一处:AuthService 的登出判据与 RootTabPage 的
+// 看门狗都要用它,且「探测不到」与「确认没有」在两条链路里都必须是不同的结论。
+export const AUTH_COOKIE_NAME: string = '_t';
+
 export interface CookiePresenceSnapshot {
   hasCookie: boolean;
   headerLength: number;

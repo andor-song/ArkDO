@@ -18,7 +18,8 @@ import { SidebarTag, User } from '../../models/User';
 import { ChallengeEventBus, ChallengeRequiredEvent } from '../../services/challenge/ChallengeEventBus';
 import { ChallengeRecoveryCoordinator } from '../../services/challenge/ChallengeRecoveryCoordinator';
 import { ChallengeRecoveryEventBus } from '../../services/challenge/ChallengeRecoveryEventBus';
-import { AuthService } from '../../services/auth/AuthService';
+import { AuthService, SessionProbe } from '../../services/auth/AuthService';
+import { SessionVerdict, nextAnonymousStrikes, shouldApplyAnonymous } from '../../services/auth/SessionVerdict';
 import { NotificationService } from '../../services/notification/NotificationService';
 import { NotificationEventBus } from '../../services/notification/NotificationEventBus';
 import { HarmonyPushTokenProvider } from '../../services/push/HarmonyPushTokenProvider';
@@ -37,10 +38,12 @@ import { SiteIconStore } from '../../services/site/SiteIconStore';
 import { image } from '@kit.ImageKit';
 import { DohManager, DohResolveMode } from '../../services/network/DohManager';
 import { NetworkResult, NetworkErrorCode, ChallengeState } from '../../services/network/NetworkTypes';
+import { AppStateEventBus } from '../../services/session/AppStateEventBus';
 import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { CurrentUserEventBus } from '../../services/session/CurrentUserEventBus';
 import { LoginGate } from '../../services/session/LoginGate';
-import { WebSessionManager } from '../../services/web/WebSessionManager';
+import { WebSessionManager, AUTH_COOKIE_NAME } from '../../services/web/WebSessionManager';
+import { CookiePresence } from '../../services/web/CookieProbe';
 import { ArkWebHost } from '../components/ArkWebHost';
 import { MathRenderHost } from '../components/MathRenderHost';
 import { ImageViewer, ViewerImage } from '../components/ImageViewer';
@@ -98,6 +101,10 @@ import { BottomTabBar, BottomTabId } from '../components/BottomTabBar';
 
 const LOG_TAG: string = '[ArkDO][Root]';
 const DIAG_TAG: string = '[ARKDO_CF_DIAG]';
+// 会话看门狗:误判成匿名后靠它低速自愈(而不是等用户重启)。周期风格对齐 NotificationService,
+// 且与之互斥(它在前台跑着就不另起),避免同一接口叠加成双倍轮询。
+const SESSION_WATCHDOG_BASE_MS: number = 300000;
+const SESSION_WATCHDOG_JITTER_RATIO: number = 0.2;
 // 网络恢复触发宿主重载的冷却窗口:地铁出隧道等场景网络会短时间内反复抖动/多次上报,
 // 冷却避免每次抖动都重载一次宿主(重载较重)。只在宿主此前确实加载失败时才会触发。
 const NET_RECOVERY_RELOAD_COOLDOWN_MS: number = 15000;
@@ -201,8 +208,16 @@ export struct RootTabPage {
   // 会话检查进行中又收到登录成功/会话变化时,不能丢掉这次新检查请求。
   // 旧请求返回后会自动启动最新一轮,避免旧的「未登录」结果覆盖刚登录状态。
   private sessionCheckQueued: boolean = false;
-  // 上次会话检查是否失败(CF 盾/网络原因,状态可能不真实),下拉刷新时据此补查。
+  // 上次会话检查是否失败(CF 盾/网络原因,状态可能不真实),下拉刷新/回前台时据此补查。
   private lastSessionCheckFailed: boolean = false;
+  // 匿名振数(策略 B):只有「404 且 cookie 探测不确定」才累加,第二次才真正清态;
+  // 任何登录成功/确认匿名/切站都会清零。见 services/auth/SessionVerdict.ets 与设计文档。
+  private anonymousStrikes: number = 0;
+  // 会话看门狗计时器(-1 = 未排):把「误判匿名后只能重启」变成分钟级自愈。
+  private sessionWatchdogTimer: number = -1;
+  // NotificationService 是否在跑。看门狗靠它避免与 5 分钟轮询叠加。
+  private notificationServiceStarted: boolean = false;
+  private unsubscribeAppState?: () => void = undefined;
   // 网络层自愈闸:长时间后台回前台后宿主 webview 连接/DNS 可能僵死(status=0 且非 CF 盾),
   // 首次遇到时重载一次宿主拿新连接并重查;每段失败只自愈一次,成功后复位,避免重载死循环。
   private hasSelfHealedNetwork: boolean = false;
@@ -334,10 +349,26 @@ export struct RootTabPage {
       });
     }
     this.startNetworkRecoveryWatch();
+    // 回前台补查:后台期间会话可能已失效,而进程自己不会发现(AppStateEventBus 之前无订阅者)。
+    if (!this.unsubscribeAppState) {
+      this.unsubscribeAppState = AppStateEventBus.subscribe((isForeground: boolean) => {
+        if (!isForeground) {
+          return;
+        }
+        if (this.lastSessionCheckFailed || (this.currentUser === undefined && LoginGate.isLoggedIn())) {
+          Log.i(`${LOG_TAG} foreground session recheck`);
+          this.checkCurrentUser();
+          return;
+        }
+        this.updateSessionWatchdog();
+      });
+    }
+    this.updateSessionWatchdog();
   }
 
   aboutToDisappear(): void {
-    this.notificationService.stop();
+    this.stopNotificationPolling();
+    this.stopSessionWatchdog();
     this.stopNetworkRecoveryWatch();
     this.challengeRecovery?.dispose();
     if (this.unsubscribeChallengeRequired) {
@@ -379,6 +410,10 @@ export struct RootTabPage {
     if (this.unsubscribePushTokenUpdate) {
       this.unsubscribePushTokenUpdate();
       this.unsubscribePushTokenUpdate = undefined;
+    }
+    if (this.unsubscribeAppState) {
+      this.unsubscribeAppState();
+      this.unsubscribeAppState = undefined;
     }
   }
 
@@ -2110,12 +2145,13 @@ export struct RootTabPage {
     this.sessionCheckSequence++;
     this.sessionCheckQueued = false;
     this.lastSessionCheckFailed = false;
+    this.anonymousStrikes = 0;
     this.currentUser = undefined;
     this.applySidebarPrefs(undefined);
     LoginGate.setLoggedIn(false);
     LoginGate.clearUserPrivileges();
     AppStorage.setOrCreate(PROFILE_DRAFT_COUNT_KEY, 0);
-    this.notificationService.stop();
+    this.stopNotificationPolling();
     // 登出:清掉自愈基准,让下一个账号登录时重新兑现自己的订阅。
     this.pushCoordinator.resetReconcileState();
     Log.i(`${LOG_TAG} logged out locally applied`);
@@ -2136,7 +2172,7 @@ export struct RootTabPage {
 
     this.isCheckingSession = true;
     this.hasCheckedSession = false;
-    const result: NetworkResult<User | undefined> = await new AuthService(this.bridge).getCurrentUser();
+    const result: NetworkResult<SessionProbe> = await new AuthService(this.bridge).probeSession();
     if (requestId !== this.sessionCheckSequence) {
       this.isCheckingSession = false;
       this.startQueuedSessionCheckIfNeeded();
@@ -2145,11 +2181,19 @@ export struct RootTabPage {
 
     this.isCheckingSession = false;
     this.hasCheckedSession = true;
-    if (result.success) {
+
+    // 会话落地判据(策略 B):服务端正面证据(2xx 无 current_user / 404 且 `_t` 明确不在)一次即清;
+    // cookie 探测不确定(UNKNOWN)时降级为 anonymous-unconfirmed,需要第二振才清。见 SessionVerdict。
+    const probe: SessionProbe | undefined = result.success ? result.data : undefined;
+    const verdict: SessionVerdict | undefined = probe !== undefined ? probe.verdict : undefined;
+    const applyAnonymous: boolean = verdict !== undefined &&
+      shouldApplyAnonymous(verdict, this.anonymousStrikes);
+    if (verdict === 'logged-in' || applyAnonymous) {
+      this.anonymousStrikes = 0;
       this.lastSessionCheckFailed = false;
       // 连接恢复,复位自愈闸,允许下一段网络故障再自愈一次。
       this.hasSelfHealedNetwork = false;
-      this.currentUser = result.data;
+      this.currentUser = verdict === 'logged-in' && probe !== undefined ? probe.user : undefined;
       // 侧栏自选数据跟着这次权威结果走(登出时 result.data 为空 → 一并清空,下一个账号不会看到上一个的)。
       this.applySidebarPrefs(result.data);
       AppStorage.setOrCreate(PROFILE_DRAFT_COUNT_KEY,
@@ -2174,7 +2218,7 @@ export struct RootTabPage {
           unread: this.currentUser.unreadNotifications !== undefined ? this.currentUser.unreadNotifications : 0,
           highPriority: this.currentUser.unreadHighPriorityNotifications !== undefined ? this.currentUser.unreadHighPriorityNotifications : 0
         });
-        this.notificationService.start();
+        this.startNotificationPolling();
         // 登录态已落定:此刻才拿得到 userId,兑现该账号此前开过的推送订阅(保活/自愈)。
         // 内部按账号去重,不会每轮轮询都跑。
         this.pushCoordinator.reconcile(false);
@@ -2182,7 +2226,7 @@ export struct RootTabPage {
         // 堵住「前台长时间停留、宿主一直没重载」时磁盘 `_t` 落后于内存的窗口。与退后台保存互补。
         WebSessionManager.saveCookies('sessionCheck');
       } else {
-        this.notificationService.stop();
+        this.stopNotificationPolling();
         // 登出/换号:清掉自愈基准,让下一个账号登录时重新兑现自己的订阅。
         this.pushCoordinator.resetReconcileState();
       }
@@ -2190,10 +2234,11 @@ export struct RootTabPage {
       return;
     }
 
-    // 检查失败(CF 盾/网络抖动)≠确认未登录:保持上一次的登录状态与通知轮询不动,
-    // 仅记失败标记,等下一次下拉刷新时补查。只有成功响应且 current_user 为空才真正置为未登录。
+    // 检查失败(CF 盾/网络抖动),或「探测不确定的第一振」:一律保持上一次登录态与轮询不动;
+    // 只有服务端正面证据 + (必要时)第二振才真正落地成未登录。
+    this.anonymousStrikes = verdict !== undefined ? nextAnonymousStrikes(verdict, this.anonymousStrikes) : 0;
     this.lastSessionCheckFailed = true;
-    Log.i(`${LOG_TAG} current user check failed status=${result.statusCode} challenge=${result.challengeState}, keep previous loggedIn=${this.currentUser !== undefined}`);
+    Log.i(`${LOG_TAG} current user check failed status=${result.statusCode} challenge=${result.challengeState} verdict=${verdict ?? 'n/a'} strikes=${this.anonymousStrikes}, keep previous loggedIn=${this.currentUser !== undefined}`);
 
     // 长时间后台回前台后,宿主 webview 的连接/DNS 解析器可能已僵死:表现为 status=0 的纯网络
     // 失败(error=network_failure),且非 CF 盾(challengeState=NONE)。这条旧连接自己不会恢复,
@@ -2249,12 +2294,69 @@ export struct RootTabPage {
     this.sidebarCategoryIds = user?.sidebarCategoryIds !== undefined ? user.sidebarCategoryIds : [];
   }
 
-  // 下拉刷新时的会话补查:仅在上次检查失败(状态可能不真实)时重查一次,正常情况零开销。
+  // 下拉刷新时的会话补查:上次检查失败,或「UI 显示匿名但持久化登录位仍为真」(误判粘住的典型形态)
+  // 时重查一次;正常情况零开销。
   private recheckSessionIfNeeded(): void {
-    if (this.lastSessionCheckFailed && !this.isCheckingSession) {
+    const uiAnonymousButMaybeLoggedIn: boolean = this.currentUser === undefined && LoginGate.isLoggedIn();
+    if ((this.lastSessionCheckFailed || uiAnonymousButMaybeLoggedIn) && !this.isCheckingSession) {
       Log.i(`${LOG_TAG} recheck session after previous failure`);
       this.checkCurrentUser();
     }
+  }
+
+  // 通知轮询启停的唯一入口:顺带维护 notificationServiceStarted 与看门狗互斥。
+  private startNotificationPolling(): void {
+    this.notificationService.start();
+    this.notificationServiceStarted = true;
+    this.updateSessionWatchdog();
+  }
+
+  private stopNotificationPolling(): void {
+    this.notificationService.stop();
+    this.notificationServiceStarted = false;
+    this.updateSessionWatchdog();
+  }
+
+  // 看门狗运行条件:轮询没在跑,且(上次检查失败 或 UI 匿名但 `_t` 可能还在)。
+  // 后者正是「误判成匿名」的形态——此时没有任何其它链路会去补查,不补就一直错到重启。
+  private shouldRunSessionWatchdog(): boolean {
+    if (this.notificationServiceStarted) {
+      return false;
+    }
+    if (this.lastSessionCheckFailed) {
+      return true;
+    }
+    if (this.currentUser !== undefined) {
+      return false;
+    }
+    return WebSessionManager.getCookiePresenceForUrl(AppConstants.BASE_URL, AUTH_COOKIE_NAME) !== CookiePresence.ABSENT;
+  }
+
+  private updateSessionWatchdog(): void {
+    if (!this.shouldRunSessionWatchdog()) {
+      this.stopSessionWatchdog();
+      return;
+    }
+    if (this.sessionWatchdogTimer !== -1) {
+      return;
+    }
+    const jitter: number = (Math.random() * 2 - 1) * SESSION_WATCHDOG_JITTER_RATIO;
+    this.sessionWatchdogTimer = setTimeout(() => {
+      this.sessionWatchdogTimer = -1;
+      if (this.shouldRunSessionWatchdog()) {
+        Log.i(`${LOG_TAG} session watchdog recheck`);
+        this.checkCurrentUser();
+      }
+      this.updateSessionWatchdog();
+    }, Math.round(SESSION_WATCHDOG_BASE_MS * (1 + jitter)));
+  }
+
+  private stopSessionWatchdog(): void {
+    if (this.sessionWatchdogTimer === -1) {
+      return;
+    }
+    clearTimeout(this.sessionWatchdogTimer);
+    this.sessionWatchdogTimer = -1;
   }
 
   /**

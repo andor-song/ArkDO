@@ -2,7 +2,7 @@ import { SidebarTag, User } from '../../models/User';
 import { NameCollator } from '../../common/utils/NameCollator';
 import { AppConstants } from '../../common/constants/AppConstants';
 import { ChallengeState, JsonNetworkClient, NetworkErrorCode, NetworkResult } from '../network/NetworkTypes';
-import { WebSessionManager } from '../web/WebSessionManager';
+import { AUTH_COOKIE_NAME, WebSessionManager } from '../web/WebSessionManager';
 import { forwardFailure, unexpectedResponse } from '../network/NetworkResults';
 import { CookiePresence } from '../web/CookieProbe';
 import { SessionVerdict, judgeSession } from './SessionVerdict';
@@ -74,7 +74,7 @@ export class AuthService {
   // 现在探测异常 = UNKNOWN = 不下任何结论。
   async probeSession(): Promise<NetworkResult<SessionProbe>> {
     const response: NetworkResult<string> = await this.bridge.getJson(CURRENT_SESSION_PATH);
-    const cookiePresence: CookiePresence = this.cookiePresence('_t');
+    const cookiePresence: CookiePresence = this.cookiePresence(AUTH_COOKIE_NAME);
     if (!response.success) {
       const verdict: SessionVerdict = judgeSession({
         transportOk: false,
