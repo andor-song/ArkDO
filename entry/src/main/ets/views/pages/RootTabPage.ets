@@ -40,6 +40,7 @@ import { DohManager, DohResolveMode } from '../../services/network/DohManager';
 import { NetworkResult, NetworkErrorCode, ChallengeState } from '../../services/network/NetworkTypes';
 import { AppStateEventBus } from '../../services/session/AppStateEventBus';
 import { IdentitySnapshotData, identitySnapshotKey, parseIdentity, serializeIdentity } from '../../services/session/IdentitySnapshot';
+import { AuthSecretStore } from '../../services/session/AuthSecretStore';
 import { AppSettingsStore } from '../../common/prefs/AppSettingsStore';
 import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { CurrentUserEventBus } from '../../services/session/CurrentUserEventBus';
@@ -1978,7 +1979,7 @@ export struct RootTabPage {
     });
   }
 
-  private handleArkWebReady(): void {
+  private async handleArkWebReady(): Promise<void> {
     this.isArkWebReady = true;
     // 宿主真就绪:清掉失败态,网络恢复监听回到静默(仅在下次真失败时才再介入)。
     this.hostLoadFailed = false;
@@ -1991,8 +1992,9 @@ export struct RootTabPage {
     if (context) {
       this.bridge.setDownloadContext(context);
     }
-    // 冷启动写回认证令牌必须在首次会话检查之前:否则这一次检查一定拿到匿名结论。
-    this.restoreAuthCookies();
+    // 冷启动写回认证凭据必须在首次会话检查之前:否则这一次检查一定拿到匿名结论。
+    // 密钥库读取是异步的,所以这两步要串起来。
+    await this.restoreAuthCookies();
     this.checkCurrentUser();
     // 表情表:宿主就绪才发得出请求。命中缓存或已加载时它自己会立刻返回,可安全重复调用。
     // 不 await —— 表情缺失只是暂时看不到图,不该拖慢首屏。
@@ -2170,9 +2172,11 @@ export struct RootTabPage {
     this.stopSessionWatchdog();
     // 真登出必须把令牌备份一起清掉,否则下次冷启动会把已注销的会话写回来。
     const logoutContext: Context | undefined = this.getUIContext().getHostContext();
-    if (logoutContext !== undefined) {
-      for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
-        AppSettingsStore.remove(logoutContext, this.authCookieKey(PERSISTED_AUTH_COOKIES[index]));
+    for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
+      const cookieName: string = PERSISTED_AUTH_COOKIES[index];
+      AuthSecretStore.remove(this.authSecretAlias(cookieName)).catch(() => {});
+      if (logoutContext !== undefined) {
+        AppSettingsStore.remove(logoutContext, this.legacyAuthCookieKey(cookieName));
       }
     }
     this.currentUser = undefined;
@@ -2492,28 +2496,44 @@ export struct RootTabPage {
 
   // ==================== 认证令牌自备份(冷启动写回) ====================
 
-  private authCookieKey(cookieName: string): string {
+  // 旧版把认证 cookie 明文写在 preferences 里(键见 AUTH_COOKIE_KEY_PREFIX)。
+  // 现在凭据存系统密钥库(Asset Store)，这个键只在迁移时被读一次、随即删除。
+  private legacyAuthCookieKey(cookieName: string): string {
     return `${AUTH_COOKIE_KEY_PREFIX}${CurrentSite.host}_${cookieName}`;
+  }
+
+  // 密钥库里的别名:同一应用内按站点 + cookie 名区分。
+  private authSecretAlias(cookieName: string): string {
+    return `arkdo_auth_${CurrentSite.host}_${cookieName}`;
   }
 
   // 登录态确认成功时调用:把认证 cookie 的值各存一份(与 cookie 同在一个应用沙箱;值一律不落日志)。
   private persistAuthCookies(): void {
-    const context: Context | undefined = this.getUIContext().getHostContext();
-    if (context === undefined) {
-      return;
-    }
     for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
       const cookieName: string = PERSISTED_AUTH_COOKIES[index];
       const value: string | undefined = WebSessionManager.readCookieValue(AppConstants.BASE_URL, cookieName);
       if (value === undefined) {
         continue;
       }
-      // 值没变就不写盘:这个函数每 30 秒跑一次,避免无意义的偏好写入。
-      if (AppSettingsStore.getString(context, this.authCookieKey(cookieName)) === value) {
-        continue;
-      }
-      AppSettingsStore.putString(context, this.authCookieKey(cookieName), value);
+      AuthSecretStore.save(this.authSecretAlias(cookieName), value)
+        .catch(() => { Log.i(`${LOG_TAG} auth secret save failed name=${cookieName}`); });
     }
+  }
+
+  // 一次性迁移:旧版明文的 preferences 键 → 系统密钥库,并删掉明文副本。
+  private async migrateLegacyAuthCookie(cookieName: string): Promise<string | undefined> {
+    const context: Context | undefined = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      return undefined;
+    }
+    const legacy: string | undefined = AppSettingsStore.getString(context, this.legacyAuthCookieKey(cookieName));
+    if (legacy === undefined) {
+      return undefined;
+    }
+    await AuthSecretStore.save(this.authSecretAlias(cookieName), legacy);
+    AppSettingsStore.remove(context, this.legacyAuthCookieKey(cookieName));
+    Log.i(`${LOG_TAG} legacy plaintext auth cookie migrated name=${cookieName}`);
+    return legacy;
   }
 
   // 登录期间跟进备份(见 AUTH_STASH_INTERVAL_MS)。登出/匿名时不排。
@@ -2543,18 +2563,17 @@ export struct RootTabPage {
   // 从磁盘恢复出来,而 Discourse 取值时先认 session、再认 `_t`——旧的匿名 session 会把
   // 刚补上的有效 `_t` 挡住,服务端照样回 404(2026-10-14 14:22 那次)。
   // 用备份把两个都盖掉,才能让服务端按最新凭据重新认人。
-  private restoreAuthCookies(): void {
-    const context: Context | undefined = this.getUIContext().getHostContext();
-    if (context === undefined) {
-      return;
-    }
+  private async restoreAuthCookies(): Promise<void> {
     for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
       const cookieName: string = PERSISTED_AUTH_COOKIES[index];
-      const value: string | undefined = AppSettingsStore.getString(context, this.authCookieKey(cookieName));
+      let value: string | undefined = await AuthSecretStore.load(this.authSecretAlias(cookieName));
+      if (value === undefined) {
+        value = await this.migrateLegacyAuthCookie(cookieName);
+      }
       if (value === undefined) {
         continue;
       }
-      Log.i(`${LOG_TAG} restoring auth cookie from snapshot name=${cookieName}`);
+      Log.i(`${LOG_TAG} restoring auth cookie from secure store name=${cookieName}`);
       WebSessionManager.restoreCookie(AppConstants.BASE_URL, cookieName, value);
     }
   }
