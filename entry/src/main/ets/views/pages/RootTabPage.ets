@@ -39,6 +39,8 @@ import { image } from '@kit.ImageKit';
 import { DohManager, DohResolveMode } from '../../services/network/DohManager';
 import { NetworkResult, NetworkErrorCode, ChallengeState } from '../../services/network/NetworkTypes';
 import { AppStateEventBus } from '../../services/session/AppStateEventBus';
+import { IdentitySnapshotData, identitySnapshotKey, parseIdentity, serializeIdentity } from '../../services/session/IdentitySnapshot';
+import { AppSettingsStore } from '../../common/prefs/AppSettingsStore';
 import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { CurrentUserEventBus } from '../../services/session/CurrentUserEventBus';
 import { LoginGate } from '../../services/session/LoginGate';
@@ -366,6 +368,10 @@ export struct RootTabPage {
         }
         this.updateSessionWatchdog();
       });
+    }
+    // 冷启动先用「上次已知身份」占位:首个会话检查回来前也不闪匿名 CTA。
+    if (this.currentUser === undefined) {
+      this.currentUser = this.loadIdentitySnapshot();
     }
     this.updateSessionWatchdog();
   }
@@ -2157,6 +2163,7 @@ export struct RootTabPage {
     this.lastSessionCheckFailed = false;
     this.anonymousStrikes = 0;
     this.currentUser = undefined;
+    this.clearIdentitySnapshot();
     this.applySidebarPrefs(undefined);
     LoginGate.setLoggedIn(false);
     LoginGate.clearUserPrivileges();
@@ -2204,8 +2211,14 @@ export struct RootTabPage {
       // 连接恢复,复位自愈闸,允许下一段网络故障再自愈一次。
       this.hasSelfHealedNetwork = false;
       this.currentUser = verdict === 'logged-in' && probe !== undefined ? probe.user : undefined;
-      // 侧栏自选数据跟着这次权威结果走(登出时 result.data 为空 → 一并清空,下一个账号不会看到上一个的)。
-      this.applySidebarPrefs(result.data);
+      // 身份快照跟权威结果走:登录落盘、确认匿名(含第二振)清掉——绝不让旧身份在登出后复活。
+      if (this.currentUser !== undefined) {
+        this.saveIdentitySnapshot(this.currentUser);
+      } else {
+        this.clearIdentitySnapshot();
+      }
+      // 侧栏自选数据跟着这次权威结果走(登出时 currentUser 为空 → 一并清空,下一个账号不会看到上一个的)。
+      this.applySidebarPrefs(this.currentUser);
       AppStorage.setOrCreate(PROFILE_DRAFT_COUNT_KEY,
         this.currentUser?.draftCount !== undefined ? this.currentUser.draftCount : 0);
       // 同步全局登录态镜像:供深层页面/楼层动作的写操作闸门(LoginGate)读取。
@@ -2409,6 +2422,49 @@ export struct RootTabPage {
     }, Math.round(SESSION_WATCHDOG_BASE_MS * (1 + jitter)));
   }
 
+  // ==================== 身份快照(上次已知身份) ====================
+  // 冷启动/进程回收后 currentUser 必然为空,靠这份快照先渲染上次身份,避免闪「立即登录」。
+  // 只喂渲染:不写 LoginGate(写操作闸门),不写 trustLevel(等级按站不同,见 LoginGate)。
+
+  private loadIdentitySnapshot(): User | undefined {
+    const context: Context | undefined = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      return undefined;
+    }
+    const data: IdentitySnapshotData | undefined =
+      parseIdentity(AppSettingsStore.getString(context, identitySnapshotKey(CurrentSite.host)));
+    if (data === undefined) {
+      return undefined;
+    }
+    return {
+      id: data.id,
+      username: data.username,
+      displayName: data.displayName,
+      avatarTemplate: data.avatarTemplate
+    };
+  }
+
+  private saveIdentitySnapshot(user: User): void {
+    const context: Context | undefined = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      return;
+    }
+    AppSettingsStore.putString(context, identitySnapshotKey(CurrentSite.host), serializeIdentity({
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName !== undefined ? user.displayName : user.username,
+      avatarTemplate: user.avatarTemplate
+    }));
+  }
+
+  private clearIdentitySnapshot(): void {
+    const context: Context | undefined = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      return;
+    }
+    AppSettingsStore.remove(context, identitySnapshotKey(CurrentSite.host));
+  }
+
   private stopSessionWatchdog(): void {
     if (this.netSessionRecheckTimer !== -1) {
       clearTimeout(this.netSessionRecheckTimer);
@@ -2440,6 +2496,9 @@ export struct RootTabPage {
     // 表情表是站点级数据(各站自定义表情组不同):先丢掉旧站那份,新站的随后重新拉。
     EmojiCatalogService.onSiteChanged();
     SiteSwitchCoordinator.afterSwitch(this.hostContext(), this.bridge);
+    // 立即换成目标站自己的那份快照(各站各存一份):切到另一个已登录论坛也不闪匿名。
+    // 旧站的快照不动——切回去时还要用。
+    this.currentUser = this.loadIdentitySnapshot();
     SessionEventBus.notifySessionChanged();
     // 若这次切站是被跨论坛的推送点击触发的,pending 里还留着那条跳转 —— 现在地址已指向
     // 目标论坛,把它接上。放在最后:前面刚清过导航栈,更早跳会被一起清掉。

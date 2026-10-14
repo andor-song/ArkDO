@@ -83,6 +83,42 @@ export class AppSettingsStore {
     }
   }
 
+  /**
+   * 读一个字符串。读不到/类型不符一律返回 undefined(调用方据此回落)。
+   * 与 tryGetBoolean 同一套语义:不把「读失败」伪装成「读到了空值」。
+   */
+  static getString(context: common.UIAbilityContext | common.Context, key: string): string | undefined {
+    const store: preferences.Preferences | undefined = AppSettingsStore.acquire(context);
+    if (store === undefined) {
+      return undefined;
+    }
+    try {
+      const value: preferences.ValueType = store.getSync(key, '');
+      return typeof value === 'string' && value.length > 0 ? value : undefined;
+    } catch (error) {
+      Log.i(`${LOG_TAG} read failed key=${key}`);
+      return undefined;
+    }
+  }
+
+  static putString(context: common.UIAbilityContext | common.Context, key: string, value: string): void {
+    AppSettingsStore.put(context, key, value);
+  }
+
+  /** 删除一个键(身份快照在登出/确认匿名时要清掉,避免旧身份被下一次冷启动复活)。 */
+  static remove(context: common.UIAbilityContext | common.Context, key: string): void {
+    const store: preferences.Preferences | undefined = AppSettingsStore.acquire(context);
+    if (store === undefined) {
+      return;
+    }
+    try {
+      store.deleteSync(key);
+      store.flush();
+    } catch (error) {
+      Log.i(`${LOG_TAG} delete failed key=${key}`);
+    }
+  }
+
   /** 写入并落盘。失败只记日志:内存镜像已经更新,本次会话的行为仍然正确,只是重启后回退。 */
   static putBoolean(context: common.UIAbilityContext | common.Context, key: string, value: boolean): void {
     AppSettingsStore.put(context, key, value);
