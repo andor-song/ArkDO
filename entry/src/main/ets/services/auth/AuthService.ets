@@ -134,7 +134,9 @@ export class AuthService {
   async getCurrentUser(): Promise<NetworkResult<User | undefined>> {
     const probe: NetworkResult<SessionProbe> = await this.probeSession();
     if (!probe.success) {
-      return forwardFailure<User | undefined>(probe);
+      // ArkTS 的泛型推断比 TS 弱:显式给了第一个类型实参时,S 不会从入参推断(会退回默认 string),
+      // 所以这里两个都写全。
+      return forwardFailure<User | undefined, SessionProbe>(probe);
     }
     const data: SessionProbe | undefined = probe.data;
     if (data === undefined) {
