@@ -224,11 +224,6 @@ export function extractTopicPostChange(event: MessageBusEvent | undefined): Topi
   return change;
 }
 
-// 旧入口保留为薄封装(既有调用方零改动)：只要「新建楼层」的 post id。
-export function extractCreatedPostId(event: MessageBusEvent | undefined): number | undefined {
-  const change: TopicPostChange | undefined = extractTopicPostChange(event);
-  return change !== undefined && change.kind === 'created' ? change.postId : undefined;
-}
 
 export class MessageBusEventBus {
   private static listeners: Map<number, MessageBusListener> = new Map();

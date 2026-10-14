@@ -21,7 +21,8 @@ import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { LoginGate } from '../../services/session/LoginGate';
 import { TopicReadController } from '../../services/reading/TopicReadController';
 import { CreateReplyOutcome, TopicService } from '../../services/topic/TopicService';
-import { extractCreatedPostId, MessageBusEvent, MessageBusEventBus } from '../../services/message/MessageBusEventBus';
+import { extractTopicPostChange,
+  TopicPostChange, MessageBusEvent, MessageBusEventBus } from '../../services/message/MessageBusEventBus';
 import { REALTIME_POSTS_ENABLED_STORAGE_KEY } from '../../services/realtime/RealtimePostsPrefs';
 import { TopicPresenceService } from '../../services/presence/TopicPresenceService';
 import { DraftService } from '../../services/draft/DraftService';
@@ -301,6 +302,8 @@ export struct TopicDetailPage {
   private createdFetchTimer: number = -1;
   // "N 条新回复"提示条：用户不在列表底部时累计，点按跳到首条新楼；在底部则直接追加不计数。
   @State private incomingNewPostCount: number = 0;
+  // 整帖刷新提示(上游 reload_topic)：没有楼号，不能走按楼号跳转的提示条，单独一位标记。
+  @State private topicReloadPending: boolean = false;
   private incomingFirstNewPostNumber: number = 0;
   // 「帖子内新回复提醒」开关(默认关)。关⇒不订阅 /topic 频道、不处理 created；运行中翻转由 @Watch 即时启停。
   @StorageProp(REALTIME_POSTS_ENABLED_STORAGE_KEY) @Watch('onRealtimePostsToggled')
@@ -935,14 +938,16 @@ export struct TopicDetailPage {
     // position('100%') + markAnchor('50%') + offset 那一套：算式上两者中心该重合，实测胶囊却沉到
     // 屏幕外只露出顶部一条——百分比锚点作用在由内容撑开的组件上并不可靠。
     // 底距 = FAB 底距 + FAB 半高 26 − 胶囊半高（此式即与按钮垂直居中，已实测确认）再加让位余量。
-    if (this.incomingNewPostCount > 0 && !this.showComposer) {
+    if ((this.incomingNewPostCount > 0 || this.topicReloadPending) && !this.showComposer) {
       Column() {
         Row() {
           Text('↓')
             .fontSize(13)
             .fontColor($r('app.color.brand'))
             .margin({ right: 6 })
-          Text(`${this.incomingNewPostCount} 条新回复`)
+          Text(this.topicReloadPending && this.incomingNewPostCount === 0
+            ? '帖子已更新，点击刷新'
+            : `${this.incomingNewPostCount} 条新回复`)
             .fontSize(13)
             .fontColor($r('app.color.brand'))
         }
@@ -957,6 +962,10 @@ export struct TopicDetailPage {
         .borderRadius(INCOMING_BANNER_HEIGHT / 2)
         .shadow({ radius: 8, color: SHADOW_SOFT, offsetX: 0, offsetY: 2 })
         .onClick(() => {
+          if (this.topicReloadPending && this.incomingNewPostCount === 0) {
+            this.reloadTopicFromBus();
+            return;
+          }
           this.openIncomingPosts();
         })
       }
@@ -1631,16 +1640,42 @@ export struct TopicDetailPage {
     if (event.channel !== `/topic/${this.detail.id}`) {
       return;
     }
-    // 只在"已加载到话题结尾"时接新楼：否则新楼在已加载窗口之外，原地追加会造成楼号跳断。
-    // hasMorePosts 时忽略(与无实时时行为一致，用户翻到末页/重进即可见)。
-    if (this.hasMorePosts) {
+    // /topic/<id> 上的楼层变更：新建楼 / 修订 / 删除 / 整帖刷新(判据与上游出处见 extractTopicPostChange)。
+    const change: TopicPostChange | undefined = extractTopicPostChange(event);
+    if (change === undefined || change.postId === undefined && change.kind !== 'topic-reload') {
       return;
     }
-    const postId: number | undefined = extractCreatedPostId(event);
-    if (postId === undefined) {
-      return; // 非 created(revised/deleted/无 type 整帖刷新等)MVP 不处理
+    if (change.kind === 'topic-reload') {
+      // 整帖刷新没有楼号，不能走按楼号跳转的提示条；只亮"点击刷新"提示。
+      this.topicReloadPending = true;
+      return;
     }
-    // 已加载 / 已在待拉队列的跳过(含用户自己刚发、已本地追加的楼)。
+    const postId: number = change.postId as number;
+    // 没拉到结尾：**不追加**(原地追加会造成楼号跳断)，只累计提示；点提示条走 jumpToPostNumber →
+    // 未加载时自动重开窗口。只计新建楼："N 条新回复"对修订/删除不成立，而它们本就在窗口外、
+    // 重开窗口拉到的最新内容里自然已是修订 / 删除后的状态。
+    if (this.hasMorePosts) {
+      if (change.kind === 'created') {
+        if (this.incomingNewPostCount === 0) {
+          this.incomingFirstNewPostNumber = change.postNumber !== undefined ? change.postNumber : 0;
+        }
+        this.incomingNewPostCount++;
+      }
+      return;
+    }
+    if (change.kind === 'created') {
+      this.onRealtimeCreatedPost(postId);
+      return;
+    }
+    if (change.kind === 'revised') {
+      this.applyRevisedFromBus(postId);
+      return;
+    }
+    this.applyDeletedFromBus(postId);
+  }
+
+  // 新建楼：已在列表/已在待拉队列的跳过(含用户自己刚发、已本地追加的楼)，否则入队去抖批量拉。
+  private onRealtimeCreatedPost(postId: number): void {
     if (PostStreamPager.findById(this.dataSource.getAll(), postId) !== undefined ||
       this.pendingCreatedPostIds.indexOf(postId) >= 0) {
       return;
@@ -1653,6 +1688,48 @@ export struct TopicDetailPage {
       this.createdFetchTimer = -1;
       this.flushCreatedPosts();
     }, INCOMING_POST_DEBOUNCE_MS);
+  }
+
+  // 楼层被修订：只处理**已在列表里**的楼(绝不把不存在的楼插进来)；单楼重取后原地更新,
+  // 复用 applyEditedPost(TopicPost 是 @Observed，改字段即由 @ObjectLink 精准重渲染那一行)。
+  private async applyRevisedFromBus(postId: number): Promise<void> {
+    const posts: TopicPost[] = this.dataSource.getAll();
+    const existing: TopicPost | undefined = PostStreamPager.findById(posts, postId);
+    const topicId: number | undefined = this.detail?.id;
+    if (existing === undefined || topicId === undefined) {
+      return;
+    }
+    const result: NetworkResult<TopicPost[]> = await new TopicService(this.bridge).loadMorePosts(topicId, [postId]);
+    if (!result.success || !result.data || result.data.length === 0) {
+      return;
+    }
+    if (!this.detail || this.detail.id !== topicId) {
+      return; // 请求期间换帖/离开：丢弃
+    }
+    this.applyEditedPost(result.data[0]);
+    Log.i(`${LOG_TAG} realtime revised postId=${postId}`);
+    // 改的正是当前看得见的那一楼时给一次轻提示；屏外修改静默(下次滚到自然是最新的)。
+    const index: number = posts.indexOf(existing);
+    if (index >= 0 && index + 1 >= this.currentStartListIndex && index + 1 <= this.currentEndListIndex) {
+      this.showComposerToast('楼层已更新', 1500);
+    }
+  }
+
+  // 楼层被删(含永久删 destroyed)：同样只处理已在列表里的楼；移除并修正计数。
+  private applyDeletedFromBus(postId: number): void {
+    if (PostStreamPager.findById(this.dataSource.getAll(), postId) === undefined) {
+      return;
+    }
+    this.dataSource.removePost(postId);
+    this.postCount = this.dataSource.totalCount();
+    Log.i(`${LOG_TAG} realtime deleted postId=${postId}`);
+  }
+
+  // 整帖刷新提示被点：清提示并整页重载(复用既有 loadTopicDetail；
+  // 绝不走按楼号跳转的 openIncomingPosts —— 整帖刷新事件没有楼号)。
+  private reloadTopicFromBus(): void {
+    this.topicReloadPending = false;
+    this.loadTopicDetail();
   }
 
   // 去抖到点：批量拉收集到的新楼，追加到列表尾；在底部则滚动揭示，否则累计提示条。
@@ -1697,6 +1774,7 @@ export struct TopicDetailPage {
   private clearIncomingBanner(): void {
     this.incomingNewPostCount = 0;
     this.incomingFirstNewPostNumber = 0;
+    this.topicReloadPending = false;
   }
 
   // 点"N 条新回复"提示条：跳到首条新楼(已在列表中，走 jumpToPostNumber 的已加载滚动+落地高亮分支)。
