@@ -115,5 +115,11 @@ export default function messageBusScriptTemplateTest() {
       // 动态频道游标随 poll 推进同步进持久集合，循环重启后从最新位置续订。
       expect(script).assertContain('window.__arkdoMessageBusChannels[message.channel] = message.message_id');
     });
+    it('reportsLongPollClientIdForPresenceUplink', 0, () => {
+      const script: string = buildMessageBusScript();
+      expect(script).assertContain('window.__arkdoMessageBusClientId = state.clientId');
+      expect(script).assertContain("' clientId=' + String(state.clientId)");
+    });
+
   });
 }

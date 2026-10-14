@@ -221,7 +221,7 @@ export struct TopicDetailPage {
   @State private atListEnd: boolean = false;
   // 评论输入浮层是否展开(点右下角悬浮回复按钮打开)。窗口常驻全屏布局(ImmersiveWindow),
   // 浮层遮罩经 expandSafeArea 天然盖住状态栏,不再需要临时切窗口模式与背景补偿。
-  @State private showComposer: boolean = false;
+  @State @Watch('onComposerVisibilityChanged') private showComposer: boolean = false;
   // 定向回复目标楼号:0 = 回复整个话题(顶层);>0 = 回复该楼(带 reply_to_post_number)。
   @State private replyTargetPostNumber: number = 0;
   // 草稿续写:本次进入是否已自动弹过回复框(防重载再弹)。
@@ -1723,6 +1723,13 @@ export struct TopicDetailPage {
     this.dataSource.removePost(postId);
     this.postCount = this.dataSource.totalCount();
     Log.i(`${LOG_TAG} realtime deleted postId=${postId}`);
+  }
+
+  // 输入浮层开/关 = 我进入/离开回复编辑态 → 上报「我在回复」(块 1,presence 上行)。
+  // 用 @Watch 而不是在 4 个 openComposer* / 3 个关闭点各写一遍:那些点是散落的,漏一个就会
+  // 一直亮着"正在回复"。开关关掉时 presence 已 stop,这里自然不再上报。
+  private onComposerVisibilityChanged(): void {
+    this.presence.setSelfPresent(this.showComposer);
   }
 
   // 整帖刷新提示被点：清提示并整页重载(复用既有 loadTopicDetail；

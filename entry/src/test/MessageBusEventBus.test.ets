@@ -4,6 +4,7 @@ import {
   extractMessageBusCreatedAt,
   extractMessageBusTopicId,
   extractTopicPostChange,
+  extractMessageBusClientId,
   MessageBusEvent,
   MessageBusEventBus,
   parseMessageBusEvent
@@ -196,6 +197,22 @@ export default function messageBusEventBusTest() {
       const unknownAction: MessageBusEvent | undefined = parseMessageBusEvent(
         '{"type":"message","channel":"/topic/1","messageId":16,"data":{"id":1,"type":"rebaked"}}');
       expect(extractTopicPostChange(unknownAction)).assertUndefined();
+    });
+
+    // presence 上行要用与长轮询相同的 clientId，从 config-ready 的自由文本里回捞。
+    it('extractsClientIdFromConfigReady', 0, () => {
+      const event: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"status","stage":"config-ready","message":"https://linux.do source=bus clientId=abc-123 userId=7 channels=/latest"}');
+      expect(extractMessageBusClientId(event)).assertEqual('abc-123');
+    });
+
+    it('ignoresClientIdOnOtherEventsOrMissingMarker', 0, () => {
+      const notConfigReady: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"status","stage":"started","message":"clientId=abc-123"}');
+      expect(extractMessageBusClientId(notConfigReady)).assertUndefined();
+      const noMarker: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"status","stage":"config-ready","message":"channels=/latest"}');
+      expect(extractMessageBusClientId(noMarker)).assertUndefined();
     });
 
   });

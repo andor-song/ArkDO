@@ -166,6 +166,28 @@ export function extractMessageBusCreatedAt(event: MessageBusEvent | undefined): 
 
 // 从 /topic/<id> 频道事件里取"新建帖子"的 post id：仅 type==='created' 且 data.id 为正整数时返回。
 // 其它动作类型（revised/deleted/...）与无 type 的整帖刷新消息一律返回 undefined（P2 MVP 只做新楼）。
+// 从 config-ready 状态事件里取长轮询的 clientId。
+// presence 上行(/presence/update)必须与长轮询用**同一个** client_id,否则服务端认不出是同一客户端;
+// clientId 是脚本内生成的,只出现在这条状态事件的自由文本里,所以从这里回捞。
+export function extractMessageBusClientId(event: MessageBusEvent | undefined): string | undefined {
+  if (!event || event.type !== 'status' || event.stage !== 'config-ready') {
+    return undefined;
+  }
+  const message: string | undefined = event.message;
+  if (message === undefined) {
+    return undefined;
+  }
+  const marker: string = 'clientId=';
+  const at: number = message.indexOf(marker);
+  if (at < 0) {
+    return undefined;
+  }
+  const rest: string = message.substring(at + marker.length);
+  const space: number = rest.indexOf(' ');
+  const value: string = space >= 0 ? rest.substring(0, space) : rest;
+  return value.length > 0 ? value : undefined;
+}
+
 export type TopicPostChangeKind = 'created' | 'revised' | 'deleted' | 'topic-reload';
 
 export interface TopicPostChange {

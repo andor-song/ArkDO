@@ -11,7 +11,7 @@ import { ChallengeState, HttpHeaderEntry, JsonNetworkClient, JsonRequestOptions,
 import { buildMessageBusScript } from './webscript/MessageBusScriptTemplate';
 import { createFetchScript, createFormScript, createHeaderedFetchScript, createImageFetchScript, createPostJsonScript,
   createPutScript, createUploadScript, REQUEST_ID_TOKEN } from './ArkWebFetchScriptFactory';
-import { MessageBusEventBus } from '../message/MessageBusEventBus';
+import { extractMessageBusClientId, MessageBusEventBus, parseMessageBusEvent } from '../message/MessageBusEventBus';
 
 const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 120000;
 // 下载意图在队列里的最长存活时间。startDownload 成功返回不等于下载真的起得来(被 CF 拦、
@@ -121,6 +121,8 @@ class WebviewJsonExecutor implements ArkWebJsonExecutor, ArkWebResultReceiver {
   private controller: webview.WebviewController;
   private callbackProxy: ArkWebCallbackProxy = new ArkWebCallbackProxy(this);
   private pendingRequests: Map<string, PendingJsonRequest> = new Map();
+  // 长轮询客户端 id(由注入脚本生成、经 config-ready 上报;值本身不敏感,不进日志全文)。
+  private messageBusClientId: string = '';
   private requestSequence: number = 0;
 
   constructor(controller: webview.WebviewController) {
@@ -167,7 +169,21 @@ class WebviewJsonExecutor implements ArkWebJsonExecutor, ArkWebResultReceiver {
   }
 
   onBusEvent(payload: string): void {
+    // config-ready 里带了长轮询的 clientId:presence 上行必须用它(同一个客户端 id),
+    // 所以在这里顺手回捞一次。校验先做廉价字符串判定,避免每条消息都解析 JSON。
+    if (payload.indexOf('config-ready') >= 0) {
+      const clientId: string | undefined = extractMessageBusClientId(parseMessageBusEvent(payload));
+      if (clientId !== undefined && clientId !== this.messageBusClientId) {
+        this.messageBusClientId = clientId;
+        logNetwork(`message bus clientId captured length=${clientId.length}`);
+      }
+    }
     MessageBusEventBus.publishPayload(payload);
+  }
+
+  // 长轮询客户端的 id(未就绪返回空串)。presence 上行用它。
+  getMessageBusClientId(): string {
+    return this.messageBusClientId;
   }
 
   private rejectRequest(requestId: string, message: string): void {
@@ -627,6 +643,12 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
         resolve();
       });
     });
+  }
+
+  // 长轮询客户端 id(clientId 由注入脚本生成、经 config-ready 上报,执行器回捞)。
+  // 未就绪返回空串:presence 上行在没有它时不发(见 TopicPresenceService.setSelfPresent)。
+  getMessageBusClientId(): string {
+    return this.webviewExecutor !== undefined ? this.webviewExecutor.getMessageBusClientId() : '';
   }
 
   createJavaScriptProxy(controller: webview.WebviewController): JavaScriptProxy {

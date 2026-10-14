@@ -3,6 +3,7 @@ import challengeDetectorTest from './ChallengeDetector.test';
 import cookieProbeTest from './CookieProbe.test';
 import sessionVerdictTest from './SessionVerdict.test';
 import identitySnapshotTest from './IdentitySnapshot.test';
+import presenceUplinkThrottleTest from './PresenceUplinkThrottle.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
 import topicServiceTest from './TopicService.test';
 import authServiceTest from './AuthService.test';
@@ -105,4 +106,5 @@ export default function testsuite() {
   cookieProbeTest();
   sessionVerdictTest();
   identitySnapshotTest();
+  presenceUplinkThrottleTest();
 }

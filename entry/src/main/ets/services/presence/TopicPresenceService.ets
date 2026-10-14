@@ -3,6 +3,7 @@ import { User } from '../../models/User';
 import { ArkWebNetworkBridge } from '../network/ArkWebNetworkBridge';
 import { NetworkResult } from '../network/NetworkTypes';
 import { MessageBusData, MessageBusEvent, MessageBusPresenceUser } from '../message/MessageBusEventBus';
+import { PresenceUplinkThrottle } from './PresenceUplinkThrottle';
 
 const LOG_TAG: string = '[ArkDO][Presence]';
 // 展示上限：对齐 Discourse presence_max_users_shown 默认值 5。
@@ -19,7 +20,8 @@ interface PresenceGetState {
 //   1) GET /presence/get 取初始在场用户 + last_message_id；
 //   2) 经长轮询循环订阅 MessageBus 频道 /presence/discourse-presence/reply/<id>，收 entering/leaving 增量；
 //   3) 本地维护在场列表，滤掉自己、截到 MAX_SHOWN，回调给页面驱动 ReplyingPresenceBar。
-// 不做上行(不上报自己在回复)——那是块 1，另议。
+// 上行(块 1，已实现)：setSelfPresent() 在用户进/出回复编辑态时向 POST /presence/update 上报
+// present_channels[] / leave_channels[]，让**别人**的「正在回复」里能看到我。
 export class TopicPresenceService {
   private bridgeProvider: () => ArkWebNetworkBridge;
   private currentUserId: () => number;
@@ -33,6 +35,9 @@ export class TopicPresenceService {
   private users: User[] = [];
   // 序号：作废过期的 GET 响应(快速换帖/重同步时)。
   private syncSeq: number = 0;
+  // 上行节流(上游 /presence/update 限流 20 次/10 秒)与当前是否已上报"我在回复"。
+  private uplinkThrottle: PresenceUplinkThrottle = new PresenceUplinkThrottle(3000);
+  private selfPresent: boolean = false;
 
   constructor(bridgeProvider: () => ArkWebNetworkBridge, currentUserId: () => number,
     onChange: (users: User[]) => void) {
@@ -59,6 +64,8 @@ export class TopicPresenceService {
     if (!this.started) {
       return;
     }
+    // 离开前先撤回"我在回复":否则页面退出/关掉开关后,别人那边还会一直看到我在打字。
+    this.clearSelfPresent();
     this.bridgeProvider().unsubscribeChannel(this.busChannel);
     this.started = false;
     this.topicId = 0;
@@ -112,6 +119,52 @@ export class TopicPresenceService {
     if (changed) {
       this.emit();
     }
+  }
+
+  /**
+   * 上报「我在回复」(块 1)。present=true 进入编辑态、false 离开。
+   *
+   * 上游契约(已核 presence_controller.rb#update)：POST /presence/update，需登录 + CSRF，
+   * 参数 client_id + present_channels[] / leave_channels[]；**client_id 必须与长轮询同一个**
+   * (所以从 bridge 取,而不是自己造一个)，限流 20 次/10 秒 → 这里最少间隔 3 秒。
+   * 失败一律静默:这只是"别人能不能看到我在打字",不该影响任何主流程。
+   */
+  setSelfPresent(present: boolean): void {
+    if (!this.started || this.presenceChannel.length === 0) {
+      this.selfPresent = false;
+      return;
+    }
+    if (this.selfPresent === present) {
+      return;
+    }
+    const clientId: string = this.bridgeProvider().getMessageBusClientId();
+    if (clientId.length === 0) {
+      return; // 长轮询还没起来:没有可用的 client_id,等下一次状态翻转
+    }
+    const now: number = Date.now();
+    if (!this.uplinkThrottle.shouldSend(now)) {
+      return;
+    }
+    this.uplinkThrottle.markSent(now);
+    this.selfPresent = present;
+    const channel: string = encodeURIComponent(this.presenceChannel);
+    const body: string = present
+      ? `client_id=${encodeURIComponent(clientId)}&present_channels%5B%5D=${channel}`
+      : `client_id=${encodeURIComponent(clientId)}&leave_channels%5B%5D=${channel}`;
+    this.bridgeProvider().postForm('/presence/update', body).then((response: NetworkResult<string>) => {
+      Log.i(`${LOG_TAG} presence uplink present=${present} status=${response.statusCode}`);
+    }).catch(() => {
+      Log.i(`${LOG_TAG} presence uplink failed present=${present}`);
+    });
+  }
+
+  // 撤回「我在回复」(离开帖子/退出编辑态/关掉开关时)。
+  private clearSelfPresent(): void {
+    if (!this.selfPresent) {
+      return;
+    }
+    this.setSelfPresent(false);
+    this.uplinkThrottle.reset();
   }
 
   // 取初始态并订阅增量。GET 回来后用 last_message_id 作订阅起点，闭合 GET 与订阅之间的窗口。

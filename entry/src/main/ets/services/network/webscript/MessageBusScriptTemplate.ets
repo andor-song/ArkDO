@@ -182,6 +182,8 @@ export function buildMessageBusScript(): string {
           state.channels[name] = extraChannels[name];
         });
         window.__arkdoMessageBusActiveState = state;
+        // 暴露长轮询的 clientId:presence 上行(/presence/update)必须用它,否则服务端认不出同一客户端。
+        window.__arkdoMessageBusClientId = state.clientId;
         emit({
           type: 'status',
           stage: 'config-ready',
@@ -190,6 +192,7 @@ export function buildMessageBusScript(): string {
             ' userId=' + String(pollConfig.currentUserId) +
             // 本次循环真正要 poll 的频道全集(常驻 + 动态并入的)。查「某频道收不到消息」时先看这行:
             // 它没在里面 = 客户端压根没订;在里面却没有对应的 cursor-ready = 服务端不认这个频道。
+            ' clientId=' + String(state.clientId) +
             ' channels=' + Object.keys(state.channels).join(',')
         });
         const backoff = async () => {
