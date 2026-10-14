@@ -1,8 +1,11 @@
 import { SidebarTag, User } from '../../models/User';
 import { NameCollator } from '../../common/utils/NameCollator';
-import { ChallengeState, JsonNetworkClient, NetworkResult } from '../network/NetworkTypes';
+import { AppConstants } from '../../common/constants/AppConstants';
+import { ChallengeState, JsonNetworkClient, NetworkErrorCode, NetworkResult } from '../network/NetworkTypes';
 import { WebSessionManager } from '../web/WebSessionManager';
 import { forwardFailure, unexpectedResponse } from '../network/NetworkResults';
+import { CookiePresence } from '../web/CookieProbe';
+import { SessionVerdict, judgeSession } from './SessionVerdict';
 
 const CURRENT_SESSION_PATH: string = '/session/current.json';
 // 未登录时 /session/current.json 的状态码。Discourse 对匿名请求回 404 + 空 body,
@@ -45,43 +48,54 @@ interface DiscourseSidebarTag {
   pm_only?: boolean;
 }
 
+// 会话探测结果：把「这次响应说明什么」原样交给调用方，由上层决定迟滞策略
+// （两振在 RootTabPage，见 SessionVerdict.shouldApplyAnonymous）。
+export interface SessionProbe {
+  verdict: SessionVerdict;
+  user?: User;
+}
+
 export class AuthService {
   private bridge: JsonNetworkClient;
+  private cookiePresence: (name: string) => CookiePresence;
 
-  constructor(bridge: JsonNetworkClient) {
+  constructor(bridge: JsonNetworkClient, cookiePresence?: (name: string) => CookiePresence) {
     this.bridge = bridge;
+    this.cookiePresence = cookiePresence !== undefined
+      ? cookiePresence
+      : (name: string): CookiePresence => WebSessionManager.getCookiePresenceForUrl(AppConstants.BASE_URL, name);
   }
 
-  async getCurrentUser(): Promise<NetworkResult<User | undefined>> {
+  // 会话探测：把 /session/current.json 的一次响应翻译成四态，本身不做迟滞决策
+  // （「要不要据此清登录态」由上层按 SessionVerdict.shouldApplyAnonymous 记账）。
+  //
+  // 旧实现在这里内联判断「404 且 hasCookie('_t') 为假 → 确认登出」，而 hasCookie 在
+  // fetchCookieSync 抛异常时返回 false：一次 Cookie API 抖动就能把用户掀下线。
+  // 现在探测异常 = UNKNOWN = 不下任何结论。
+  async probeSession(): Promise<NetworkResult<SessionProbe>> {
     const response: NetworkResult<string> = await this.bridge.getJson(CURRENT_SESSION_PATH);
+    const cookiePresence: CookiePresence = this.cookiePresence('_t');
     if (!response.success) {
-      // 匿名会话在 Discourse 上是 404 + 空 body(SessionController#current 的 render body: nil,
-      // status: 404),不是 200 + current_user:null。这是「确认未登录」的正向信号,必须与
-      // 「请求没成功」区分开:上层(RootTabPage/NotificationService)对失败一律保留上一次登录态,
-      // 若把这条 404 当失败上抛,登出后登录态永远清不掉,只能杀进程重启。
-      // 同时要求 challengeState=NONE:CF 若用 404 壳子返回挑战页,仍按失败走过盾链路,不误判成登出。
-      if (response.statusCode === CURRENT_SESSION_ANONYMOUS_STATUS && response.challengeState === ChallengeState.NONE) {
-        // `_t` 还在就不算确认登出。Discourse 的 `_t` 每约 10 分钟轮换一次,宿主长时间不导航时
-        // cookie 仓里的 `_t` 可能已被服务端作废,但进程的磁盘快照/内存里还留着旧值——此时服务端
-        // 对 /session/current.json 回 404 不代表登录真没了,只是 `_t` 陈旧。若把 404 直接当「确认
-        // 未登录」上抛,通知轮询每约 5 分钟的一次 404 就会把登录态掀掉(用户感知 = 用着用着被登出、
-        // 老要重新登录),而且没有任何迟滞/重试。只有 `_t` 确实不在了,404 才是确认登出;`_t` 还在
-        // 一律按失败处理,上层保留上一次登录态,宿主下一次导航/重载拿到新 `_t` 后自然恢复。
-        if (WebSessionManager.hasCookie('_t')) {
-          return forwardFailure<User | undefined>(response);
-        }
+      const verdict: SessionVerdict = judgeSession({
+        transportOk: false,
+        statusCode: response.statusCode,
+        challengeState: response.challengeState,
+        cookiePresence: cookiePresence,
+        userPayloadPresent: false
+      });
+      if (verdict === 'anonymous-confirmed' || verdict === 'anonymous-unconfirmed') {
         return {
           success: true,
           statusCode: response.statusCode,
           challengeState: response.challengeState,
-          data: undefined
+          data: { verdict: verdict }
         };
       }
-      return forwardFailure<User | undefined>(response);
+      return forwardFailure<SessionProbe>(response);
     }
 
     if (response.data === undefined) {
-      return unexpectedResponse<User | undefined>(response.statusCode, response.challengeState, '站点当前会话响应为空。');
+      return unexpectedResponse<SessionProbe>(response.statusCode, response.challengeState, '站点当前会话响应为空。');
     }
 
     try {
@@ -92,39 +106,77 @@ export class AuthService {
           success: true,
           statusCode: response.statusCode,
           challengeState: response.challengeState,
-          data: undefined
+          data: { verdict: 'anonymous-confirmed' }
         };
       }
-
       if (typeof sourceUser.id !== 'number' || typeof sourceUser.username !== 'string') {
-        return unexpectedResponse<User | undefined>(response.statusCode, response.challengeState, '站点当前用户响应字段无效。');
+        return unexpectedResponse<SessionProbe>(response.statusCode, response.challengeState, '站点当前用户响应字段无效。');
       }
-
       return {
         success: true,
         statusCode: response.statusCode,
         challengeState: response.challengeState,
         data: {
-          id: sourceUser.id,
-          username: sourceUser.username,
-          displayName: sourceUser.name,
-          avatarTemplate: sourceUser.avatar_template,
-          animatedAvatar: sourceUser.animated_avatar ? sourceUser.animated_avatar : undefined,
-          unreadNotifications: typeof sourceUser.all_unread_notifications_count === 'number'
-            ? sourceUser.all_unread_notifications_count
-            : (typeof sourceUser.unread_notifications === 'number' ? sourceUser.unread_notifications : 0),
-          unreadHighPriorityNotifications: typeof sourceUser.unread_high_priority_notifications === 'number' ? sourceUser.unread_high_priority_notifications : 0,
-          draftCount: typeof sourceUser.draft_count === 'number' ? sourceUser.draft_count : 0,
-          sidebarTags: this.mapSidebarTags(sourceUser.sidebar_tags),
-          sidebarCategoryIds: this.mapSidebarCategoryIds(sourceUser.sidebar_category_ids),
-          trustLevel: typeof sourceUser.trust_level === 'number' ? sourceUser.trust_level : 0,
-          admin: sourceUser.admin === true,
-          moderator: sourceUser.moderator === true
+          verdict: 'logged-in',
+          user: this.mapCurrentUser(sourceUser)
         }
       };
     } catch (error) {
-      return unexpectedResponse<User | undefined>(response.statusCode, response.challengeState, '站点当前会话响应不是有效 JSON。');
+      return unexpectedResponse<SessionProbe>(response.statusCode, response.challengeState, '站点当前会话响应不是有效 JSON。');
     }
+  }
+
+  // 兼容既有调用方(NotificationService 等)。只把**服务端正面证据**翻译成登出(data=undefined)：
+  //   · logged-in            → success + user
+  //   · anonymous-confirmed  → success + data=undefined(上层据此清态)
+  //   · anonymous-unconfirmed→ 失败(上层保留上一次登录态,等第二振)
+  //   · unknown              → 失败(同上)
+  async getCurrentUser(): Promise<NetworkResult<User | undefined>> {
+    const probe: NetworkResult<SessionProbe> = await this.probeSession();
+    if (!probe.success) {
+      return forwardFailure<User | undefined>(probe);
+    }
+    const data: SessionProbe | undefined = probe.data;
+    if (data === undefined) {
+      return unexpectedResponse<User | undefined>(probe.statusCode, probe.challengeState, '站点当前会话探测响应为空。');
+    }
+    if (data.verdict === 'logged-in') {
+      return {
+        success: true,
+        statusCode: probe.statusCode,
+        challengeState: probe.challengeState,
+        data: data.user
+      };
+    }
+    if (data.verdict === 'anonymous-confirmed') {
+      return {
+        success: true,
+        statusCode: probe.statusCode,
+        challengeState: probe.challengeState,
+        data: undefined
+      };
+    }
+    return unexpectedResponse<User | undefined>(probe.statusCode, probe.challengeState, '会话状态不明确(保留上一次登录态)。');
+  }
+
+  private mapCurrentUser(sourceUser: DiscourseCurrentUser): User {
+    return {
+      id: sourceUser.id as number,
+      username: sourceUser.username as string,
+      displayName: sourceUser.name,
+      avatarTemplate: sourceUser.avatar_template,
+      animatedAvatar: sourceUser.animated_avatar ? sourceUser.animated_avatar : undefined,
+      unreadNotifications: typeof sourceUser.all_unread_notifications_count === 'number'
+        ? sourceUser.all_unread_notifications_count
+        : (typeof sourceUser.unread_notifications === 'number' ? sourceUser.unread_notifications : 0),
+      unreadHighPriorityNotifications: typeof sourceUser.unread_high_priority_notifications === 'number' ? sourceUser.unread_high_priority_notifications : 0,
+      draftCount: typeof sourceUser.draft_count === 'number' ? sourceUser.draft_count : 0,
+      sidebarTags: this.mapSidebarTags(sourceUser.sidebar_tags),
+      sidebarCategoryIds: this.mapSidebarCategoryIds(sourceUser.sidebar_category_ids),
+      trustLevel: typeof sourceUser.trust_level === 'number' ? sourceUser.trust_level : 0,
+      admin: sourceUser.admin === true,
+      moderator: sourceUser.moderator === true
+    };
   }
 
   // 退出登录:DELETE /session/{username}(CSRF/Cookie 由 bridge 同源自动处理)。

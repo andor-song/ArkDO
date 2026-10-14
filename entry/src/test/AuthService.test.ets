@@ -2,6 +2,8 @@ import { describe, it, expect } from '@ohos/hypium';
 import { User } from '../main/ets/models/User';
 import { AuthService } from '../main/ets/services/auth/AuthService';
 import { ChallengeState, JsonNetworkClient, NetworkErrorCode, NetworkResult } from '../main/ets/services/network/NetworkTypes';
+import { CookiePresence } from '../main/ets/services/web/CookieProbe';
+import { SessionProbe } from '../main/ets/services/auth/AuthService';
 
 class FakeBridge implements JsonNetworkClient {
   private result: NetworkResult<string>;
@@ -70,8 +72,9 @@ export default function authServiceTest() {
     });
 
     // 匿名会话的真实响应:Discourse 回 404 + 空 body(SessionController#current 的
-    // render body: nil, status: 404),桥层据此判 success=false。这是「确认未登录」,
-    // 必须被翻译成 success=true + data=undefined,否则上层按「检查失败」保留旧登录态,登出清不掉。
+    // render body: nil, status: 404),桥层据此判 success=false。
+    // 「确认登出」需要**服务端正面证据 + cookie 明确不在**:这里显式注入 ABSENT。
+    // (探测不确定/失败时不再判登出——见 SessionVerdict 与 probeKeepsLogin* 用例。)
     it('returnsUndefinedWhenCurrentSessionIsAnonymous', 0, async () => {
       const bridge: FakeBridge = new FakeBridge({
         success: false,
@@ -83,7 +86,7 @@ export default function authServiceTest() {
           requiresChallenge: false
         }
       });
-      const service: AuthService = new AuthService(bridge);
+      const service: AuthService = new AuthService(bridge, () => CookiePresence.ABSENT);
 
       const result: NetworkResult<User | undefined> = await service.getCurrentUser();
 
@@ -168,4 +171,94 @@ export default function authServiceTest() {
       expect(result.error?.code).assertEqual(NetworkErrorCode.UNEXPECTED_RESPONSE);
     });
   });
+    // ---- probeSession：cookie 三态 + 四态判定 ----
+
+    it('probeReportsConfirmedAnonymousWhen404AndCookieAbsent', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge({
+        success: false,
+        statusCode: 404,
+        challengeState: ChallengeState.NONE,
+        error: { code: NetworkErrorCode.NETWORK_FAILURE, message: 'HTTP 404', requiresChallenge: false }
+      });
+      const service: AuthService = new AuthService(bridge, () => CookiePresence.ABSENT);
+
+      const result: NetworkResult<SessionProbe> = await service.probeSession();
+
+      expect(result.success).assertTrue();
+      expect(result.data?.verdict).assertEqual('anonymous-confirmed');
+    });
+
+    it('probeKeepsLoginWhen404ButCookieProbeUnknown', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge({
+        success: false,
+        statusCode: 404,
+        challengeState: ChallengeState.NONE,
+        error: { code: NetworkErrorCode.NETWORK_FAILURE, message: 'HTTP 404', requiresChallenge: false }
+      });
+      const service: AuthService = new AuthService(bridge, () => CookiePresence.UNKNOWN);
+
+      const result: NetworkResult<SessionProbe> = await service.probeSession();
+
+      expect(result.success).assertTrue();
+      expect(result.data?.verdict).assertEqual('anonymous-unconfirmed');
+    });
+
+    it('probeKeepsLoginWhen404ButCookieStillPresent', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge({
+        success: false,
+        statusCode: 404,
+        challengeState: ChallengeState.NONE,
+        error: { code: NetworkErrorCode.NETWORK_FAILURE, message: 'HTTP 404', requiresChallenge: false }
+      });
+      const service: AuthService = new AuthService(bridge, () => CookiePresence.PRESENT);
+
+      const result: NetworkResult<SessionProbe> = await service.probeSession();
+
+      expect(result.success).assertFalse();
+      expect(result.statusCode).assertEqual(404);
+    });
+
+    it('probeReportsLoggedInWhenUserPayloadPresent', 0, async () => {
+      const payload: string = '{"current_user":{"id":7,"username":"linuxdo_user"}}';
+      const bridge: FakeBridge = new FakeBridge({
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: payload
+      });
+      const service: AuthService = new AuthService(bridge, () => CookiePresence.PRESENT);
+
+      const result: NetworkResult<SessionProbe> = await service.probeSession();
+
+      expect(result.success).assertTrue();
+      expect(result.data?.verdict).assertEqual('logged-in');
+      expect(result.data?.user?.username).assertEqual('linuxdo_user');
+    });
+
+    it('probeTreatsChallengeAsFailure', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge({
+        success: false,
+        statusCode: 404,
+        challengeState: ChallengeState.REQUIRED,
+        error: { code: NetworkErrorCode.CHALLENGE_REQUIRED, message: 'CF', requiresChallenge: true }
+      });
+      const service: AuthService = new AuthService(bridge, () => CookiePresence.ABSENT);
+
+      const result: NetworkResult<SessionProbe> = await service.probeSession();
+
+      expect(result.success).assertFalse();
+      expect(result.challengeState).assertEqual(ChallengeState.REQUIRED);
+    });
+
+    it('getCurrentUserNeverReportsUnconfirmedAnonymousAsLoggedOut', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge({
+        success: false,
+        statusCode: 404,
+        challengeState: ChallengeState.NONE,
+        error: { code: NetworkErrorCode.NETWORK_FAILURE, message: 'HTTP 404', requiresChallenge: false }
+      });
+      const service: AuthService = new AuthService(bridge, () => CookiePresence.UNKNOWN);
+
+      const result: NetworkResult<User | undefined> = await service.getCurrentUser();
+
+      expect(result.success).assertFalse();
+    });
+
 }

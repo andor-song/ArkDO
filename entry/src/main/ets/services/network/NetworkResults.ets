@@ -10,7 +10,7 @@ import { ChallengeState, NetworkErrorCode, NetworkResult } from './NetworkTypes'
 
 // 把下层(bridge)的失败原样上抛,只换泛型形参。
 // 用于「请求本身就没成功」——状态码、挑战态、错误对象全部沿用下层判定,不做二次解释。
-export function forwardFailure<T>(response: NetworkResult<string>): NetworkResult<T> {
+export function forwardFailure<T, S = string>(response: NetworkResult<S>): NetworkResult<T> {
   return {
     success: false,
     statusCode: response.statusCode,
