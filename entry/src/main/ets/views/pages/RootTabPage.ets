@@ -2,7 +2,7 @@ import { Log } from '../../services/logging/Log';
 import { AppConstants, LinuxDoConstants } from '../../common/constants/AppConstants';
 import { APP_IS_WIDE_STORAGE_KEY, APP_SPLIT_NAV_BAR_WIDTH_STORAGE_KEY, BreakpointManager,
   SPLIT_NAV_BAR_MAX_WIDTH } from '../../common/utils/BreakpointManager';
-import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildLabSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildReadingFontSizeSettingsRouteParam,
+import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildReadingFontSizeSettingsRouteParam,
   buildTopicListStyleSettingsRouteParam, buildLevelProgressRouteParam, buildNotificationsRouteParam, buildProfileEditRouteParam, buildProfileRouteParam, buildReadTopicsRouteParam, buildSettingsRouteParam, buildForumsRouteParam, buildSitesRouteParam, buildSolvedRouteParam, buildTopicDetailRouteParam, buildTopicDetailDraftRouteParam, buildTopicDetailEditDraftRouteParam, buildUserHistoryRouteParam, buildUserProfileRouteParam, buildWebRouteParam, isActivityRouteParam, isBadgesRouteParam, isBookmarksRouteParam, isDraftsRouteParam, DraftsRouteParam, isProfileEditRouteParam, isSolvedRouteParam, isTopicDetailRouteParam, isUserHistoryRouteParam, isUserProfileRouteParam, isWebRouteParam, LevelProgressRouteParam, ProfileEditRouteParam, SolvedRouteParam, TopicDetailRouteParam, UserHistoryRouteParam, UserProfileRouteParam, WebRouteParam, FollowListRouteParam, buildFollowListRouteParam, isFollowListRouteParam, MessagesRouteParam, buildMessagesRouteParam, isMessagesRouteParam, ChatRouteParam, buildChatRouteParam, isChatRouteParam } from '../../navigation/AppRoutes';
 import { LinkRouter, LinkTarget, LinkTargetKind } from '../../services/content/LinkRouter';
 import { DownloadService } from '../../services/content/DownloadService';
@@ -61,7 +61,6 @@ import { SettingsPage } from './SettingsPage';
 import { DohSettingsPage } from './DohSettingsPage';
 import { PushSettingsPage } from './PushSettingsPage';
 import { NetworkSettingsPage } from './NetworkSettingsPage';
-import { ExperimentalSettingsPage } from './ExperimentalSettingsPage';
 import { TopicListStyleSettingsPage } from './TopicListStyleSettingsPage';
 import { ReadingFontSizeSettingsPage } from './ReadingFontSizeSettingsPage';
 import { DiagnosticsSettingsPage } from './DiagnosticsSettingsPage';
@@ -928,9 +927,6 @@ export struct RootTabPage {
           onOpenNetwork: () => {
             this.navPathStack.pushPath(new NavPathInfo(AppRouteName.NETWORK_SETTINGS, buildNetworkSettingsRouteParam('settings')));
           },
-          onOpenExperimental: () => {
-            this.navPathStack.pushPath(new NavPathInfo(AppRouteName.LAB_SETTINGS, buildLabSettingsRouteParam('settings')));
-          },
           onOpenTopicListStyle: () => {
             this.navPathStack.pushPath(new NavPathInfo(AppRouteName.TOPIC_LIST_STYLE_SETTINGS,
               buildTopicListStyleSettingsRouteParam('settings')));
@@ -998,16 +994,6 @@ export struct RootTabPage {
       .onShown(() => {
         bumpTick(SETTINGS_DOH_TICK);
       })
-      .backgroundColor($r('app.color.page_bg'))
-    } else if (name === AppRouteName.LAB_SETTINGS) {
-      NavDestination() {
-        ExperimentalSettingsPage({
-          onBack: () => {
-            this.popNavigation();
-          }
-        })
-      }
-      .hideTitleBar(true)
       .backgroundColor($r('app.color.page_bg'))
     } else if (name === AppRouteName.TOPIC_LIST_STYLE_SETTINGS) {
       NavDestination() {

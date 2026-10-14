@@ -24,6 +24,13 @@ import {
 import { ACTIVE_FORUM_NAME_KEY } from '../../common/constants/StorageKeys';
 import { AppConstants } from '../../common/constants/AppConstants';
 import { SiteCapabilities } from '../../services/site/SiteCapabilities';
+import { RealtimeTopicsPrefs, REALTIME_TOPICS_ENABLED_STORAGE_KEY } from '../../services/realtime/RealtimeTopicsPrefs';
+import { RealtimePostsPrefs, REALTIME_POSTS_ENABLED_STORAGE_KEY } from '../../services/realtime/RealtimePostsPrefs';
+import { AnimatedAvatarPrefs, ANIMATED_AVATAR_ENABLED_STORAGE_KEY } from '../../services/avatar/AnimatedAvatarPrefs';
+import { BadgeFilterPrefs, BADGE_FILTER_ENABLED_STORAGE_KEY } from '../../services/home/BadgeFilterPrefs';
+import { LotteryTipPrefs, LOTTERY_TIP_ENABLED_STORAGE_KEY } from '../../services/topic/LotteryTipPrefs';
+import { HoldingHandManager } from '../../common/utils/HoldingHandManager';
+import { SMART_REACH_STATUS_STORAGE_KEY, SmartReachStatus } from '../../common/ui/SmartReachLayout';
 import { buildImmersiveTitleBarStyle } from '../../common/ui/ImmersiveTitleBarStyle';
 
 const LOG_TAG: string = '[ArkDO][Settings]';
@@ -33,7 +40,7 @@ const OFFICIAL_SITE_URL: string = 'https://arkdo.app';
 
 // 与个人中心同款鸿蒙设置页式卡片分组:灰底 + 无描边圆角卡片。
 //
-// 设置页:顶层只保留高频项(外观)+ 分类入口(通知 / 网络与连接 / 实验性功能 / 我的站点)+ 关于。
+// 设置页:顶层只保留高频项(外观)+ 分类入口(通知 / 网络与连接 / 我的站点)+ 关于。
 // 各分类的繁重配置收进独立子页,由个人中心右上角齿轮入口 push 进入。
 //
 // 原先这里还有一组「首页内容入口」,用来勾选并拖动排序抽屉里露出哪几个 feed。首页筛选改成
@@ -51,7 +58,6 @@ export struct SettingsPage {
   // 四个分类子页入口:本页不持有 navPathStack,push 均由 RootTabPage 注入。
   onOpenPush: () => void = () => {};
   onOpenNetwork: () => void = () => {};
-  onOpenExperimental: () => void = () => {};
   // 帖子列表样式子页(字号/字重/行高/行间距/头像)。与外观同组:都是纯观感设置。
   onOpenTopicListStyle: () => void = () => {};
   // 阅读字号子页(正文基准字号/行高)。与外观同组:都是纯观感设置。
@@ -66,6 +72,17 @@ export struct SettingsPage {
   @StorageProp(FAB_GLASS_ENABLED_STORAGE_KEY) private fabGlassEnabled: boolean = false;
   // 磨砂半径:滑块拖动时每帧回写 AppStorage(两处 FAB 跟手),松手才落盘。
   @StorageProp(FAB_GLASS_RADIUS_STORAGE_KEY) private fabGlassRadius: number = FAB_GLASS_RADIUS_DEFAULT;
+
+  // ---- 原「实验性功能」页并入的 6 个开关(2026-10-14:两个功能补完后实验室页整体撤销) ----
+  // 5 个布尔开关走 AppStorage 镜像(BooleanPref 在冷启动与 setEnabled 时都会镜像),页面即时跟随;
+  // 智感握姿没有 enabled 的镜像键(它的状态是能力判定的一部分),单独用 @State + 进页读取。
+  @StorageProp(REALTIME_TOPICS_ENABLED_STORAGE_KEY) private realtimeTopicsEnabled: boolean = false;
+  @StorageProp(REALTIME_POSTS_ENABLED_STORAGE_KEY) private realtimePostsEnabled: boolean = false;
+  @StorageProp(ANIMATED_AVATAR_ENABLED_STORAGE_KEY) private animatedAvatarEnabled: boolean = true;
+  @StorageProp(BADGE_FILTER_ENABLED_STORAGE_KEY) private badgeFilterEnabled: boolean = false;
+  @StorageProp(LOTTERY_TIP_ENABLED_STORAGE_KEY) private lotteryTipEnabled: boolean = true;
+  @StorageProp(SMART_REACH_STATUS_STORAGE_KEY) private smartReachStatus: SmartReachStatus = 'disabled';
+  @State private smartReachEnabled: boolean = false;
   // 当前论坛名:绑 AppStorage 镜像而非直接读 CurrentSite.displayName —— 后者是普通静态
   // getter,改名/切站后 ArkUI 不知道要重绘,副标题会一直停在旧值(要退回首页再进才更新)。
   @StorageProp(ACTIVE_FORUM_NAME_KEY) private activeForumName: string = '';
@@ -90,11 +107,224 @@ export struct SettingsPage {
 
   aboutToAppear(): void {
     this.readAppVersion();
+    this.smartReachEnabled = HoldingHandManager.isEnabled();
   }
 
   // 镜像尚未写入的那一帧兜底成 App 名,不留空副标题。
   private activeForumLabel(): string {
     return this.activeForumName.length > 0 ? this.activeForumName : AppConstants.APP_NAME;
+  }
+
+  // ==================== 原实验性功能页并入的 6 个开关 ====================
+
+  @Builder
+  private BadgeFilterCell() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.funnel'))
+        .fontSize(20)
+        .fontColor([$r('app.color.text_secondary')])
+      Column() {
+        Text('点分类/标签快速筛选')
+          .fontSize(15)
+          .fontColor($r('app.color.text_primary'))
+          .width('100%')
+        Text('点首页帖子上的分类或标签，立即按它筛选列表')
+          .fontSize(12)
+          .fontColor($r('app.color.text_faint'))
+          .width('100%')
+          .margin({ top: 2 })
+      }
+      .layoutWeight(1)
+      .margin({ left: 14 })
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.badgeFilterEnabled })
+        .selectedColor($r('app.color.ld_accent'))
+        .onChange((isOn: boolean) => {
+          this.badgeFilterEnabled = isOn;
+          BadgeFilterPrefs.setEnabled((this.getUIContext().getHostContext() as common.Context), isOn);
+        })
+    }
+    .width('100%')
+    .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 12, bottom: 12 })
+  }
+
+  @Builder
+  private RealtimeTopicsCell() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.dot_radiowaves_left_and_right'))
+        .fontSize(20)
+        .fontColor([$r('app.color.text_secondary')])
+      Column() {
+        Text('首页新话题提醒')
+          .fontSize(15)
+          .fontColor($r('app.color.text_primary'))
+          .width('100%')
+        Text('首页顶部提示有新话题，点一下插进列表')
+          .fontSize(12)
+          .fontColor($r('app.color.text_faint'))
+          .width('100%')
+          .margin({ top: 2 })
+      }
+      .layoutWeight(1)
+      .margin({ left: 14 })
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.realtimeTopicsEnabled })
+        .selectedColor($r('app.color.ld_accent'))
+        .onChange((isOn: boolean) => {
+          this.realtimeTopicsEnabled = isOn;
+          RealtimeTopicsPrefs.setEnabled((this.getUIContext().getHostContext() as common.Context), isOn);
+        })
+    }
+    .width('100%')
+    .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 12, bottom: 12 })
+  }
+
+  @Builder
+  private RealtimePostsCell() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.message'))
+        .fontSize(20)
+        .fontColor([$r('app.color.text_secondary')])
+      Column() {
+        Text('帖子内新回复提醒')
+          .fontSize(15)
+          .fontColor($r('app.color.text_primary'))
+          .width('100%')
+        Text('看帖时自动接收他人的新回复')
+          .fontSize(12)
+          .fontColor($r('app.color.text_faint'))
+          .width('100%')
+          .margin({ top: 2 })
+      }
+      .layoutWeight(1)
+      .margin({ left: 14 })
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.realtimePostsEnabled })
+        .selectedColor($r('app.color.ld_accent'))
+        .onChange((isOn: boolean) => {
+          this.realtimePostsEnabled = isOn;
+          RealtimePostsPrefs.setEnabled((this.getUIContext().getHostContext() as common.Context), isOn);
+        })
+    }
+    .width('100%')
+    .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 12, bottom: 12 })
+  }
+
+  @Builder
+  private AnimatedAvatarCell() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.person'))
+        .fontSize(20)
+        .fontColor([$r('app.color.text_secondary')])
+      Column() {
+        Text('动态头像')
+          .fontSize(15)
+          .fontColor($r('app.color.text_primary'))
+          .width('100%')
+        Text('播放动图头像与角标；关闭则只显示静止画面')
+          .fontSize(12)
+          .fontColor($r('app.color.text_faint'))
+          .width('100%')
+          .margin({ top: 2 })
+      }
+      .layoutWeight(1)
+      .margin({ left: 14 })
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.animatedAvatarEnabled })
+        .selectedColor($r('app.color.ld_accent'))
+        .onChange((isOn: boolean) => {
+          this.animatedAvatarEnabled = isOn;
+          AnimatedAvatarPrefs.setEnabled((this.getUIContext().getHostContext() as common.Context), isOn);
+        })
+    }
+    .width('100%')
+    .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 12, bottom: 12 })
+  }
+
+  @Builder
+  private SmartReachCell() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right'))
+        .fontSize(20)
+        .fontColor([$r('app.color.text_secondary')])
+      Column() {
+        Text('智感握姿')
+          .fontSize(15)
+          .fontColor($r('app.color.text_primary'))
+          .width('100%')
+        Text(this.smartReachSubtitle())
+          .fontSize(12)
+          .fontColor($r('app.color.text_faint'))
+          .width('100%')
+          .margin({ top: 2 })
+      }
+      .layoutWeight(1)
+      .margin({ left: 14 })
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.smartReachEnabled })
+        .selectedColor($r('app.color.ld_accent'))
+        .enabled(this.smartReachStatus !== 'unsupported')
+        .onChange((isOn: boolean) => {
+          if (this.smartReachStatus === 'unsupported') {
+            this.smartReachEnabled = false;
+            return;
+          }
+          this.smartReachEnabled = isOn;
+          HoldingHandManager.setEnabled((this.getUIContext().getHostContext() as common.Context), isOn);
+        })
+    }
+    .width('100%')
+    .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 12, bottom: 12 })
+    .opacity(this.smartReachStatus === 'unsupported' ? 0.5 : 1)
+  }
+
+  @Builder
+  private LotteryTipCell() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.exclamationmark_circle'))
+        .fontSize(20)
+        .fontColor([$r('app.color.text_secondary')])
+      Column() {
+        Text('抽奖帖提醒')
+          .fontSize(15)
+          .fontColor($r('app.color.text_primary'))
+          .width('100%')
+        Text('进入带「抽奖」标签的帖子时，提示论坛的抽奖回复规则')
+          .fontSize(12)
+          .fontColor($r('app.color.text_faint'))
+          .width('100%')
+          .margin({ top: 2 })
+      }
+      .layoutWeight(1)
+      .margin({ left: 14 })
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.lotteryTipEnabled })
+        .selectedColor($r('app.color.ld_accent'))
+        .onChange((isOn: boolean) => {
+          this.lotteryTipEnabled = isOn;
+          LotteryTipPrefs.setEnabled((this.getUIContext().getHostContext() as common.Context), isOn);
+        })
+    }
+    .width('100%')
+    .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 12, bottom: 12 })
+  }
+
+  // 智感握姿副标题据实描述:设备不支持时直说(否则用户开了没反应无从判断,
+  // 这也是它此前一直留在"实验性"里的原因)。
+  private smartReachSubtitle(): string {
+    if (this.smartReachStatus === 'unsupported') {
+      return '当前设备不支持单手识别，开关不可用';
+    }
+    if (this.smartReachEnabled) {
+      return '已开启：识别单手握持方向，把悬浮按钮移到顺手一侧';
+    }
+    return '识别单手握持方向，把悬浮按钮移到顺手一侧';
   }
 
   // 卡片分组容器:无描边,靠灰底衬托。
@@ -196,6 +426,8 @@ export struct SettingsPage {
           this.HairlineInset()
           this.FabGlassRadiusRow()
         }
+        this.HairlineInset()
+        this.AnimatedAvatarCell()
       }
       .cardStyle()
 
@@ -212,10 +444,6 @@ export struct SettingsPage {
           this.onOpenNetwork();
         })
         this.HairlineInset()
-        // 齿轮在设置页里等于没图标(整页都是"设置"),换成"施法中"更能表达尚在试验。
-        this.SettingCell($r('sys.symbol.wand_and_stars'), '实验性功能', '', () => {
-          this.onOpenExperimental();
-        })
         // 站点管理的「正门」。抽屉里那行「我的站点」只是快捷方式,而它自己可以被开关藏起来——
         // 唯一入口能把自己藏掉是设计缺陷,所以这里必须有一条不受那个开关影响的路。
         // 整组仅在 linux.do 下露出:这功能靠复用主站 OAuth 免登录进生态站点,换站后无从谈起。
@@ -225,6 +453,28 @@ export struct SettingsPage {
             this.onOpenSites();
           })
         }
+      }
+      .cardStyle()
+
+      // 卡片:通知与提醒(原实验性功能页的两条实时链路 + linux.do 的抽奖提醒)。
+      // 实时开关默认关:它们各开一条常驻长轮询,不是所有用户都需要,所以在主设置里显式给出口。
+      Column() {
+        this.RealtimeTopicsCell()
+        this.HairlineInset()
+        this.RealtimePostsCell()
+        // 抽奖提醒本体已按域名 gate,开关也一并隐藏——留个开了也没用的开关比没有更困惑。
+        if (SiteCapabilities.lotteryTopics) {
+          this.HairlineInset()
+          this.LotteryTipCell()
+        }
+      }
+      .cardStyle()
+
+      // 卡片:浏览与交互(点徽章快筛走的是"命中区取舍",智感握姿是设备能力开关)。
+      Column() {
+        this.BadgeFilterCell()
+        this.HairlineInset()
+        this.SmartReachCell()
       }
       .cardStyle()
 

@@ -3,10 +3,9 @@ export enum AppRouteName {
   PROFILE = 'profile',
   SETTINGS = 'settings',
   DOH_SETTINGS = 'dohSettings',
-  // 设置页拆出的分类子页:通知 / 网络与安全 / 实验性功能 / 诊断日志。
+  // 设置页拆出的分类子页:通知 / 网络与安全 / 诊断日志。
   PUSH_SETTINGS = 'pushSettings',
   NETWORK_SETTINGS = 'networkSettings',
-  LAB_SETTINGS = 'labSettings',
   DIAGNOSTICS_SETTINGS = 'diagnosticsSettings',
   // 帖子列表样式(字号/字重/行高/行间距/头像),入口在设置页「外观」组。
   TOPIC_LIST_STYLE_SETTINGS = 'topicListStyleSettings',
@@ -103,16 +102,6 @@ export interface NetworkSettingsRouteParam {
 }
 
 export function buildNetworkSettingsRouteParam(source: string): NetworkSettingsRouteParam {
-  return {
-    source: source
-  };
-}
-
-export interface LabSettingsRouteParam {
-  source: string;
-}
-
-export function buildLabSettingsRouteParam(source: string): LabSettingsRouteParam {
   return {
     source: source
   };

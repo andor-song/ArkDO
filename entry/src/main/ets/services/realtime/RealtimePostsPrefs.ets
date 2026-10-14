@@ -4,7 +4,7 @@ import { BooleanPref } from '../../common/prefs/AppSettingsStore';
 /** AppStorage 中「帖子内新回复提醒」开关的 key，供详情页通过 @StorageProp 响应式绑定。 */
 export const REALTIME_POSTS_ENABLED_STORAGE_KEY: string = 'realtimePostsEnabled';
 
-// 默认关：属实验性功能，需用户在实验性功能里主动开启。
+// 默认关：各开一条常驻长轮询，需用户在「设置 → 通知与提醒」里主动开启。
 const PREF: BooleanPref =
   new BooleanPref('[ArkDO][RealtimePosts]', 'realtime_posts_enabled', REALTIME_POSTS_ENABLED_STORAGE_KEY, false);
 

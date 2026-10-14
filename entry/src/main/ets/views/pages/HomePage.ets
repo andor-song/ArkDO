@@ -216,7 +216,7 @@ export struct HomePage {
   // 「首页新话题提醒」开关。关闭(默认)时忽略事件、隐藏提示；运行中翻转由 @Watch 中和残留态。
   @StorageProp(REALTIME_TOPICS_ENABLED_STORAGE_KEY) @Watch('onRealtimeTopicsEnabledChanged')
   private realtimeTopicsEnabled: boolean = false;
-  // 「点分类/标签快速筛选」开关(实验性功能页,默认关)。开着时帖子行上的徽章可点。
+  // 「点分类/标签快速筛选」开关(设置 → 浏览与交互,默认关)。开着时帖子行上的徽章可点。
   // 切站信号。面板的版块树、筛选条件里的版块/标签都是站点级数据,必须整批复位重取。
   @StorageProp(ACTIVE_FORUM_TICK) @Watch('onActiveForumChanged') private activeForumTick: number = 0;
   @StorageProp(BADGE_FILTER_ENABLED_STORAGE_KEY) private badgeFilterEnabled: boolean = false;

@@ -37,7 +37,7 @@ export struct UserAvatar {
   // 图片型 flair(gif/png,跨源 CDN)同头像走桥取 PixelMap;图标型 flair(FA 名)不用。
   // flair 角标只在稍大的头像上显示,避免 20px 的回复/boost 小头像被角标糊住。
   private readonly flairMinAvatarSize: number = 32;
-  // 「动态头像」开关(实验性功能,默认关)。关⇒头像与图片型 flair 一律取首帧渲染成静态;
+  // 「动态头像」开关(设置 → 外观,默认开)。关⇒头像与图片型 flair 一律取首帧渲染成静态;
   // 开⇒CDN 上的图交给原生 Image 直载,是动图就自动播放。运行中翻转由 @Watch 重取当前候选。
   @StorageProp(ANIMATED_AVATAR_ENABLED_STORAGE_KEY) @Watch('onAnimatedAvatarToggled')
   private animatedAvatarEnabled: boolean = true;
