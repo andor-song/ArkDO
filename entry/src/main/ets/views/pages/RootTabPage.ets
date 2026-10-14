@@ -108,6 +108,8 @@ const SESSION_WATCHDOG_JITTER_RATIO: number = 0.2;
 // 网络恢复触发宿主重载的冷却窗口:地铁出隧道等场景网络会短时间内反复抖动/多次上报,
 // 冷却避免每次抖动都重载一次宿主(重载较重)。只在宿主此前确实加载失败时才会触发。
 const NET_RECOVERY_RELOAD_COOLDOWN_MS: number = 15000;
+// 切网后的会话复查去抖:网络事件会在切换瞬间连发多次,等链路稳定再探,避免探到半通状态。
+const NET_SESSION_RECHECK_DEBOUNCE_MS: number = 3000;
 // ===== 首页左滑跟手拉出个人中心 =====
 // 松手判定阈值:滑过屏宽这个比例即补完,否则回弹。
 const SWIPE_COMMIT_RATIO: number = 0.4;
@@ -229,6 +231,8 @@ export struct RootTabPage {
   // 网络状态监听:冷启动即离线时,宿主首屏加载失败后无任何自动重连入口(自愈仅一次、下拉刷新在
   // 桥未就绪时提前返回)。监听网络恢复,失败态下重载一次宿主,把 MessageBus 与全站数据一起救回来。
   private netConnection?: connection.NetConnection = undefined;
+  // 切网后的会话复查去抖计时器(-1 = 未排)。与上面的重载冷却各管一条链路,互不干扰。
+  private netSessionRecheckTimer: number = -1;
   private handledSessionVersion: number = SessionEventBus.getCurrentVersion();
   private handledChallengeVersion: number = ChallengeEventBus.getCurrentVersion();
   private unsubscribeChallengeRequired?: () => void = undefined;
@@ -2072,6 +2076,12 @@ export struct RootTabPage {
   // 网络恢复:仅当宿主此前加载失败(冷启动即离线是唯一无自动重连入口的场景)才重载一次宿主,
   // 一并把 MessageBus 与全站数据救回来。冷却窗口内的重复上报忽略,避免网络抖动反复重载。
   private handleNetworkRecovered(source: string): void {
+    // 切网(含 Wi-Fi ⇄ 移动数据)是「掉登录」的高发时刻:cf_clearance 绑 IP、cookie 探测在切网窗口
+    // 最不稳。这里排一次**只升不降**的复查:可能把疑似丢失的登录态救回来,但绝不会把它清掉;
+    // 真正的降级只能走 checkCurrentUser(带两振)那条路。
+    this.scheduleNetworkSessionRecheck(source);
+    // 网络换了,允许一次性宿主重载自愈在本段里再次生效(否则切网后的僵死连接没人救)。
+    this.hasSelfHealedNetwork = false;
     if (!this.hostLoadFailed) {
       return;
     }
@@ -2304,6 +2314,54 @@ export struct RootTabPage {
     }
   }
 
+  // 切网后的延迟复查排程:记下站点代次,到点时若已切站则丢弃(别拿新站的桥查旧站的会话)。
+  private scheduleNetworkSessionRecheck(source: string): void {
+    if (this.netSessionRecheckTimer !== -1) {
+      clearTimeout(this.netSessionRecheckTimer);
+    }
+    const epoch: number = CurrentSite.epoch;
+    this.netSessionRecheckTimer = setTimeout(() => {
+      this.netSessionRecheckTimer = -1;
+      if (!CurrentSite.isCurrentEpoch(epoch) || !this.isArkWebReady) {
+        return;
+      }
+      Log.i(`${LOG_TAG} network changed (${source}), session recheck (upgrade only)`);
+      this.applySessionUpgradeOnly();
+    }, NET_SESSION_RECHECK_DEBOUNCE_MS);
+  }
+
+  // 只升不降的会话复查:只有拿到 logged-in 才写状态;其它结果一律什么都不做
+  // (不写 LoginGate=false、不 stop 轮询、不 reset 推送 —— 那些只属于 checkCurrentUser)。
+  private async applySessionUpgradeOnly(): Promise<void> {
+    const result: NetworkResult<SessionProbe> = await new AuthService(this.bridge).probeSession();
+    if (!result.success || result.data === undefined || result.data.verdict !== 'logged-in') {
+      Log.i(`${LOG_TAG} network session recheck kept previous state status=${result.statusCode}`);
+      this.updateSessionWatchdog();
+      return;
+    }
+    const user: User | undefined = result.data.user;
+    if (user === undefined) {
+      return;
+    }
+    Log.i(`${LOG_TAG} network session recheck upgraded to logged-in username=${user.username}`);
+    this.anonymousStrikes = 0;
+    this.lastSessionCheckFailed = false;
+    this.currentUser = user;
+    this.applySidebarPrefs(user);
+    AppStorage.setOrCreate(PROFILE_DRAFT_COUNT_KEY, user.draftCount !== undefined ? user.draftCount : 0);
+    LoginGate.setLoggedIn(true);
+    LoginGate.setUserPrivileges(
+      user.trustLevel !== undefined ? user.trustLevel : 0,
+      user.admin === true || user.moderator === true);
+    NotificationEventBus.publish({
+      unread: user.unreadNotifications !== undefined ? user.unreadNotifications : 0,
+      highPriority: user.unreadHighPriorityNotifications !== undefined ? user.unreadHighPriorityNotifications : 0
+    });
+    this.startNotificationPolling();
+    WebSessionManager.saveCookies('networkRecheck');
+    this.updateSessionWatchdog();
+  }
+
   // 通知轮询启停的唯一入口:顺带维护 notificationServiceStarted 与看门狗互斥。
   private startNotificationPolling(): void {
     this.notificationService.start();
@@ -2352,6 +2410,10 @@ export struct RootTabPage {
   }
 
   private stopSessionWatchdog(): void {
+    if (this.netSessionRecheckTimer !== -1) {
+      clearTimeout(this.netSessionRecheckTimer);
+      this.netSessionRecheckTimer = -1;
+    }
     if (this.sessionWatchdogTimer === -1) {
       return;
     }
