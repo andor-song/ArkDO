@@ -1,5 +1,6 @@
 import architectureSkeletonTest from './ArchitectureSkeleton.test';
 import challengeDetectorTest from './ChallengeDetector.test';
+import cookieProbeTest from './CookieProbe.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
 import topicServiceTest from './TopicService.test';
 import authServiceTest from './AuthService.test';
@@ -99,4 +100,5 @@ export default function testsuite() {
   pushSubscriptionKeysTest();
   htmlContentUtilsTest();
   linkRouterTest();
+  cookieProbeTest();
 }

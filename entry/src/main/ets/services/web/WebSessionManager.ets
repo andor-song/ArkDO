@@ -1,6 +1,7 @@
 import { Log } from '../logging/Log';
 import webview from '@ohos.web.webview';
 import { AppConstants } from '../../common/constants/AppConstants';
+import { CookiePresence, containsCookie, presenceFromHeader } from './CookieProbe';
 
 const LOG_TAG: string = '[ArkDO][WebSession]';
 
@@ -61,18 +62,32 @@ export class WebSessionManager {
     return WebSessionManager.getCookiePresenceSnapshotForUrl(url, cookieName).hasCookie;
   }
 
+  // 三态探测:探测失败(拿不到 Cookie 头)返回 UNKNOWN,与「确实没有 cookie」严格区分——
+  // 只有后者才允许调用方下「未登录」结论。纯解析逻辑在 CookieProbe,可单测。
+  static getCookiePresenceForUrl(url: string, cookieName: string): CookiePresence {
+    return presenceFromHeader(WebSessionManager.fetchCookieHeader(url), cookieName);
+  }
+
   static getCookiePresenceSnapshotForUrl(url: string, cookieName: string): CookiePresenceSnapshot {
-    try {
-      const cookieHeader: string = webview.WebCookieManager.fetchCookieSync(url, false);
-      return {
-        hasCookie: WebSessionManager.containsCookie(cookieHeader, cookieName),
-        headerLength: cookieHeader.length
-      };
-    } catch (error) {
+    const cookieHeader: string | undefined = WebSessionManager.fetchCookieHeader(url);
+    if (cookieHeader === undefined) {
       return {
         hasCookie: false,
         headerLength: 0
       };
+    }
+    return {
+      hasCookie: containsCookie(cookieHeader, cookieName),
+      headerLength: cookieHeader.length
+    };
+  }
+
+  // 唯一的 Cookie 头取用口:异常统一收敛成 undefined(= 探测失败),不再让每个调用点各写一遍 catch。
+  private static fetchCookieHeader(url: string): string | undefined {
+    try {
+      return webview.WebCookieManager.fetchCookieSync(url, false);
+    } catch (error) {
+      return undefined;
     }
   }
 
@@ -99,14 +114,4 @@ export class WebSessionManager {
     }
   }
 
-  private static containsCookie(cookieHeader: string, cookieName: string): boolean {
-    const prefix: string = `${cookieName}=`;
-    const parts: string[] = cookieHeader.split(';');
-    for (let index: number = 0; index < parts.length; index++) {
-      if (parts[index].trim().startsWith(prefix)) {
-        return true;
-      }
-    }
-    return false;
-  }
 }
