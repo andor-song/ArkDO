@@ -26,11 +26,13 @@ export default function sessionVerdictTest() {
       })).assertEqual('anonymous-confirmed');
     });
 
-    it('confirmedAnonymousWhen404AndCookieAbsent', 0, () => {
+    // 真机日志（2026-10-14 07:35:11）：同一秒内 loggedIn=true 而 authCookiePresent=false ——
+    // `_t` 探测在**已登录**时也会报「没有」，所以 404+ABSENT 不足以确认登出，必须降级为第二振。
+    it('treats404WithAbsentCookieAsUnconfirmedBecauseProbeLies', 0, () => {
       expect(judgeSession({
         transportOk: false, statusCode: 404, challengeState: ChallengeState.NONE,
         cookiePresence: CookiePresence.ABSENT, userPayloadPresent: false
-      })).assertEqual('anonymous-confirmed');
+      })).assertEqual('anonymous-unconfirmed');
     });
 
     it('unconfirmedAnonymousWhen404AndCookieProbeUnknown', 0, () => {
@@ -40,11 +42,11 @@ export default function sessionVerdictTest() {
       })).assertEqual('anonymous-unconfirmed');
     });
 
-    it('unknownWhen404ButCookieStillPresent', 0, () => {
+    it('treats404WithPresentCookieAsUnconfirmedToo', 0, () => {
       expect(judgeSession({
         transportOk: false, statusCode: 404, challengeState: ChallengeState.NONE,
         cookiePresence: CookiePresence.PRESENT, userPayloadPresent: false
-      })).assertEqual('unknown');
+      })).assertEqual('anonymous-unconfirmed');
     });
 
     it('unknownForServerErrorsAndTransportFailures', 0, () => {

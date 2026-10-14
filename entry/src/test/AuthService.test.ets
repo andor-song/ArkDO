@@ -75,7 +75,9 @@ export default function authServiceTest() {
     // render body: nil, status: 404),桥层据此判 success=false。
     // 「确认登出」需要**服务端正面证据 + cookie 明确不在**:这里显式注入 ABSENT。
     // (探测不确定/失败时不再判登出——见 SessionVerdict 与 probeKeepsLogin* 用例。)
-    it('returnsUndefinedWhenCurrentSessionIsAnonymous', 0, async () => {
+    // 只有服务端正面证据（2xx 且没有 current_user）才确认登出；
+    // 404 一律按失败上抛，由上层两振定夺（真机日志见 SessionVerdict 注释）。
+    it('keepsFailureFor404EvenWithCookieAbsentUntilSecondStrike', 0, async () => {
       const bridge: FakeBridge = new FakeBridge({
         success: false,
         statusCode: 404,
@@ -91,6 +93,21 @@ export default function authServiceTest() {
       const result: NetworkResult<User | undefined> = await service.getCurrentUser();
 
       expect(bridge.requestedPath).assertEqual('/session/current.json');
+      expect(result.success).assertFalse();
+    });
+
+    // 确认登出的唯一正面证据：2xx 且 current_user 缺失。
+    it('returnsUndefinedWhenServerExplicitlyReportsNoUser', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge({
+        success: true,
+        statusCode: 200,
+        challengeState: ChallengeState.NONE,
+        data: '{"current_user":null}'
+      });
+      const service: AuthService = new AuthService(bridge);
+
+      const result: NetworkResult<User | undefined> = await service.getCurrentUser();
+
       expect(result.success).assertTrue();
       expect(result.data).assertEqual(undefined);
     });
@@ -173,7 +190,8 @@ export default function authServiceTest() {
   });
     // ---- probeSession：cookie 三态 + 四态判定 ----
 
-    it('probeReportsConfirmedAnonymousWhen404AndCookieAbsent', 0, async () => {
+    // 404 不再等于「确认登出」（真机日志证明 `_t` 探测不可信），只降级为待第二振。
+    it('probeReportsUnconfirmedAnonymousWhen404EvenWithCookieAbsent', 0, async () => {
       const bridge: FakeBridge = new FakeBridge({
         success: false,
         statusCode: 404,
@@ -185,7 +203,7 @@ export default function authServiceTest() {
       const result: NetworkResult<SessionProbe> = await service.probeSession();
 
       expect(result.success).assertTrue();
-      expect(result.data?.verdict).assertEqual('anonymous-confirmed');
+      expect(result.data?.verdict).assertEqual('anonymous-unconfirmed');
     });
 
     it('probeKeepsLoginWhen404ButCookieProbeUnknown', 0, async () => {
@@ -214,7 +232,8 @@ export default function authServiceTest() {
 
       const result: NetworkResult<SessionProbe> = await service.probeSession();
 
-      expect(result.success).assertFalse();
+      expect(result.success).assertTrue();
+      expect(result.data?.verdict).assertEqual('anonymous-unconfirmed');
       expect(result.statusCode).assertEqual(404);
     });
 

@@ -1,6 +1,7 @@
 import { Log } from '../logging/Log';
 import { User } from '../../models/User';
 import { AuthService } from '../auth/AuthService';
+import { WebSessionManager } from '../web/WebSessionManager';
 import { JsonNetworkClient, NetworkResult } from '../network/NetworkTypes';
 import { AppStateEventBus } from '../session/AppStateEventBus';
 import { SessionEventBus } from '../session/SessionEventBus';
@@ -130,6 +131,10 @@ export class NotificationService {
     }
 
     const user: User = result.data;
+    // 刚刚用一次真实鉴权请求证明了会话是活的:顺手把 cookie 快照落盘。
+    // 磁盘快照越新,「冷启动读到过期 `_t` → 服务端判匿名」的窗口越小(真机日志里那次
+    // 后台约 1 小时后冷启动丢会话,就是快照落后于服务端轮换的形态)。
+    WebSessionManager.saveCookies('pollRefresh');
     NotificationEventBus.publish({
       unread: user.unreadNotifications !== undefined ? user.unreadNotifications : 0,
       highPriority: user.unreadHighPriorityNotifications !== undefined ? user.unreadHighPriorityNotifications : 0

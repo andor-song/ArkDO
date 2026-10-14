@@ -106,6 +106,9 @@ const DIAG_TAG: string = '[ARKDO_CF_DIAG]';
 // 会话看门狗:误判成匿名后靠它低速自愈(而不是等用户重启)。周期风格对齐 NotificationService,
 // 且与之互斥(它在前台跑着就不另起),避免同一接口叠加成双倍轮询。
 const SESSION_WATCHDOG_BASE_MS: number = 300000;
+// 第一振为「404 待确认」时,立刻补一次复探的延迟:404 已不再一次即清(见 SessionVerdict),
+// 若等看门狗(5 分钟)才第二振,真登出会被拖很久;这里 1.5 秒后复探,真登出仍是秒级落地。
+const SESSION_CONFIRM_DELAY_MS: number = 1500;
 const SESSION_WATCHDOG_JITTER_RATIO: number = 0.2;
 // 网络恢复触发宿主重载的冷却窗口:地铁出隧道等场景网络会短时间内反复抖动/多次上报,
 // 冷却避免每次抖动都重载一次宿主(重载较重)。只在宿主此前确实加载失败时才会触发。
@@ -219,6 +222,8 @@ export struct RootTabPage {
   private anonymousStrikes: number = 0;
   // 会话看门狗计时器(-1 = 未排):把「误判匿名后只能重启」变成分钟级自愈。
   private sessionWatchdogTimer: number = -1;
+  // 第一振后的立即复探计时器(-1 = 未排)。
+  private sessionConfirmTimer: number = -1;
   // NotificationService 是否在跑。看门狗靠它避免与 5 分钟轮询叠加。
   private notificationServiceStarted: boolean = false;
   private unsubscribeAppState?: () => void = undefined;
@@ -2162,6 +2167,7 @@ export struct RootTabPage {
     this.sessionCheckQueued = false;
     this.lastSessionCheckFailed = false;
     this.anonymousStrikes = 0;
+    this.stopSessionWatchdog();
     this.currentUser = undefined;
     this.clearIdentitySnapshot();
     this.applySidebarPrefs(undefined);
@@ -2259,8 +2265,17 @@ export struct RootTabPage {
 
     // 检查失败(CF 盾/网络抖动),或「探测不确定的第一振」:一律保持上一次登录态与轮询不动;
     // 只有服务端正面证据 + (必要时)第二振才真正落地成未登录。
+    const previousStrikes: number = this.anonymousStrikes;
     this.anonymousStrikes = verdict !== undefined ? nextAnonymousStrikes(verdict, this.anonymousStrikes) : 0;
     this.lastSessionCheckFailed = true;
+    // 第一振(404 待确认)后立刻复探一次:第二振马上到,真登出仍是秒级落地而不是等 5 分钟。
+    if (verdict === 'anonymous-unconfirmed' && previousStrikes === 0 && this.sessionConfirmTimer === -1) {
+      this.sessionConfirmTimer = setTimeout(() => {
+        this.sessionConfirmTimer = -1;
+        Log.i(`${LOG_TAG} confirming unconfirmed anonymous (second strike)`);
+        this.checkCurrentUser();
+      }, SESSION_CONFIRM_DELAY_MS);
+    }
     Log.i(`${LOG_TAG} current user check failed status=${result.statusCode} challenge=${result.challengeState} verdict=${verdict ?? 'n/a'} strikes=${this.anonymousStrikes}, keep previous loggedIn=${this.currentUser !== undefined}`);
 
     // 长时间后台回前台后,宿主 webview 的连接/DNS 解析器可能已僵死:表现为 status=0 的纯网络
@@ -2466,6 +2481,10 @@ export struct RootTabPage {
   }
 
   private stopSessionWatchdog(): void {
+    if (this.sessionConfirmTimer !== -1) {
+      clearTimeout(this.sessionConfirmTimer);
+      this.sessionConfirmTimer = -1;
+    }
     if (this.netSessionRecheckTimer !== -1) {
       clearTimeout(this.netSessionRecheckTimer);
       this.netSessionRecheckTimer = -1;

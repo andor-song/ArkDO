@@ -35,12 +35,11 @@ export function judgeSession(signals: SessionSignals): SessionVerdict {
     return signals.userPayloadPresent ? 'logged-in' : 'anonymous-confirmed';
   }
   if (signals.statusCode === CURRENT_SESSION_ANONYMOUS_STATUS) {
-    if (signals.cookiePresence === CookiePresence.ABSENT) {
-      return 'anonymous-confirmed';
-    }
-    if (signals.cookiePresence === CookiePresence.UNKNOWN) {
-      return 'anonymous-unconfirmed';
-    }
+    // 404 一律只算「不确定」：真机日志证明 `_t` 探测在已登录时也会报 absent
+    // （2026-10-14 07:35:11 loggedIn=true 与 authCookiePresent=false 同秒出现），
+    // cookie 三态都无法把 404 升级成「确认登出」。确认登出只认服务端正面证据
+    // （2xx 且没有 current_user）。真登出仍即时生效：用户主动退出走 DELETE /session。
+    return 'anonymous-unconfirmed';
   }
   return 'unknown';
 }
