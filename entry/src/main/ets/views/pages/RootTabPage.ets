@@ -114,6 +114,10 @@ const SESSION_CONFIRM_DELAY_MS: number = 1500;
 // 两个都要备:`_t` 是 remember-me 令牌(服务端据此重建会话),`_forum_session` 是承载会话的
 // session cookie;只补其中一个,真机实测仍可能判匿名(13:31:58 那次)。
 const AUTH_COOKIE_KEY_PREFIX: string = 'auth_cookie_';
+// 登录期间跟进备份的间隔:服务端会轮换 `_t`,只在"检查成功"那一刻备份会很快过期
+// (真机实测:14:14 的备份到 15:12 冷启动写回时服务端已不认)。这个定时器**只读 jar + 写本机偏好**,
+// 不发任何网络请求,所以不会给 CF 添乱。
+const AUTH_STASH_INTERVAL_MS: number = 30000;
 const PERSISTED_AUTH_COOKIES: string[] = ['_t', '_forum_session'];
 const SESSION_WATCHDOG_JITTER_RATIO: number = 0.2;
 // 网络恢复触发宿主重载的冷却窗口:地铁出隧道等场景网络会短时间内反复抖动/多次上报,
@@ -230,6 +234,8 @@ export struct RootTabPage {
   private sessionWatchdogTimer: number = -1;
   // 第一振后的立即复探计时器(-1 = 未排)。
   private sessionConfirmTimer: number = -1;
+  // 认证 cookie 跟进备份计时器(-1 = 未排)。只在本机读写,不发请求。
+  private authStashTimer: number = -1;
   // NotificationService 是否在跑。看门狗靠它避免与 5 分钟轮询叠加。
   private notificationServiceStarted: boolean = false;
   private unsubscribeAppState?: () => void = undefined;
@@ -2436,6 +2442,7 @@ export struct RootTabPage {
   }
 
   private updateSessionWatchdog(): void {
+    this.updateAuthStashTimer();
     if (!this.shouldRunSessionWatchdog()) {
       this.stopSessionWatchdog();
       return;
@@ -2512,10 +2519,36 @@ export struct RootTabPage {
     for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
       const cookieName: string = PERSISTED_AUTH_COOKIES[index];
       const value: string | undefined = WebSessionManager.readCookieValue(AppConstants.BASE_URL, cookieName);
-      if (value !== undefined) {
-        AppSettingsStore.putString(context, this.authCookieKey(cookieName), value);
+      if (value === undefined) {
+        continue;
       }
+      // 值没变就不写盘:这个函数每 30 秒跑一次,避免无意义的偏好写入。
+      if (AppSettingsStore.getString(context, this.authCookieKey(cookieName)) === value) {
+        continue;
+      }
+      AppSettingsStore.putString(context, this.authCookieKey(cookieName), value);
     }
+  }
+
+  // 登录期间跟进备份(见 AUTH_STASH_INTERVAL_MS)。登出/匿名时不排。
+  private updateAuthStashTimer(): void {
+    if (this.currentUser === undefined) {
+      if (this.authStashTimer !== -1) {
+        clearTimeout(this.authStashTimer);
+        this.authStashTimer = -1;
+      }
+      return;
+    }
+    if (this.authStashTimer !== -1) {
+      return;
+    }
+    this.authStashTimer = setTimeout(() => {
+      this.authStashTimer = -1;
+      if (this.currentUser !== undefined) {
+        this.persistAuthCookies();
+        this.updateAuthStashTimer();
+      }
+    }, AUTH_STASH_INTERVAL_MS);
   }
 
   // 宿主就绪、首次会话检查**之前**调用。
@@ -2541,6 +2574,10 @@ export struct RootTabPage {
   }
 
   private stopSessionWatchdog(): void {
+    if (this.authStashTimer !== -1) {
+      clearTimeout(this.authStashTimer);
+      this.authStashTimer = -1;
+    }
     if (this.sessionConfirmTimer !== -1) {
       clearTimeout(this.sessionConfirmTimer);
       this.sessionConfirmTimer = -1;
