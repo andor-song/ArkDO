@@ -1,7 +1,7 @@
 import { SidebarTag, User } from '../../models/User';
 import { NameCollator } from '../../common/utils/NameCollator';
 import { AppConstants } from '../../common/constants/AppConstants';
-import { ChallengeState, JsonNetworkClient, NetworkErrorCode, NetworkResult } from '../network/NetworkTypes';
+import { ChallengeState, JsonNetworkClient, NetworkResult } from '../network/NetworkTypes';
 import { AUTH_COOKIE_NAME, WebSessionManager } from '../web/WebSessionManager';
 import { forwardFailure, unexpectedResponse } from '../network/NetworkResults';
 import { CookiePresence } from '../web/CookieProbe';
