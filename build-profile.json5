@@ -1,24 +1,17 @@
 {
+  // 签名配置(signingConfigs)**不入库**:它是机器相关的材料(keystore/证书/profile + 加密口令),
+  // 提交进来既泄漏又会导致别的机器构建失败(历史提交里就曾把另一台机器的 C:\Users\... 路径与
+  // 口令提交上去)。
+  //
+  // 本机怎么加回来:DevEco(File → Project Structure → Signing Configs)会自动写入;
+  // 命令行构建则把 signingConfigs 块补在本文件 `app` 下、并在 products[0] 里加回
+  // "signingConfig": "default",材料放本机固定目录(例如 ~/.ohos/arkdo-signing/,需与 p12 同级的
+  // material/ 目录一起保留,否则口令解不开)。没有这段配置也能构建,只是产出未签名 HAP。
+
   "app": {
-    "signingConfigs": [
+      "products": [
       {
         "name": "default",
-        "type": "HarmonyOS",
-        "material": {
-          "certpath": "C:\\Users\\Administrator\\.ohos\\config\\default_ArkDO_5LJXP0PMcJciq5NjDOqSoWURUFlW8NWLeQf8r6DJ02A=.cer",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001B5ED4D59AE6E278CE916C3BDCE03039E775CB269464FB55AD1A59167924EFF7B0BF7E0754BB4EE9",
-          "profile": "C:\\Users\\Administrator\\.ohos\\config\\default_ArkDO_5LJXP0PMcJciq5NjDOqSoWURUFlW8NWLeQf8r6DJ02A=.p7b",
-          "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\Administrator\\.ohos\\config\\default_ArkDO_5LJXP0PMcJciq5NjDOqSoWURUFlW8NWLeQf8r6DJ02A=.p12",
-          "storePassword": "0000001B33A112ECD0F89C6BA6428D09022B68A6421374CB874A16991D3A5DE201591428C3D661CB885A49"
-        }
-      }
-    ],
-    "products": [
-      {
-        "name": "default",
-        "signingConfig": "default",
         "targetSdkVersion": "26.0.0",
         "compatibleSdkVersion": "26.0.0",
         "runtimeOS": "HarmonyOS",
