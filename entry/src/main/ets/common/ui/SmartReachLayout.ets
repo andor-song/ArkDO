@@ -1,6 +1,9 @@
 // 智感握姿的 UI 状态与布局参数集中在这里，三个接入点必须使用同一动画节奏。
 export const SMART_REACH_LEFT_HAND_STORAGE_KEY: string = 'smartReachLeftHand';
 export const SMART_REACH_ANIMATION_DURATION: number = 300;
+// 能力/开关状态镜像(供设置页展示;之前这套判定只写日志,用户"开了没反应")。
+export const SMART_REACH_STATUS_STORAGE_KEY: string = 'smartReachStatus';
+export type SmartReachStatus = 'unsupported' | 'disabled' | 'enabled';
 
 export function smartReachBottomAlignRules(leftHanded: boolean): AlignRuleOption {
   if (leftHanded) {

@@ -4,7 +4,7 @@ import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { Log } from '../../services/logging/Log';
 import { AppStateEventBus } from '../../services/session/AppStateEventBus';
-import { SMART_REACH_LEFT_HAND_STORAGE_KEY } from '../ui/SmartReachLayout';
+import { SMART_REACH_LEFT_HAND_STORAGE_KEY, SMART_REACH_STATUS_STORAGE_KEY, SmartReachStatus } from '../ui/SmartReachLayout';
 
 const LOG_TAG: string = '[ArkDO][SmartReach]';
 // 与 ThemeManager / RealtimeTopicsPrefs 等共用同一个 preferences 库，只是键不同。
@@ -21,7 +21,7 @@ export class HoldingHandManager {
 
   private static readonly holdingHandChanged: Callback<motion.HoldingHandStatus> =
     (status: motion.HoldingHandStatus): void => {
-      if (canIUse('SystemCapability.MultimodalAwareness.Motion')) {
+      if (HoldingHandManager.isSupported()) {
         // 双手、未持握和未知状态不触发换边，沿用上一次明确结果，避免短暂识别抖动导致控件来回跳。
         if (status === motion.HoldingHandStatus.LEFT_HAND_HELD) {
           HoldingHandManager.publishLeftHanded(true);
@@ -34,6 +34,7 @@ export class HoldingHandManager {
   static init(context: common.Context): void {
     // 默认右侧与改造前布局完全一致；不支持该能力或订阅失败时不改变现有界面。
     AppStorage.setOrCreate<boolean>(SMART_REACH_LEFT_HAND_STORAGE_KEY, false);
+    HoldingHandManager.publishStatus();
     // 读取开关(默认关)。关闭时 start() 直接跳过订阅，界面沿用默认右侧布局。
     try {
       const store: preferences.Preferences = preferences.getPreferencesSync(context, { name: PREF_STORE_NAME });
@@ -47,6 +48,22 @@ export class HoldingHandManager {
 
   static isEnabled(): boolean {
     return HoldingHandManager.enabled;
+  }
+
+  // 能力/开关状态:设置页据此把"设备不支持"讲出来,而不是让开关开了没反应(见 getStatus 注释)。
+  static getStatus(): SmartReachStatus {
+    if (HoldingHandManager.unsupported) {
+      return 'unsupported';
+    }
+    return HoldingHandManager.enabled ? 'enabled' : 'disabled';
+  }
+
+  private static isSupported(): boolean {
+    return canIUse('SystemCapability.MultimodalAwareness.Motion');
+  }
+
+  private static publishStatus(): void {
+    AppStorage.setOrCreate<SmartReachStatus>(SMART_REACH_STATUS_STORAGE_KEY, HoldingHandManager.getStatus());
   }
 
   // 用户在设置里切换开关：持久化并即时生效。开⇒(已激活且前台时)订阅传感器开始识别；
@@ -69,6 +86,7 @@ export class HoldingHandManager {
       HoldingHandManager.stop();
       AppStorage.setOrCreate<boolean>(SMART_REACH_LEFT_HAND_STORAGE_KEY, false);
     }
+    HoldingHandManager.publishStatus();
   }
 
   // UIContent 首帧创建完成后才激活，确保传感器首个回调写入 AppStorage 时已有 UI 观察者。
@@ -90,6 +108,9 @@ export class HoldingHandManager {
   }
 
   static destroy(): void {
+    // 复位能力判定:进程级的"不支持"粘性只在本次生命周期内有效,下次启动重新探测
+    // (机型能力不变,但热重载/多进程场景下不该带着上一轮的结论)。
+    HoldingHandManager.unsupported = false;
     HoldingHandManager.activated = false;
     HoldingHandManager.stop();
   }
@@ -102,12 +123,13 @@ export class HoldingHandManager {
     if (HoldingHandManager.subscribed || HoldingHandManager.unsupported) {
       return;
     }
-    if (!canIUse('SystemCapability.MultimodalAwareness.Motion')) {
+    if (!HoldingHandManager.isSupported()) {
       HoldingHandManager.unsupported = true;
+      HoldingHandManager.publishStatus();
       Log.i(`${LOG_TAG} capability unavailable, keep right-side layout`);
       return;
     }
-    if (canIUse('SystemCapability.MultimodalAwareness.Motion')) {
+    {
       try {
         motion.on('holdingHandChanged', HoldingHandManager.holdingHandChanged);
         HoldingHandManager.subscribed = true;
@@ -117,6 +139,7 @@ export class HoldingHandManager {
         // 801 表示机型硬件不支持，后续前台切换无需重复尝试；其余瞬态错误下次前台再重试。
         if (error.code === 801) {
           HoldingHandManager.unsupported = true;
+          HoldingHandManager.publishStatus();
         }
         Log.i(`${LOG_TAG} subscribe failed code=${error.code ?? 0} message=${error.message ?? ''}`);
       }
@@ -127,7 +150,7 @@ export class HoldingHandManager {
     if (!HoldingHandManager.subscribed) {
       return;
     }
-    if (canIUse('SystemCapability.MultimodalAwareness.Motion')) {
+    if (HoldingHandManager.isSupported()) {
       try {
         motion.off('holdingHandChanged', HoldingHandManager.holdingHandChanged);
       } catch (err) {

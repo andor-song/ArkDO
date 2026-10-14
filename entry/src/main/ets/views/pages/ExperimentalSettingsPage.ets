@@ -7,6 +7,7 @@ import { BadgeFilterPrefs } from '../../services/home/BadgeFilterPrefs';
 import { LotteryTipPrefs } from '../../services/topic/LotteryTipPrefs';
 import { SiteCapabilities } from '../../services/site/SiteCapabilities';
 import { HoldingHandManager } from '../../common/utils/HoldingHandManager';
+import { SMART_REACH_STATUS_STORAGE_KEY, SmartReachStatus } from '../../common/ui/SmartReachLayout';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { CARD_GAP, CARD_PADDING, CARD_RADIUS, PAGE_MARGIN } from '../../common/theme/Metrics';
 import { immersiveTitleBarContentTopSpacer } from '../../common/ui/ImmersiveTitleBarLayout';
@@ -35,6 +36,8 @@ export struct ExperimentalSettingsPage {
   @State private animatedAvatarEnabled: boolean = true;
   // 智感握姿开关(默认关),进页时从 HoldingHandManager 读取。
   @State private smartReachEnabled: boolean = false;
+  // 能力/开关状态镜像:设备不支持时把开关置灰并把原因写出来,而不是"开了没反应"。
+  @StorageProp(SMART_REACH_STATUS_STORAGE_KEY) private smartReachStatus: SmartReachStatus = 'disabled';
   // 点分类/标签快速筛选开关(默认关),进页时从 preferences 载入。
   @State private badgeFilterEnabled: boolean = false;
   // 抽奖帖提醒开关(默认开),进页时从 preferences 载入。
@@ -296,7 +299,7 @@ export struct ExperimentalSettingsPage {
           .fontSize(15)
           .fontColor($r('app.color.text_primary'))
           .width('100%')
-        Text('识别单手握持方向，把悬浮按钮移到顺手一侧')
+        Text(this.smartReachSubtitle())
           .fontSize(12)
           .fontColor($r('app.color.text_faint'))
           .width('100%')
@@ -308,13 +311,30 @@ export struct ExperimentalSettingsPage {
 
       Toggle({ type: ToggleType.Switch, isOn: this.smartReachEnabled })
         .selectedColor($r('app.color.ld_accent'))
+        .enabled(this.smartReachStatus !== 'unsupported')
         .onChange((isOn: boolean) => {
+          if (this.smartReachStatus === 'unsupported') {
+            this.smartReachEnabled = false;
+            return;
+          }
           this.smartReachEnabled = isOn;
           HoldingHandManager.setEnabled(this.hostContext(), isOn);
         })
     }
     .width('100%')
     .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 12, bottom: 12 })
+    .opacity(this.smartReachStatus === 'unsupported' ? 0.5 : 1)
+  }
+
+  // 副标题据实描述:设备不支持时直说(否则用户开了没反应无从判断,这也是它此前一直留在"实验性"的原因)。
+  private smartReachSubtitle(): string {
+    if (this.smartReachStatus === 'unsupported') {
+      return '当前设备不支持单手识别，开关不可用';
+    }
+    if (this.smartReachEnabled) {
+      return '已开启：识别单手握持方向，把悬浮按钮移到顺手一侧';
+    }
+    return '识别单手握持方向，把悬浮按钮移到顺手一侧';
   }
 
   // 抽奖帖提醒:默认开。这是唯一的持久化逃生口 —— 提醒卡本身不记「看过了」,每进一个抽奖帖
