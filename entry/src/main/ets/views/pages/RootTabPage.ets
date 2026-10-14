@@ -2000,7 +2000,7 @@ export struct RootTabPage {
       this.bridge.setDownloadContext(context);
     }
     // 冷启动写回认证令牌必须在首次会话检查之前:否则这一次检查一定拿到匿名结论。
-    this.restoreAuthCookiesIfMissing();
+    this.restoreAuthCookies();
     this.checkCurrentUser();
     // 表情表:宿主就绪才发得出请求。命中缓存或已加载时它自己会立刻返回,可安全重复调用。
     // 不 await —— 表情缺失只是暂时看不到图,不该拖慢首屏。
@@ -2518,22 +2518,24 @@ export struct RootTabPage {
     }
   }
 
-  // 宿主就绪、首次会话检查**之前**调用:jar 里缺哪个就补哪个,让服务端重新认出会话。
-  private restoreAuthCookiesIfMissing(): void {
+  // 宿主就绪、首次会话检查**之前**调用。
+  //
+  // **总是覆盖**,不是"缺了才补":真机实测 ArkWeb 能把**登录前的匿名 `_forum_session`**
+  // 从磁盘恢复出来,而 Discourse 取值时先认 session、再认 `_t`——旧的匿名 session 会把
+  // 刚补上的有效 `_t` 挡住,服务端照样回 404(2026-10-14 14:22 那次)。
+  // 用备份把两个都盖掉,才能让服务端按最新凭据重新认人。
+  private restoreAuthCookies(): void {
     const context: Context | undefined = this.getUIContext().getHostContext();
     if (context === undefined) {
       return;
     }
     for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
       const cookieName: string = PERSISTED_AUTH_COOKIES[index];
-      if (WebSessionManager.getCookiePresenceForUrl(AppConstants.BASE_URL, cookieName) === CookiePresence.PRESENT) {
-        continue;
-      }
       const value: string | undefined = AppSettingsStore.getString(context, this.authCookieKey(cookieName));
       if (value === undefined) {
         continue;
       }
-      Log.i(`${LOG_TAG} auth cookie missing after restart, restoring name=${cookieName}`);
+      Log.i(`${LOG_TAG} restoring auth cookie from snapshot name=${cookieName}`);
       WebSessionManager.restoreCookie(AppConstants.BASE_URL, cookieName, value);
     }
   }
