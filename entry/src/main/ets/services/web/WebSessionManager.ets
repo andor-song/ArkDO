@@ -1,7 +1,7 @@
 import { Log } from '../logging/Log';
 import webview from '@ohos.web.webview';
 import { AppConstants } from '../../common/constants/AppConstants';
-import { CookiePresence, containsCookie, presenceFromHeader } from './CookieProbe';
+import { CookiePresence, containsCookie, cookieValueFromHeader, presenceFromHeader } from './CookieProbe';
 
 const LOG_TAG: string = '[ArkDO][WebSession]';
 
@@ -84,6 +84,29 @@ export class WebSessionManager {
       hasCookie: containsCookie(cookieHeader, cookieName),
       headerLength: cookieHeader.length
     };
+  }
+
+  // 读某个 cookie 的**值**(冷启动写回认证令牌用)。值不落日志。
+  static readCookieValue(url: string, cookieName: string): string | undefined {
+    return cookieValueFromHeader(WebSessionManager.fetchCookieHeader(url), cookieName);
+  }
+
+  // 把 cookie 写回 cookie 仓(含 HttpOnly)。用于冷启动恢复认证令牌:
+  // 真机实测 ArkWeb 的磁盘快照在进程重启后**恢复不出** `_t`(落盘时在、重启后 jar 里没有),
+  // 会话因此每次冷启动真丢;写回后服务端会据它重新签发会话。
+  static restoreCookie(url: string, cookieName: string, value: string): boolean {
+    if (value.length === 0) {
+      return false;
+    }
+    try {
+      webview.WebCookieManager.configCookieSync(url, `${cookieName}=${value}`, false, true);
+      webview.WebCookieManager.saveCookieSync();
+      Log.i(`${LOG_TAG} cookie restored name=${cookieName}`);
+      return true;
+    } catch (error) {
+      Log.i(`${LOG_TAG} cookie restore failed name=${cookieName} error=${JSON.stringify(error)}`);
+      return false;
+    }
   }
 
   // 唯一的 Cookie 头取用口:异常统一收敛成 undefined(= 探测失败),不再让每个调用点各写一遍 catch。

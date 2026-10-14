@@ -109,6 +109,9 @@ const SESSION_WATCHDOG_BASE_MS: number = 300000;
 // 第一振为「404 待确认」时,立刻补一次复探的延迟:404 已不再一次即清(见 SessionVerdict),
 // 若等看门狗(5 分钟)才第二振,真登出会被拖很久;这里 1.5 秒后复探,真登出仍是秒级落地。
 const SESSION_CONFIRM_DELAY_MS: number = 1500;
+// 认证令牌(`_t`)的本地备份键前缀。真机实测:ArkWeb 的 cookie 磁盘快照在进程重启后恢复不出 `_t`
+// (落盘时有、重启后 jar 里没有),于是每次冷启动会话都真丢——这就是「掉登录」的根因。
+const AUTH_TOKEN_KEY_PREFIX: string = 'auth_token_';
 const SESSION_WATCHDOG_JITTER_RATIO: number = 0.2;
 // 网络恢复触发宿主重载的冷却窗口:地铁出隧道等场景网络会短时间内反复抖动/多次上报,
 // 冷却避免每次抖动都重载一次宿主(重载较重)。只在宿主此前确实加载失败时才会触发。
@@ -1993,6 +1996,8 @@ export struct RootTabPage {
     if (context) {
       this.bridge.setDownloadContext(context);
     }
+    // 冷启动写回认证令牌必须在首次会话检查之前:否则这一次检查一定拿到匿名结论。
+    this.restoreAuthTokenIfMissing();
     this.checkCurrentUser();
     // 表情表:宿主就绪才发得出请求。命中缓存或已加载时它自己会立刻返回,可安全重复调用。
     // 不 await —— 表情缺失只是暂时看不到图,不该拖慢首屏。
@@ -2168,6 +2173,11 @@ export struct RootTabPage {
     this.lastSessionCheckFailed = false;
     this.anonymousStrikes = 0;
     this.stopSessionWatchdog();
+    // 真登出必须把令牌备份一起清掉,否则下次冷启动会把已注销的会话写回来。
+    const logoutContext: Context | undefined = this.getUIContext().getHostContext();
+    if (logoutContext !== undefined) {
+      AppSettingsStore.remove(logoutContext, this.authTokenKey());
+    }
     this.currentUser = undefined;
     this.clearIdentitySnapshot();
     this.applySidebarPrefs(undefined);
@@ -2220,6 +2230,7 @@ export struct RootTabPage {
       // 身份快照跟权威结果走:登录落盘、确认匿名(含第二振)清掉——绝不让旧身份在登出后复活。
       if (this.currentUser !== undefined) {
         this.saveIdentitySnapshot(this.currentUser);
+        this.persistAuthToken();
       } else {
         this.clearIdentitySnapshot();
       }
@@ -2387,6 +2398,7 @@ export struct RootTabPage {
     });
     this.startNotificationPolling();
     WebSessionManager.saveCookies('networkRecheck');
+    this.persistAuthToken();
     this.updateSessionWatchdog();
   }
 
@@ -2478,6 +2490,43 @@ export struct RootTabPage {
       return;
     }
     AppSettingsStore.remove(context, identitySnapshotKey(CurrentSite.host));
+  }
+
+  // ==================== 认证令牌自备份(冷启动写回) ====================
+
+  private authTokenKey(): string {
+    return `${AUTH_TOKEN_KEY_PREFIX}${CurrentSite.host}`;
+  }
+
+  // 登录态确认成功时调用:把 `_t` 的值另存一份(与 cookie 同在一个应用沙箱;值不落日志)。
+  private persistAuthToken(): void {
+    const context: Context | undefined = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      return;
+    }
+    const token: string | undefined = WebSessionManager.readCookieValue(AppConstants.BASE_URL, AUTH_COOKIE_NAME);
+    if (token === undefined) {
+      return;
+    }
+    AppSettingsStore.putString(context, this.authTokenKey(), token);
+  }
+
+  // 宿主就绪、首次会话检查**之前**调用:jar 里没有 `_t` 但有备份时写回,
+  // 让服务端重新签发会话(否则这次冷启动必然判匿名)。
+  private restoreAuthTokenIfMissing(): void {
+    const context: Context | undefined = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      return;
+    }
+    if (WebSessionManager.getCookiePresenceForUrl(AppConstants.BASE_URL, AUTH_COOKIE_NAME) === CookiePresence.PRESENT) {
+      return;
+    }
+    const token: string | undefined = AppSettingsStore.getString(context, this.authTokenKey());
+    if (token === undefined) {
+      return;
+    }
+    Log.i(`${LOG_TAG} auth token missing after restart, restoring from snapshot`);
+    WebSessionManager.restoreCookie(AppConstants.BASE_URL, AUTH_COOKIE_NAME, token);
   }
 
   private stopSessionWatchdog(): void {

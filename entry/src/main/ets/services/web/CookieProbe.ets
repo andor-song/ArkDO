@@ -38,3 +38,26 @@ export function presenceFromHeader(header: string | undefined, cookieName: strin
   }
   return containsCookie(header, cookieName) ? CookiePresence.PRESENT : CookiePresence.ABSENT;
 }
+
+// 取某个 cookie 的**值**（不仅是存在性）。冷启动写回 `_t` 时要用它，
+// 且值里可能含 '='（base64 padding），所以只按第一个 '=' 切分、其余原样保留。
+// 值一律不进日志。
+export function cookieValueFromHeader(header: string | undefined, cookieName: string): string | undefined {
+  if (header === undefined || header.length === 0 || cookieName.length === 0) {
+    return undefined;
+  }
+  const parts: string[] = header.split(';');
+  for (let index: number = 0; index < parts.length; index++) {
+    const token: string = parts[index].trim();
+    const eqIndex: number = token.indexOf('=');
+    if (eqIndex < 0) {
+      continue;
+    }
+    if (token.substring(0, eqIndex).trim() !== cookieName) {
+      continue;
+    }
+    const value: string = token.substring(eqIndex + 1).trim();
+    return value.length > 0 ? value : undefined;
+  }
+  return undefined;
+}

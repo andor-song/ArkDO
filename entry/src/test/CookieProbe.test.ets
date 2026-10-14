@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@ohos/hypium';
-import { CookiePresence, containsCookie, presenceFromHeader } from '../main/ets/services/web/CookieProbe';
+import { CookiePresence, containsCookie, cookieValueFromHeader, presenceFromHeader } from '../main/ets/services/web/CookieProbe';
 
 export default function cookieProbeTest() {
   describe('cookieProbeTest', () => {
@@ -31,6 +31,18 @@ export default function cookieProbeTest() {
     it('toleratesWhitespace', 0, () => {
       expect(presenceFromHeader('  _t=abc  ', '_t')).assertEqual(CookiePresence.PRESENT);
       expect(containsCookie('  _t=abc  ', '_t')).assertTrue();
+    });
+
+    // 冷启动写回需要**取到值**(不仅是存在性),且值里可能含 '='(base64 padding)。
+    it('extractsCookieValueKeepingEqualsSigns', 0, () => {
+      expect(cookieValueFromHeader('a=1; _t=abc==; b=2', '_t')).assertEqual('abc==');
+      expect(cookieValueFromHeader('_t=v1', '_t')).assertEqual('v1');
+    });
+
+    it('returnsUndefinedWhenCookieValueMissingOrEmpty', 0, () => {
+      expect(cookieValueFromHeader('a=1; b=2', '_t')).assertUndefined();
+      expect(cookieValueFromHeader('_t=', '_t')).assertUndefined();
+      expect(cookieValueFromHeader(undefined, '_t')).assertUndefined();
     });
   });
 }
