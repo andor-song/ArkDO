@@ -3,6 +3,7 @@ import {
   extractMessageBusCategoryId,
   extractMessageBusCreatedAt,
   extractMessageBusTopicId,
+  extractTopicPostChange,
   MessageBusEvent,
   MessageBusEventBus,
   parseMessageBusEvent
@@ -134,5 +135,68 @@ export default function messageBusEventBusTest() {
       expect(receivedStatusCode).assertEqual(403);
       expect(receivedState).assertEqual(ChallengeState.REQUIRED);
     });
+    // ---- /topic/<id> 楼层变更解析（真机/上游判据见 MessageBusEventBus 注释）----
+
+    it('extractsCreatedChangeWithPostNumber', 0, () => {
+      const event: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"message","channel":"/topic/2590051","messageId":7,"data":{"id":23290050,"post_number":12,"type":"created"}}');
+      const change = extractTopicPostChange(event);
+      expect(change?.kind).assertEqual('created');
+      expect(change?.postId).assertEqual(23290050);
+      expect(change?.postNumber).assertEqual(12);
+    });
+
+    it('extractsRevisedChange', 0, () => {
+      const event: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"message","channel":"/topic/2590051","messageId":8,"data":{"id":23290050,"post_number":12,"type":"revised"}}');
+      expect(extractTopicPostChange(event)?.kind).assertEqual('revised');
+    });
+
+    it('extractsDeletedChange', 0, () => {
+      const event: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"message","channel":"/topic/2590051","messageId":9,"data":{"id":23290050,"type":"deleted"}}');
+      expect(extractTopicPostChange(event)?.kind).assertEqual('deleted');
+    });
+
+    // 上游 post_destroyer.rb 永久删除推的是 'destroyed'：UI 行为与 deleted 一致，归并处理。
+    it('mapsDestroyedToDeleted', 0, () => {
+      const event: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"message","channel":"/topic/2590051","messageId":10,"data":{"id":23290050,"type":"destroyed"}}');
+      expect(extractTopicPostChange(event)?.kind).assertEqual('deleted');
+    });
+
+    // 整帖刷新的真实信号是 reload_topic（上游 topic.js onMessage），不是"缺少 type"。
+    it('extractsTopicReloadWithoutPostId', 0, () => {
+      const event: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"message","channel":"/topic/2590051","messageId":11,"data":{"reload_topic":true}}');
+      const change = extractTopicPostChange(event);
+      expect(change?.kind).assertEqual('topic-reload');
+      expect(change?.postId).assertUndefined();
+    });
+
+    it('ignoresTypelessWithoutReloadFlag', 0, () => {
+      const event: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"message","channel":"/topic/2590051","messageId":12,"data":{}}');
+      expect(extractTopicPostChange(event)).assertUndefined();
+    });
+
+    it('ignoresChangeWithoutValidPostId', 0, () => {
+      const event: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"message","channel":"/topic/2590051","messageId":13,"data":{"type":"created"}}');
+      expect(extractTopicPostChange(event)).assertUndefined();
+      const zeroId: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"message","channel":"/topic/2590051","messageId":14,"data":{"id":0,"type":"revised"}}');
+      expect(extractTopicPostChange(zeroId)).assertUndefined();
+    });
+
+    it('ignoresOtherChannelsAndUnknownActions', 0, () => {
+      const otherChannel: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"message","channel":"/latest","messageId":15,"data":{"id":1,"type":"created"}}');
+      expect(extractTopicPostChange(otherChannel)).assertUndefined();
+      const unknownAction: MessageBusEvent | undefined = parseMessageBusEvent(
+        '{"type":"message","channel":"/topic/1","messageId":16,"data":{"id":1,"type":"rebaked"}}');
+      expect(extractTopicPostChange(unknownAction)).assertUndefined();
+    });
+
   });
 }

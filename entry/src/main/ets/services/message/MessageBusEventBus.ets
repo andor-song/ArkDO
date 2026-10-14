@@ -46,6 +46,8 @@ export interface MessageBusData {
   id?: number;
   post_number?: number;
   type?: string;
+  // 整帖刷新标记（上游 topic.js onMessage：data.reload_topic 为真时整帖重载）。
+  reload_topic?: boolean;
   // ---- Discourse Chat 实时事件（聊天页用）----
   // /chat/{channel_id} 频道（publisher.rb）：
   //   · sent     data = { chat_message: <MessageSerializer>, type: 'sent', staged_id }
@@ -164,15 +166,68 @@ export function extractMessageBusCreatedAt(event: MessageBusEvent | undefined): 
 
 // 从 /topic/<id> 频道事件里取"新建帖子"的 post id：仅 type==='created' 且 data.id 为正整数时返回。
 // 其它动作类型（revised/deleted/...）与无 type 的整帖刷新消息一律返回 undefined（P2 MVP 只做新楼）。
-export function extractCreatedPostId(event: MessageBusEvent | undefined): number | undefined {
-  if (!event || event.type !== 'message' || !event.data || event.data.type !== 'created') {
+export type TopicPostChangeKind = 'created' | 'revised' | 'deleted' | 'topic-reload';
+
+export interface TopicPostChange {
+  kind: TopicPostChangeKind;
+  postId?: number;
+  postNumber?: number;
+}
+
+/**
+ * 解析 `/topic/<id>` 频道上的楼层变更事件。
+ *
+ * 判据照上游源码（不是我们猜的）：
+ *  · 动作类型来自 `post.rb#publish_change_to_clients!`：新建 `:created`(post_creator.rb:658)、
+ *    修订 `:revised`(post_revisor.rb:906)、软删 `:deleted`、永久删 `:destroyed`(post_destroyer.rb:255)。
+ *    后两者 UI 行为一致（这层楼没了），这里归并成 `deleted`。
+ *  · 整帖刷新的真实信号是 `data.reload_topic === true`（`topic.js#onMessage`），
+ *    **不是**"缺少 type"——缺 type 且无该标记时上游自己也只是 `console.warn`，我方忽略。
+ *  · `recovered`/`acted`/`rebaked` 等其余动作不影响楼层列表，忽略。
+ */
+export function extractTopicPostChange(event: MessageBusEvent | undefined): TopicPostChange | undefined {
+  if (!event || event.type !== 'message' || event.data === undefined) {
     return undefined;
   }
-  const postId: number | undefined = event.data.id;
+  const channel: string | undefined = event.channel;
+  if (channel === undefined || !channel.startsWith('/topic/')) {
+    return undefined;
+  }
+  const data: MessageBusData = event.data;
+  if (data.reload_topic === true) {
+    return { kind: 'topic-reload' };
+  }
+  const action: string | undefined = data.type;
+  if (action === undefined) {
+    return undefined;
+  }
+  let kind: TopicPostChangeKind | undefined = undefined;
+  if (action === 'created') {
+    kind = 'created';
+  } else if (action === 'revised') {
+    kind = 'revised';
+  } else if (action === 'deleted' || action === 'destroyed') {
+    kind = 'deleted';
+  }
+  if (kind === undefined) {
+    return undefined;
+  }
+  const postId: number | undefined = data.id;
   if (postId === undefined || !Number.isFinite(postId) || postId <= 0) {
     return undefined;
   }
-  return Math.floor(postId);
+  const change: TopicPostChange = { kind: kind, postId: Math.floor(postId) };
+  const postNumber: number | undefined = data.post_number;
+  if (postNumber !== undefined && Number.isFinite(postNumber) && postNumber > 0) {
+    change.postNumber = Math.floor(postNumber);
+  }
+  return change;
+}
+
+// 旧入口保留为薄封装(既有调用方零改动)：只要「新建楼层」的 post id。
+export function extractCreatedPostId(event: MessageBusEvent | undefined): number | undefined {
+  const change: TopicPostChange | undefined = extractTopicPostChange(event);
+  return change !== undefined && change.kind === 'created' ? change.postId : undefined;
 }
 
 export class MessageBusEventBus {
