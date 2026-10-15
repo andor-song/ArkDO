@@ -15,9 +15,6 @@ AGENTS.md
 docs/superpowers/
 .superpowers/
 # 设计稿本地化:HTML 原型 / 架构设计文档只在本地,不进版本控制。
-# 本机私密文档(含签名口令/路径):只在本机存在,随机器手动带过去。
-docs/*.local.md
-
 design/
 **/agconnect-services.json
 # 推送中继部署配置(地址 + 共享密钥):本仓库开源,部署信息不入库。
