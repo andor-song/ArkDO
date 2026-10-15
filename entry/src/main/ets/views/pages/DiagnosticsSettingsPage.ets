@@ -1,7 +1,10 @@
 import { common } from '@kit.AbilityKit';
+import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { DownloadService } from '../../services/content/DownloadService';
 import { FileLogger } from '../../services/logging/FileLogger';
+import { Log } from '../../services/logging/Log';
+import { NetworkSnapshotService } from '../../services/diagnostics/NetworkSnapshotService';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { showToast as promptToast } from '../../common/utils/Toast';
 import { CARD_GAP, CARD_PADDING, CARD_RADIUS, PAGE_MARGIN } from '../../common/theme/Metrics';
@@ -13,6 +16,8 @@ import {
 } from '../../common/ui/ImmersiveLightMaterial';
 import { buildImmersiveTitleBarStyle } from '../../common/ui/ImmersiveTitleBarStyle';
 
+const LOG_TAG: string = '[ArkDO][Diag]';
+
 // 诊断日志子页:从设置页拆出。导出(带大小)、详细日志开关、清空,用于用户脱机跑一天后导出日志分析。
 @Component
 export struct DiagnosticsSettingsPage {
@@ -23,6 +28,10 @@ export struct DiagnosticsSettingsPage {
   @State private logSizeLabel: string = '';
   @State private verboseLog: boolean = false;
   @State private isExportingLog: boolean = false;
+  // 网络快照(一键诊断):采集 DoH/直连/登录态 + 最近关键日志,弹层展示并可复制。
+  @State private snapshotText: string = '';
+  @State private snapshotVisible: boolean = false;
+  @State private snapshotCollecting: boolean = false;
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
@@ -44,6 +53,11 @@ export struct DiagnosticsSettingsPage {
       this.ScrollableContent()
       this.TitleBarOverlay()
     }
+    .bindSheet($$this.snapshotVisible, this.SnapshotSheet, {
+      height: SheetSize.LARGE,
+      dragBar: true,
+      showClose: true
+    })
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_bg_gray'))
@@ -147,6 +161,42 @@ export struct DiagnosticsSettingsPage {
 
       this.HairlineInset()
 
+      // 一键网络快照:网络类问题(刷不出来/掉登录/过不了盾)第一手证据。
+      Row() {
+        SymbolGlyph($r('sys.symbol.wifi'))
+          .fontSize(20)
+          .fontColor([$r('app.color.text_secondary')])
+        Column() {
+          Text('网络快照')
+            .fontSize(15)
+            .fontColor($r('app.color.text_primary'))
+            .width('100%')
+          Text('采集 DoH/直连实测、登录态与最近关键日志')
+            .fontSize(12)
+            .fontColor($r('app.color.text_faint'))
+            .width('100%')
+            .margin({ top: 2 })
+        }
+        .layoutWeight(1)
+        .margin({ left: 14 })
+        .alignItems(HorizontalAlign.Start)
+        if (this.snapshotCollecting) {
+          LoadingProgress()
+            .width(16)
+            .height(16)
+            .color($r('app.color.ld_accent'))
+            .margin({ right: 6 })
+        }
+        this.ChevronIcon()
+      }
+      .width('100%')
+      .padding({ left: CARD_PADDING, right: CARD_PADDING, top: 14, bottom: 14 })
+      .onClick(() => {
+        this.collectNetworkSnapshot();
+      })
+
+      this.HairlineInset()
+
       Row() {
         SymbolGlyph($r('sys.symbol.info_circle'))
           .fontSize(20)
@@ -194,6 +244,71 @@ export struct DiagnosticsSettingsPage {
       })
     }
     .cardStyle()
+  }
+
+  // 「网络快照」弹层:现场太大,给整屏滚动 + 一键复制。
+  @Builder
+  private SnapshotSheet() {
+    Column() {
+      Row() {
+        Text('网络快照')
+          .fontSize(17)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+        Text('复制')
+          .fontSize(15)
+          .fontColor($r('app.color.brand'))
+          .padding({ left: 12, right: 4, top: 4, bottom: 4 })
+          .onClick(() => {
+            this.copySnapshot();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 4, bottom: 8 })
+
+      Scroll() {
+        Text(this.snapshotText)
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+          .copyOption(CopyOptions.LocalDevice)
+      }
+      .layoutWeight(1)
+      .width('100%')
+      .align(Alignment.TopStart)
+      .padding({ left: 16, right: 16, bottom: 16 })
+      .scrollBar(BarState.Auto)
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  private async collectNetworkSnapshot(): Promise<void> {
+    if (this.snapshotCollecting) {
+      return;
+    }
+    this.snapshotCollecting = true;
+    try {
+      const context: common.Context = this.getUIContext().getHostContext() as common.Context;
+      this.snapshotText = await NetworkSnapshotService.collect(context);
+      this.snapshotVisible = true;
+    } catch (error) {
+      Log.i(`${LOG_TAG} network snapshot failed: ${JSON.stringify(error)}`);
+      this.showToast('网络快照采集失败');
+    } finally {
+      this.snapshotCollecting = false;
+    }
+  }
+
+  private copySnapshot(): void {
+    try {
+      const data: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.snapshotText);
+      pasteboard.getSystemPasteboard().setDataSync(data);
+      this.showToast('网络快照已复制');
+    } catch (error) {
+      this.showToast('复制失败');
+    }
   }
 
   @Builder

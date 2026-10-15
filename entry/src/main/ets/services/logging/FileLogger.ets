@@ -9,7 +9,7 @@ const HILOG_DOMAIN: number = 0x0000;
 const LOG_DIR_NAME: string = 'app_logs';
 const CURRENT_FILE_NAME: string = 'arkdo.log';
 const EXPORT_FILE_NAME: string = 'arkdo-log-export.txt';
-// 单文件封顶 1MB,归档保留 2 个(current + 2 = 3 份),总占用 ≤3MB。
+// 单文件封顶 1MB,归档保留 9 个(current + 9 = 10 份),总占用 ≤10MB。
 const MAX_FILE_BYTES: number = 1 * 1024 * 1024;
 // 归档份数:1MB × (1 + 9) ≈ 10MB。原先只留 2 份(约 3MB),开着 verbose 时几小时就滚掉——
 // 「昨天出现、今天想查」的场景直接没证据(2026-10-15 排查「Wi-Fi 下刷不出来」就踩了这个)。
@@ -94,6 +94,32 @@ export class FileLogger {
   }
 
   // 合并当前 + 归档为单个导出文件(旧→新按时间顺序),返回沙箱路径;失败返回空串。
+  /**
+   * 取最近 maxLines 行日志(含尚未落盘的缓冲)。供「网络快照」这类一键诊断把现场一起带走。
+   * 当前文件 ≤1MB,整读再做切片足够快,不为它单开环形读取。
+   */
+  static tailLines(maxLines: number): string[] {
+    const lines: string[] = [];
+    try {
+      const path: string = FileLogger.currentFilePath();
+      if (path.length > 0 && fs.accessSync(path)) {
+        const text: string = fs.readTextSync(path);
+        const fileLines: string[] = text.split('\n');
+        for (let index: number = 0; index < fileLines.length; index++) {
+          if (fileLines[index].length > 0) {
+            lines.push(fileLines[index]);
+          }
+        }
+      }
+    } catch (error) {
+      // 读不到就当没有:诊断信息本身不该抛
+    }
+    for (let index: number = 0; index < FileLogger.buffer.length; index++) {
+      lines.push(FileLogger.buffer[index]);
+    }
+    return lines.length <= maxLines ? lines : lines.slice(lines.length - maxLines);
+  }
+
   static exportToFile(): string {
     FileLogger.flush();
     if (!FileLogger.initialized) {
