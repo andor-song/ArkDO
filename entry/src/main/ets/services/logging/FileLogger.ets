@@ -11,7 +11,9 @@ const CURRENT_FILE_NAME: string = 'arkdo.log';
 const EXPORT_FILE_NAME: string = 'arkdo-log-export.txt';
 // 单文件封顶 1MB,归档保留 2 个(current + 2 = 3 份),总占用 ≤3MB。
 const MAX_FILE_BYTES: number = 1 * 1024 * 1024;
-const MAX_ARCHIVE_FILES: number = 2;
+// 归档份数:1MB × (1 + 9) ≈ 10MB。原先只留 2 份(约 3MB),开着 verbose 时几小时就滚掉——
+// 「昨天出现、今天想查」的场景直接没证据(2026-10-15 排查「Wi-Fi 下刷不出来」就踩了这个)。
+const MAX_ARCHIVE_FILES: number = 9;
 // 攒够 64KB 或每 5 秒刷盘一次:批量写避免高峰期(列表刷新)频繁同步 IO 卡主线程。
 const FLUSH_INTERVAL_MS: number = 5000;
 const FLUSH_SIZE_THRESHOLD: number = 64 * 1024;
