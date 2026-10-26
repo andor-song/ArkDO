@@ -1,4 +1,5 @@
 import { TopicCategory, TopicTag } from '../../models/Topic';
+import { NOTIFICATION_LEVEL_MUTED, NOTIFICATION_LEVEL_REGULAR } from '../../services/topic/TopicNotificationLevels';
 import { TopicMetadataBadges } from './TopicBadges';
 import { FaIconView, getFaIcon } from './FaIcon';
 
@@ -28,6 +29,15 @@ export struct TopicDetailHeader {
   @Prop bookmarkLoading: boolean = false;
   // 点右侧书签按钮:上抛页面 toggle 整主题书签(对 1 楼 addBookmark/removeBookmark)。
   onToggleBookmark: () => void = () => {};
+  // 通知等级入口(关注 / 跟踪 / 正常 / 静默)。
+  // notificationLevelKnown 为假 = 服务端没给 details.notification_level(旧站点或被插件裁剪),
+  // 此时**不挂这枚按钮**：摆一个点开只会失败的入口,不如不给入口。
+  @Prop notificationLevelKnown: boolean = false;
+  @Prop notificationLevel: number = NOTIFICATION_LEVEL_REGULAR;
+  // 请求进行中:铃铛转圈、防连点。用 @Prop 而非普通字段 —— 普通字段不随父组件 @State 重绘,
+  // 会表现为「转圈不出现」(同文件里 bookmarkLoading 用 @Prop 是同一个理由)。
+  @Prop notificationLoading: boolean = false;
+  onNotificationTap: () => void = () => {};
 
   build() {
     Row({ space: 8 }) {
@@ -101,6 +111,33 @@ export struct TopicDetailHeader {
       }
       .layoutWeight(1)
       .alignContent(Alignment.Start)
+
+      // 通知等级入口(与书签按钮同规格)。静默档用斜杠铃铛并置灰,一眼看出"这帖被我不提醒了"。
+      if (this.notificationLevelKnown) {
+        Button({ type: ButtonType.Normal, stateEffect: true }) {
+          if (this.notificationLoading) {
+            LoadingProgress()
+              .width(16)
+              .height(16)
+              .color($r('app.color.icon_muted'))
+          } else {
+            FaIconView({
+              icon: getFaIcon(this.notificationLevel === NOTIFICATION_LEVEL_MUTED ? 'far-bell-slash' : 'far-bell'),
+              color: this.notificationLevel === NOTIFICATION_LEVEL_MUTED
+                ? $r('app.color.icon_muted') : $r('app.color.ld_accent'),
+              iconSize: 16
+            })
+          }
+        }
+        .width(36)
+        .height(36)
+        .padding(0)
+        .backgroundColor(Color.Transparent)
+        .borderRadius(10)
+        .onClick(() => {
+          this.onNotificationTap();
+        })
+      }
 
       // 整主题书签:可点按钮(标题行首的内联书签标记保留为纯展示)。请求中转圈;已收藏实心蓝、未收藏空心灰。
       Button({ type: ButtonType.Normal, stateEffect: true }) {

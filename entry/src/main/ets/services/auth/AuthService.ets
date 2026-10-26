@@ -5,7 +5,7 @@ import { ChallengeState, JsonNetworkClient, NetworkResult } from '../network/Net
 import { AUTH_COOKIE_NAME, WebSessionManager } from '../web/WebSessionManager';
 import { forwardFailure, unexpectedResponse } from '../network/NetworkResults';
 import { CookiePresence } from '../web/CookieProbe';
-import { SessionVerdict, judgeSession } from './SessionVerdict';
+import { SessionVerdict, isTokenDeclaredDead, judgeSession } from './SessionVerdict';
 
 const CURRENT_SESSION_PATH: string = '/session/current.json';
 // 未登录时 /session/current.json 的状态码。Discourse 对匿名请求回 404 + 空 body,
@@ -53,6 +53,12 @@ interface DiscourseSidebarTag {
 export interface SessionProbe {
   verdict: SessionVerdict;
   user?: User;
+  // **服务端亲口宣告这枚认证令牌已作废**（404 + `Discourse-Logged-Out`）。
+  // 上层据此除「把界面切成游客态」之外，还要做销毁备份、清掉 cookie 仓的处置 ——
+  // 见 SessionVerdict 文件头与 RootTabPage.handleDeadToken 的说明。
+  // 刻意只在 404 时为真：403 + 同一个头是**本机撞上按 IP 的限流**，令牌可能仍然有效，
+  // 按作废处置会把「等一分钟就好」误升级成「强制重登」。
+  tokenDeclaredDead?: boolean;
 }
 
 export class AuthService {
@@ -75,20 +81,24 @@ export class AuthService {
   async probeSession(): Promise<NetworkResult<SessionProbe>> {
     const response: NetworkResult<string> = await this.bridge.getJson(CURRENT_SESSION_PATH);
     const cookiePresence: CookiePresence = this.cookiePresence(AUTH_COOKIE_NAME);
+    // 与 verdict 用**同一个口径**（isTokenDeclaredDead）：这条证据决定上层要不要销毁备份，
+    // 两处判断若漂出「清了登录态却没清备份」，就会留下每次冷启动重放死令牌的入口。
+    const declaredDead: boolean = isTokenDeclaredDead(response.statusCode, response.loggedOutByServer);
     if (!response.success) {
       const verdict: SessionVerdict = judgeSession({
         transportOk: false,
         statusCode: response.statusCode,
         challengeState: response.challengeState,
         cookiePresence: cookiePresence,
-        userPayloadPresent: false
+        userPayloadPresent: false,
+        serverRejectedToken: response.loggedOutByServer
       });
       if (verdict === 'anonymous-confirmed' || verdict === 'anonymous-unconfirmed') {
         return {
           success: true,
           statusCode: response.statusCode,
           challengeState: response.challengeState,
-          data: { verdict: verdict }
+          data: { verdict: verdict, tokenDeclaredDead: declaredDead }
         };
       }
       return forwardFailure<SessionProbe>(response);
@@ -106,7 +116,7 @@ export class AuthService {
           success: true,
           statusCode: response.statusCode,
           challengeState: response.challengeState,
-          data: { verdict: 'anonymous-confirmed' }
+          data: { verdict: 'anonymous-confirmed', tokenDeclaredDead: declaredDead }
         };
       }
       if (typeof sourceUser.id !== 'number' || typeof sourceUser.username !== 'string') {

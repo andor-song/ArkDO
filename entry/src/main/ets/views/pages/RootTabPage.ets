@@ -40,7 +40,7 @@ import { DohManager, DohResolveMode } from '../../services/network/DohManager';
 import { NetworkResult, NetworkErrorCode, ChallengeState } from '../../services/network/NetworkTypes';
 import { AppStateEventBus } from '../../services/session/AppStateEventBus';
 import { IdentitySnapshotData, identitySnapshotKey, parseIdentity, serializeIdentity } from '../../services/session/IdentitySnapshot';
-import { AuthSecretStore } from '../../services/session/AuthSecretStore';
+import { AuthTokenStore } from '../../services/session/AuthTokenStore';
 import { AppSettingsStore } from '../../common/prefs/AppSettingsStore';
 import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { CurrentUserEventBus } from '../../services/session/CurrentUserEventBus';
@@ -109,16 +109,10 @@ const SESSION_WATCHDOG_BASE_MS: number = 300000;
 // 第一振为「404 待确认」时,立刻补一次复探的延迟:404 已不再一次即清(见 SessionVerdict),
 // 若等看门狗(5 分钟)才第二振,真登出会被拖很久;这里 1.5 秒后复探,真登出仍是秒级落地。
 const SESSION_CONFIRM_DELAY_MS: number = 1500;
-// 认证 cookie 的本地备份键前缀。真机实测:ArkWeb 的 cookie 磁盘快照在进程重启后**恢复不出**
-// 认证 cookie(落盘时有、重启后 jar 里没有),于是每次冷启动会话都真丢——这就是「掉登录」的根因。
-// 两个都要备:`_t` 是 remember-me 令牌(服务端据此重建会话),`_forum_session` 是承载会话的
-// session cookie;只补其中一个,真机实测仍可能判匿名(13:31:58 那次)。
-const AUTH_COOKIE_KEY_PREFIX: string = 'auth_cookie_';
 // 登录期间跟进备份的间隔:服务端会轮换 `_t`,只在"检查成功"那一刻备份会很快过期
-// (真机实测:14:14 的备份到 15:12 冷启动写回时服务端已不认)。这个定时器**只读 jar + 写本机偏好**,
-// 不发任何网络请求,所以不会给 CF 添乱。
+// (真机实测:14:14 的备份到 15:12 冷启动写回时服务端已不认)。这个定时器**只读 jar + 写本机密钥库**,
+// 不发任何网络请求,所以不会给 CF 添乱。备份/恢复/判死标记的规则见 services/session/AuthTokenStore。
 const AUTH_STASH_INTERVAL_MS: number = 30000;
-const PERSISTED_AUTH_COOKIES: string[] = ['_t', '_forum_session'];
 const SESSION_WATCHDOG_JITTER_RATIO: number = 0.2;
 // 网络恢复触发宿主重载的冷却窗口:地铁出隧道等场景网络会短时间内反复抖动/多次上报,
 // 冷却避免每次抖动都重载一次宿主(重载较重)。只在宿主此前确实加载失败时才会触发。
@@ -2170,15 +2164,14 @@ export struct RootTabPage {
     this.lastSessionCheckFailed = false;
     this.anonymousStrikes = 0;
     this.stopSessionWatchdog();
-    // 真登出必须把令牌备份一起清掉,否则下次冷启动会把已注销的会话写回来。
-    const logoutContext: Context | undefined = this.getUIContext().getHostContext();
-    for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
-      const cookieName: string = PERSISTED_AUTH_COOKIES[index];
-      AuthSecretStore.remove(this.authSecretAlias(cookieName)).catch(() => {});
-      if (logoutContext !== undefined) {
-        AppSettingsStore.remove(logoutContext, this.legacyAuthCookieKey(cookieName));
-      }
-    }
+    // 真登出必须把这枚已注销的凭据从本机彻底隔离:毁备份 + 钉指纹 + 清 cookie 仓。
+    // 只毁备份不够 —— 销毁走系统密钥库是异步的,进程若在登出后立刻被回收,备份还在,
+    // 下次冷启动会把一个**已经不存在的会话**原样写回来(表现为"退出了又自动登回去")。
+    // 钉住指纹之后,restoreIntoCookieJar 会认出同一枚并跳过,销毁没跑完也拦得住。
+    // 不等它:这是用户主动动作,界面要立刻落到游客态;新会话建立时 clearDeadMarks 会解除。
+    AuthTokenStore.revokeLocalSession(this.hostContext()).catch(() => {
+      Log.i(`${LOG_TAG} credential quarantine after logout did not finish`);
+    });
     this.currentUser = undefined;
     this.clearIdentitySnapshot();
     this.applySidebarPrefs(undefined);
@@ -2216,12 +2209,26 @@ export struct RootTabPage {
     this.isCheckingSession = false;
     this.hasCheckedSession = true;
 
-    // 会话落地判据(策略 B):服务端正面证据(2xx 无 current_user / 404 且 `_t` 明确不在)一次即清;
-    // cookie 探测不确定(UNKNOWN)时降级为 anonymous-unconfirmed,需要第二振才清。见 SessionVerdict。
+    // 会话落地判据见 SessionVerdict:服务端正面证据一次即清(2xx 无 current_user,或 404 且
+    // 带回 Discourse-Logged-Out),证据不足的 404 降级为 anonymous-unconfirmed 要两振才清。
     const probe: SessionProbe | undefined = result.success ? result.data : undefined;
     const verdict: SessionVerdict | undefined = probe !== undefined ? probe.verdict : undefined;
     const applyAnonymous: boolean = verdict !== undefined &&
       shouldApplyAnonymous(verdict, this.anonymousStrikes);
+    // 服务端亲口宣告携带的令牌已作废:除了下面照常落「未登录」,还必须钉指纹 + 毁备份 + 清 jar。
+    // 必须在写登录态**之前**做完 —— 否则这一轮之后又有别的机会把备份灌回去。
+    if (probe !== undefined && probe.tokenDeclaredDead === true) {
+      await this.handleDeadToken(requestId);
+      // 处置要读系统密钥库(异步),这一等之间**可能有更新的检查跑完并写好了状态**。
+      // 那轮结果更新也更权威,这一轮的旧 verdict 绝不能再盖上去 —— 与本方法开头那道
+      // requestId 守卫同一条规矩(开头那道守不住这里:它只挡"响应回来时已过期",挡不住
+      // "响应没过期、但中途多插了一次检查")。少这一道,插进来的那轮会被本轮的旧结论
+      // 覆盖,表现为"刚登录成功又被打回游客"。
+      if (requestId !== this.sessionCheckSequence) {
+        this.startQueuedSessionCheckIfNeeded();
+        return;
+      }
+    }
     if (verdict === 'logged-in' || applyAnonymous) {
       this.anonymousStrikes = 0;
       this.lastSessionCheckFailed = false;
@@ -2231,6 +2238,8 @@ export struct RootTabPage {
       // 身份快照跟权威结果走:登录落盘、确认匿名(含第二振)清掉——绝不让旧身份在登出后复活。
       if (this.currentUser !== undefined) {
         this.saveIdentitySnapshot(this.currentUser);
+        // 会话重新建立 = 手里是一枚全新的凭据,清掉此前的判死标记,免得新令牌被误拦。
+        AuthTokenStore.clearDeadMarks(this.hostContext());
         this.persistAuthCookies();
       } else {
         this.clearIdentitySnapshot();
@@ -2495,46 +2504,10 @@ export struct RootTabPage {
   }
 
   // ==================== 认证令牌自备份(冷启动写回) ====================
-
-  // 旧版把认证 cookie 明文写在 preferences 里(键见 AUTH_COOKIE_KEY_PREFIX)。
-  // 现在凭据存系统密钥库(Asset Store)，这个键只在迁移时被读一次、随即删除。
-  private legacyAuthCookieKey(cookieName: string): string {
-    return `${AUTH_COOKIE_KEY_PREFIX}${CurrentSite.host}_${cookieName}`;
-  }
-
-  // 密钥库里的别名:同一应用内按站点 + cookie 名区分。
-  private authSecretAlias(cookieName: string): string {
-    return `arkdo_auth_${CurrentSite.host}_${cookieName}`;
-  }
-
-  // 登录态确认成功时调用:把认证 cookie 的值各存一份(与 cookie 同在一个应用沙箱;值一律不落日志)。
-  private persistAuthCookies(): void {
-    for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
-      const cookieName: string = PERSISTED_AUTH_COOKIES[index];
-      const value: string | undefined = WebSessionManager.readCookieValue(AppConstants.BASE_URL, cookieName);
-      if (value === undefined) {
-        continue;
-      }
-      AuthSecretStore.save(this.authSecretAlias(cookieName), value)
-        .catch(() => { Log.i(`${LOG_TAG} auth secret save failed name=${cookieName}`); });
-    }
-  }
-
-  // 一次性迁移:旧版明文的 preferences 键 → 系统密钥库,并删掉明文副本。
-  private async migrateLegacyAuthCookie(cookieName: string): Promise<string | undefined> {
-    const context: Context | undefined = this.getUIContext().getHostContext();
-    if (context === undefined) {
-      return undefined;
-    }
-    const legacy: string | undefined = AppSettingsStore.getString(context, this.legacyAuthCookieKey(cookieName));
-    if (legacy === undefined) {
-      return undefined;
-    }
-    await AuthSecretStore.save(this.authSecretAlias(cookieName), legacy);
-    AppSettingsStore.remove(context, this.legacyAuthCookieKey(cookieName));
-    Log.i(`${LOG_TAG} legacy plaintext auth cookie migrated name=${cookieName}`);
-    return legacy;
-  }
+  //
+  // 键名/别名/判死标记的具体规则全在 AuthTokenStore(会话链路与诊断页共用同一份真相,
+  // 免得两处各拼一遍键名——拼错不会报错,只会让诊断页显示「没有备份」,而这条链路的全部
+  // 价值就在于读得准)。本页只保留**何时**备份与恢复的调度。
 
   // 登录期间跟进备份(见 AUTH_STASH_INTERVAL_MS)。登出/匿名时不排。
   private updateAuthStashTimer(): void {
@@ -2557,25 +2530,36 @@ export struct RootTabPage {
     }, AUTH_STASH_INTERVAL_MS);
   }
 
-  // 宿主就绪、首次会话检查**之前**调用。
-  //
-  // **总是覆盖**,不是"缺了才补":真机实测 ArkWeb 能把**登录前的匿名 `_forum_session`**
-  // 从磁盘恢复出来,而 Discourse 取值时先认 session、再认 `_t`——旧的匿名 session 会把
-  // 刚补上的有效 `_t` 挡住,服务端照样回 404(2026-10-14 14:22 那次)。
-  // 用备份把两个都盖掉,才能让服务端按最新凭据重新认人。
-  private async restoreAuthCookies(): Promise<void> {
-    for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
-      const cookieName: string = PERSISTED_AUTH_COOKIES[index];
-      let value: string | undefined = await AuthSecretStore.load(this.authSecretAlias(cookieName));
-      if (value === undefined) {
-        value = await this.migrateLegacyAuthCookie(cookieName);
-      }
-      if (value === undefined) {
-        continue;
-      }
-      Log.i(`${LOG_TAG} restoring auth cookie from secure store name=${cookieName}`);
-      WebSessionManager.restoreCookie(AppConstants.BASE_URL, cookieName, value);
+  // 登录态确认成功时调用:把当前 jar 里的认证 cookie 各备份一份(值一律不落日志)。
+  private persistAuthCookies(): void {
+    AuthTokenStore.backupCurrentCookies(this.hostContext());
+  }
+
+  /**
+   * 服务端宣告令牌作废后的本机处置(判据与三件套各自的必要性都写在 AuthTokenStore.rejectAll)。
+   *
+   * 这里只负责两件事:核代次、停跟进备份的定时器。
+   * 代次核对不能省:处置要读密钥库(异步),期间若有更新的检查跑完(例如用户刚好重登并备份了
+   * 新凭据),再继续销毁就是**误删有效凭据** —— 与既有各处「requestId 不匹配即放弃写状态」同规矩。
+   */
+  private async handleDeadToken(requestId: number): Promise<void> {
+    if (requestId !== this.sessionCheckSequence) {
+      return;
     }
+    await AuthTokenStore.rejectAll(this.hostContext());
+    if (requestId !== this.sessionCheckSequence) {
+      return;
+    }
+    // 备份没了,跟进备份的定时器也就没有意义(且它在匿名态下本就会被停掉)。
+    if (this.authStashTimer !== -1) {
+      clearTimeout(this.authStashTimer);
+      this.authStashTimer = -1;
+    }
+  }
+
+  // 宿主就绪、首次会话检查**之前**调用:把备份写回 cookie 仓(含跳过已判死的那一枚)。
+  private async restoreAuthCookies(): Promise<void> {
+    await AuthTokenStore.restoreIntoCookieJar(this.hostContext());
   }
 
   private stopSessionWatchdog(): void {

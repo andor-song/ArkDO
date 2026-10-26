@@ -3,6 +3,7 @@ import { http } from '@kit.NetworkKit';
 import { AppConstants } from '../../common/constants/AppConstants';
 import { DohManager, DohServer } from '../network/DohManager';
 import { WebSessionManager } from '../web/WebSessionManager';
+import { AuthTokenStore, AuthTokenSnapshot } from '../session/AuthTokenStore';
 import { FileLogger } from '../logging/FileLogger';
 import { Log } from '../logging/Log';
 
@@ -35,10 +36,11 @@ export class NetworkSnapshotService {
     lines.push(`DoH 实测 ${await NetworkSnapshotService.probeDoh(active.url)}`);
     lines.push(`直连实测 ${await NetworkSnapshotService.probeDirect()}`);
 
-    const authPresence: string = String(WebSessionManager.getCookiePresenceForUrl(AppConstants.BASE_URL, '_t'));
     const cfPresence: string = String(WebSessionManager.getCookiePresenceForUrl(AppConstants.BASE_URL, 'cf_clearance'));
-    const headerLength: number = WebSessionManager.getCookiePresenceSnapshotForUrl(AppConstants.BASE_URL, '_t').headerLength;
-    lines.push(`Cookie _t=${authPresence} cf_clearance=${cfPresence} cookieHeaderLength=${headerLength}`);
+    lines.push(`Cookie cf_clearance=${cfPresence}`);
+    // 认证 cookie 单独成段(而不是并进上面那行):要说的东西不止"有没有"——还包括
+    // "是哪一枚""备份是不是同一枚""有没有被判死过",一行塞不下,而这几项正是掉登录的判据。
+    lines.push(AuthTokenStoreSummary.describe(await AuthTokenStore.snapshot(context)));
 
     lines.push('--- 最近关键日志 ---');
     const tail: string[] = FileLogger.tailLines(800);
@@ -97,5 +99,29 @@ export class NetworkSnapshotService {
     } finally {
       request.destroy();
     }
+  }
+}
+/**
+ * 把凭据账本翻成一段人话。单独立一个函数（而不是就地拼字符串）是为了让「快照」与
+ * 「登录状态页」用同一套措辞 —— 排查时两边说法不一致会让人怀疑自己看错了。
+ */
+class AuthTokenStoreSummary {
+  static describe(snapshot: AuthTokenSnapshot): string {
+    const lines: string[] = [];
+    lines.push(`认证令牌 jar=${snapshot.jarFingerprint} 备份=${snapshot.backupFingerprint}` +
+      `${snapshot.backupPresent ? '' : '(无备份)'} cookie仓长度=${snapshot.headerLength}`);
+    // 「jar 与备份不是同一枚」本身不是错误 —— 服务端每 10 分钟轮换，备份天然落后。
+    // 它只在同时「被判死」时才危险，所以判死那两行才是重点。
+    if (snapshot.jarMarkedDead || snapshot.backupMarkedDead) {
+      lines.push('⚠ 本机仍持有**已被服务端拒绝过**的同一枚令牌（已停止使用它，不会再写回）');
+    }
+    if (snapshot.lastRejectedAt > 0) {
+      lines.push(`最近一次被服务端拒签：${new Date(snapshot.lastRejectedAt).toLocaleString()} ` +
+        `令牌=${snapshot.lastRejectedFingerprint}`);
+      lines.push('（若时间与「在另一台设备登录」接近，就是那一次登录把本机这枚顶掉了）');
+    } else {
+      lines.push('本机从未被服务端拒签过认证令牌');
+    }
+    return lines.join('\n');
   }
 }

@@ -2,6 +2,8 @@ import architectureSkeletonTest from './ArchitectureSkeleton.test';
 import challengeDetectorTest from './ChallengeDetector.test';
 import cookieProbeTest from './CookieProbe.test';
 import sessionVerdictTest from './SessionVerdict.test';
+import authTokenStoreTest from './AuthTokenStore.test';
+import topicNotificationLevelsTest from './TopicNotificationLevels.test';
 import identitySnapshotTest from './IdentitySnapshot.test';
 import presenceUplinkThrottleTest from './PresenceUplinkThrottle.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
@@ -105,6 +107,8 @@ export default function testsuite() {
   linkRouterTest();
   cookieProbeTest();
   sessionVerdictTest();
+  authTokenStoreTest();
+  topicNotificationLevelsTest();
   identitySnapshotTest();
   presenceUplinkThrottleTest();
 }

@@ -105,17 +105,42 @@ export class AppSettingsStore {
     AppSettingsStore.put(context, key, value);
   }
 
-  /** 删除一个键(身份快照在登出/确认匿名时要清掉,避免旧身份被下一次冷启动复活)。 */
-  static remove(context: common.UIAbilityContext | common.Context, key: string): void {
+  /**
+   * 删除一个键(身份快照在登出/确认匿名时要清掉,避免旧身份被下一次冷启动复活)。
+   *
+   * 返回「是否确认已不存在」而不是 void:调用方可以忽略,但**日志里必须看得见删失败**。
+   * 原先删除失败只在抛异常时记一行,而"deleteSync 没抛、键却还在"这类情况完全静默 ——
+   * 判死标记/旧明文备份这类键一旦删不掉,下次冷启动就照着它继续复活已注销的会话,
+   * 且没有任何链路会重试。故障必须可见。
+   *
+   * 判据用「读回是否为空串」:getSync 对不存在的键返回 fallback,所以把 fallback 设成 ''
+   * 就是"不存在"的哨兵;真存着值的键读回来必然非空。(不能用 has 之外再猜类型。)
+   */
+  static remove(context: common.UIAbilityContext | common.Context, key: string): boolean {
     const store: preferences.Preferences | undefined = AppSettingsStore.acquire(context);
     if (store === undefined) {
-      return;
+      return false;
     }
     try {
       store.deleteSync(key);
       store.flush();
     } catch (error) {
       Log.i(`${LOG_TAG} delete failed key=${key}`);
+      return false;
+    }
+    // 读回本身也要兜住异常：这个辅助函数原先在 deleteSync 成功后是不会抛的，
+    // 加了校验就多了这条抛点，而它的调用方（清判死标记、清身份快照）都没有 try/catch。
+    // 校验失败当作"已删除"处理 —— 删除已经成功了，不能因为验不了一下就把调用方带进失败分支。
+    try {
+      const readBack: preferences.ValueType = store.getSync(key, '');
+      const gone: boolean = typeof readBack !== 'string' || readBack.length === 0;
+      if (!gone) {
+        Log.i(`${LOG_TAG} delete did not take effect key=${key}`);
+      }
+      return gone;
+    } catch (error) {
+      Log.i(`${LOG_TAG} delete verification failed key=${key}`);
+      return true;
     }
   }
 

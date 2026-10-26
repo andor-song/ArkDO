@@ -1,7 +1,7 @@
 import { Log } from '../logging/Log';
 import webview from '@ohos.web.webview';
 import { AppConstants } from '../../common/constants/AppConstants';
-import { CookiePresence, containsCookie, cookieValueFromHeader, presenceFromHeader } from './CookieProbe';
+import { CookiePresence, containsCookie, cookieValueFromHeader, credentialFingerprint, presenceFromHeader } from './CookieProbe';
 
 const LOG_TAG: string = '[ArkDO][WebSession]';
 
@@ -42,7 +42,11 @@ export class WebSessionManager {
       return webview.WebCookieManager.saveCookieAsync()
         .then(() => {
           const authSnapshot: CookiePresenceSnapshot = WebSessionManager.getCookiePresenceSnapshot('_t');
-          Log.i(`${LOG_TAG} cookie save success source=${source} authCookiePresent=${authSnapshot.hasCookie} cookieHeaderLength=${authSnapshot.headerLength}`);
+          // 带指纹而不只是"有没有":服务端每约 10 分钟轮换 `_t`,「换了一枚」与「还是那枚」
+          // 在排查掉登录时必须分得开。指纹不可逆,可安全进日志(日志会被导出)。
+          const tokenFingerprint: string =
+            credentialFingerprint(WebSessionManager.readCookieValue(AppConstants.BASE_URL, AUTH_COOKIE_NAME));
+          Log.i(`${LOG_TAG} cookie save success source=${source} authCookiePresent=${authSnapshot.hasCookie} token=${tokenFingerprint} cookieHeaderLength=${authSnapshot.headerLength}`);
         })
         .catch((error: Object) => {
           Log.i(`${LOG_TAG} cookie save failed source=${source} error=${JSON.stringify(error)}`);
@@ -101,7 +105,7 @@ export class WebSessionManager {
     try {
       webview.WebCookieManager.configCookieSync(url, `${cookieName}=${value}`, false, true);
       webview.WebCookieManager.saveCookieSync();
-      Log.i(`${LOG_TAG} cookie restored name=${cookieName}`);
+      Log.i(`${LOG_TAG} cookie restored name=${cookieName} token=${credentialFingerprint(value)}`);
       return true;
     } catch (error) {
       Log.i(`${LOG_TAG} cookie restore failed name=${cookieName} error=${JSON.stringify(error)}`);
@@ -109,8 +113,45 @@ export class WebSessionManager {
     }
   }
 
+  /**
+   * 把某个 cookie 从 cookie 仓里删掉。用于「本机还揣着一枚已被服务端拒绝的凭据」时把它清出去。
+   *
+   * 为什么必须**主动删**，而不是只在恢复时跳过它：请求带不带 cookie 由 Chromium 决定,
+   * 不由我们决定。只要那一枚还躺在 jar 里,宿主 webview 发出的**每一个**同源请求都会把它带上,
+   * 而上游对「带了无效认证 cookie」的每次请求都会计入**按 IP** 的 cookie_auth 限流
+   * (10 次/分钟)。刷满之后,同一 Wi-Fi 下电脑浏览器发出的请求会撞上同一把锁 ——
+   * 它那枚**有效**的令牌也会被一并判成 BAD_TOKEN 并被删掉。这就是「手机登录顶掉电脑、
+   * 反过来也是」的机制。所以只"不写回"是不够的,还得把已经在 jar 里的那枚清干净。
+   *
+   * 删除与写入必须**同名、同域、同路径**才删得掉(cookie 的匹配规则)。所以显式带 `path=/`
+   * —— 服务端下发 `_t` 用的就是 Rails 默认根路径,与我们 configCookieSync 的推导一致。
+   *
+   * 返回值只代表「这条指令发出去且没抛异常」,**不代表"jar 里已经没有它了"**(理由见函数体内)。
+   * 所以调用方一律无条件尝试删除,不要先读一遍再决定删不删。
+   */
+  static deleteCookie(url: string, cookieName: string): boolean {
+    try {
+      webview.WebCookieManager.configCookieSync(url,
+        `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`, false, true);
+      webview.WebCookieManager.saveCookieSync();
+      // 只作观察,**不作为成功判据**:fetchCookieSync 的第二参是「无痕标志」,SDK 里根本没有
+      // includeHttpOnly 这一说(只有 configCookieSync 有),所以 `_t`(HttpOnly)**读不到 ≠ 不存在**。
+      // 本仓 1.0.6 的真机记录早就撞见过这点(已登录时 hasCookie('_t') 照样报 absent)。
+      // 若把「读不到」当成「删成功了」,日志会一路报 verified=true 而实际什么都没删 ——
+      // 一个会让人误以为修复已生效的假信号,比没有信号更坏。
+      const readBack: CookiePresence = WebSessionManager.getCookiePresenceForUrl(url, cookieName);
+      Log.i(`${LOG_TAG} cookie delete issued name=${cookieName} readBack=${readBack}`);
+      return true;
+    } catch (error) {
+      Log.i(`${LOG_TAG} cookie delete failed name=${cookieName} error=${JSON.stringify(error)}`);
+      return false;
+    }
+  }
+
   // 唯一的 Cookie 头取用口:异常统一收敛成 undefined(= 探测失败),不再让每个调用点各写一遍 catch。
-  private static fetchCookieHeader(url: string): string | undefined {
+  // 对外公开(诊断快照要一次拿到「存在性 + 值 + 头长度」三件事,逐个再查一遍 cookie 仓既浪费
+  // 又可能读到三个互相矛盾的瞬间)。调用方**不得**把返回值写进日志:里面有 HttpOnly 凭据。
+  static fetchCookieHeader(url: string): string | undefined {
     try {
       return webview.WebCookieManager.fetchCookieSync(url, false);
     } catch (error) {

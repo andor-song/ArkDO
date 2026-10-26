@@ -392,6 +392,8 @@ export default function topicServiceTest() {
       const result = await service.getReactionUsers(19741741, 0);
 
       expect(result.success).assertFalse();
+      expect(result.error?.code).assertEqual(NetworkErrorCode.UNEXPECTED_RESPONSE);
+    });
 
     // 改已发主题分类/标签:PUT /posts/{id} 的 form body 里带 topic[category_id]/topic[tags]。
     // tags 是逗号分隔字符串(Discourse TopicUpdater 接受字符串后 split)。
@@ -432,7 +434,64 @@ export default function topicServiceTest() {
       expect(bridge.postedBody.includes('topic%5B')).assertFalse();
       expect(result.success).assertTrue();
     });
+
+    // ---- 通知等级(关注 / 跟踪 / 正常 / 静默) ----
+
+    it('postsNotificationLevelToTopicNotificationsEndpoint', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge({
+        success: true,
+        statusCode: 200,
+        challengeState: ChallengeState.NONE,
+        data: '{"success":"OK"}'
+      });
+      const service: TopicService = new TopicService(bridge);
+
+      const result: NetworkResult<boolean> = await service.setNotificationLevel(12345, 3);
+
+      expect(bridge.postedPath).assertEqual('/t/12345/notifications');
+      expect(bridge.postedBody).assertEqual('notification_level=3');
+      expect(result.success).assertTrue();
+      expect(result.data).assertTrue();
+    });
+
+    // 越界档位**不发请求**:服务端只做 .to_i 而不校验范围,客户端漏了就是往库里写脏值。
+    it('refusesToPostUnknownNotificationLevel', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge({
+        success: true,
+        statusCode: 200,
+        challengeState: ChallengeState.NONE,
+        data: '{"success":"OK"}'
+      });
+      const service: TopicService = new TopicService(bridge);
+
+      const result: NetworkResult<boolean> = await service.setNotificationLevel(1, 7);
+
+      expect(bridge.postedPath).assertEqual('');
+      expect(result.success).assertFalse();
       expect(result.error?.code).assertEqual(NetworkErrorCode.UNEXPECTED_RESPONSE);
+    });
+
+    // details.notification_level 必须**原样**透传、不在服务层归一:
+    // 一旦被 normalize 成 1,"服务端到底给没给"就永久丢了,顶栏会误挂一个点了只会失败的铃铛。
+    it('mapsNotificationLevelFromTopicDetailsVerbatim', 0, async () => {
+      const withLevel: string = '{"id":9,"title":"t","details":{"notification_level":0},"post_stream":{"posts":[{"id":1,"topic_id":9,"post_number":1,"cooked":"<p>1</p>"}]}}';
+      const withoutLevel: string = '{"id":9,"title":"t","details":{"created_by":{"id":5}},"post_stream":{"posts":[{"id":1,"topic_id":9,"post_number":1,"cooked":"<p>1</p>"}]}}';
+      const withDetails: NetworkResult<string> = {
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: withLevel
+      };
+      const noDetails: NetworkResult<string> = {
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: withoutLevel
+      };
+
+      const muted: NetworkResult<TopicDetail> =
+        await new TopicService(new FakeBridge(withDetails)).getTopicDetail(9);
+      expect(muted.success).assertTrue();
+      expect(muted.data?.notificationLevel).assertEqual(0);
+
+      const absent: NetworkResult<TopicDetail> =
+        await new TopicService(new FakeBridge(noDetails)).getTopicDetail(9);
+      expect(absent.success).assertTrue();
+      expect(absent.data?.notificationLevel).assertUndefined();
     });
   });
 }

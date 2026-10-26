@@ -27,6 +27,9 @@ export function createFetchScript(path: string): string {
             statusCode: response.status,
             contentType: response.headers.get('content-type') || '',
             cfMitigated: response.headers.get('cf-mitigated') || '',
+            // 服务端「本请求携带的认证凭据被判无效」的正面证据(Discourse lib/hijack.rb 在
+            // BAD_TOKEN 时回该头)。与 404 合起来才能区分「本来就匿名」与「token 已失效」。
+            loggedOut: response.headers.get('discourse-logged-out') || '',
             body: body
           }));
         }).catch((error) => {
@@ -92,6 +95,7 @@ export function createHeaderedFetchScript(path: string, headers: HttpHeaderEntry
             statusCode: response.status,
             contentType: response.headers.get('content-type') || '',
             cfMitigated: response.headers.get('cf-mitigated') || '',
+            loggedOut: response.headers.get('discourse-logged-out') || '',
             body: body
           }));
         }).catch(fail);

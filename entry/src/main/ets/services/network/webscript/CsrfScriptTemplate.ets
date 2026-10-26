@@ -107,6 +107,7 @@ ${headers}
             statusCode: response.status,
             contentType: response.headers.get('content-type') || '',
             cfMitigated: response.headers.get('cf-mitigated') || '',
+            loggedOut: response.headers.get('discourse-logged-out') || '',
             body: body,
             csrfSource: csrfSource,
             csrfLength: csrfLength

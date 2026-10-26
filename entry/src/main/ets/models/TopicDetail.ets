@@ -187,6 +187,10 @@ export interface TopicDetail {
   // MessageBus 订阅起点游标(topic.json 顶层 message_bus_last_id)。详情页订阅 /topic/<id> 时
   // 以此为起点,闭合加载与订阅之间的窗口;缺失则订阅时回落 -1(只收新)。
   messageBusLastId?: number;
+  // 当前用户在本主题的通知等级(0 静默 / 1 正常 / 2 跟踪 / 3 关注),来自 details.notification_level。
+  // 详情页顶栏「通知」菜单据此打勾。undefined = 服务端没给(旧站点/异常),按"正常"处理但
+  // 不把"正常"当成用户的选择结果 —— 见 TopicNotificationLevels.isKnownLevel。
+  notificationLevel?: number;
 }
 
 // 待审帖快照。raw 是 Markdown 原文(服务端不下发 cooked),按纯文本直出——待审内容基本都是刚发的短回复。

@@ -6,6 +6,7 @@ import { ChallengeState, JsonNetworkClient, NetworkResult } from '../network/Net
 import { AppConstants } from '../../common/constants/AppConstants';
 import { FeedKey } from '../site/FeedPrefs';
 import { buildTopicListPath, TopicListQuery } from './TopicListQuery';
+import { buildNotificationLevelBody, notificationLevelPath } from './TopicNotificationLevels';
 import { buildLinkClicks } from './LinkClicks';
 import { forwardFailure, unexpectedResponse } from '../network/NetworkResults';
 import { discourseErrorMessage } from '../network/DiscourseErrors';
@@ -1260,7 +1261,42 @@ export class TopicService {
       userCreatedSharedIssue: sourceTopic.user_created_shared_issue === true,
       sharedIssueCount: typeof sourceTopic.shared_issue_count === 'number' ? sourceTopic.shared_issue_count : 0,
       pendingPosts: this.mapPendingPosts(sourceTopic.pending_posts),
-      messageBusLastId: typeof sourceTopic.message_bus_last_id === 'number' ? sourceTopic.message_bus_last_id : undefined
+      messageBusLastId: typeof sourceTopic.message_bus_last_id === 'number' ? sourceTopic.message_bus_last_id : undefined,
+      // 通知等级来自 details.notification_level(上游 TopicViewDetailsSerializer)。
+      // 原样透传、不归一:归一是显示层的事,而"服务端到底给没给"这个信息一旦在这里被
+      // normalize 成 1 就永久丢了 —— 上层要靠它决定要不要显示当前档位勾选。
+      notificationLevel: typeof sourceTopic.details?.notification_level === 'number'
+        ? sourceTopic.details?.notification_level
+        : undefined
+    };
+  }
+
+  /**
+   * 设置当前用户在本主题的通知等级。
+   *
+   * 端点 `POST /t/{topicId}/notifications`(上游 topics#set_notifications),
+   * form 参数 `notification_level`,成功回 `{"success":"OK"}`。目标用户由服务端取
+   * `fetch_target_user` —— 不传 username 参数时就是 current_user,所以这里不必带用户名。
+   *
+   * 非法档位直接拒绝、不发请求:服务端只做 `.to_i` 而**不校验范围**,客户端漏了就是往
+   * `topic_users.notification_level` 里写脏数据。
+   */
+  async setNotificationLevel(topicId: number, level: number): Promise<NetworkResult<boolean>> {
+    const body: string = buildNotificationLevelBody(level);
+    if (body.length === 0) {
+      return unexpectedResponse<boolean>(0, ChallengeState.NONE, `未知的通知等级：${level}`);
+    }
+    const referrer: string = `${AppConstants.BASE_URL}/t/topic/${topicId}`;
+    const response: NetworkResult<string> = await this.bridge.postForm(
+      notificationLevelPath(topicId), body, { notifyChallenge: true, referrer: referrer });
+    if (!response.success) {
+      return forwardFailure<boolean>(response);
+    }
+    return {
+      success: true,
+      statusCode: response.statusCode,
+      challengeState: response.challengeState,
+      data: true
     };
   }
 

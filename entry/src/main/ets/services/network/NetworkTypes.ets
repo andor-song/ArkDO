@@ -28,6 +28,17 @@ export interface NetworkResult<T> {
   // 缺省 undefined = 未检出;false 亦可。仅当错误响应体里带明确的 not_logged_in 特征才置真,
   // 避免把「网络/解析失败」误判成未登录。给上层(通知页等)区分「重试」和「去登录」两种引导。
   notLoggedIn?: boolean;
+  // 响应头带 `Discourse-Logged-Out: 1` 时置 true —— 这是**服务端正面证据**:本次请求携带的
+  // 认证 cookie(`_t`)已被判定失效(BAD_TOKEN)。**404 本身说不出这句话**:同样的 404 既可能是
+  // 「这个设备一直是游客」,也可能是「你的令牌被注销/轮换掉了」,而 /session/current.json 对两者
+  // 都回 404 + 空体,光看状态码分不开。
+  //
+  // 为什么值得单独接住:上游在 `DefaultCurrentUserProvider` 里对 BAD_TOKEN 会
+  // ① 打上 `_DISCOURSE_BAD_TOKEN` ② 由 `lib/hijack.rb` 回该响应头 ③ 顺带 Set-Cookie 删掉 `_t`。
+  // 也就是说**令牌已在服务端作废、且本机 cookie 仓里的这一份也保不住了**。客户端据此再去做
+  // 「拿备份令牌自愈」之类尝试只是徒增一组 404(还会消耗同 IP 的 cookie_auth 限流额度)。
+  // 缺省 undefined = 未检出(含服务端未回该头的旧版本,调用方不得把 undefined 当 false 的反证)。
+  loggedOutByServer?: boolean;
 }
 
 // 注入式 fetch 的附加请求头。名与值都会被 JSON.stringify 后嵌进脚本字面量,调用方给原始字符串即可。

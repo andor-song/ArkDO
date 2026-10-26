@@ -22,6 +22,12 @@ import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { LoginGate } from '../../services/session/LoginGate';
 import { TopicReadController } from '../../services/reading/TopicReadController';
 import { CreateReplyOutcome, TopicService } from '../../services/topic/TopicService';
+import {
+  NOTIFICATION_LEVEL_REGULAR,
+  TOPIC_NOTIFICATION_OPTIONS,
+  NotificationLevelOption,
+  describeNotificationLevel
+} from '../../services/topic/TopicNotificationLevels';
 import { extractTopicPostChange,
   TopicPostChange, MessageBusEvent, MessageBusEventBus } from '../../services/message/MessageBusEventBus';
 import { REALTIME_POSTS_ENABLED_STORAGE_KEY } from '../../services/realtime/RealtimePostsPrefs';
@@ -60,7 +66,8 @@ import { ReactionUsersSheet } from '../components/ReactionUsersSheet';
 import { SYS_BOTTOM_INSET_KEY, SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { floatingActionBottomMargin } from '../../common/ui/FloatingActionLayout';
 import { showToast as promptToast } from '../../common/utils/Toast';
-import { SHADOW_SOFT } from '../../common/theme/Palette';
+import { SCRIM_STRONG, SHADOW_SOFT } from '../../common/theme/Palette';
+import { FaIconView, getFaIcon } from '../components/FaIcon';
 import {
   immersiveTitleBarBottomOffset,
   immersiveTitleBarContentTopSpacer
@@ -127,6 +134,14 @@ const SCROLL_NAV_FAB_GAP: number = 10;
 // 侧边距 = 回复 FAB 侧边距 16 + FAB 半宽 26 − 本钮半宽 20,使钮列与 FAB 垂直方向同轴对齐。
 const SCROLL_NAV_SIDE_MARGIN: number = 22;
 
+// 通知等级面板单行的入参。打包成**单个对象**传:多个位置参数是「按值传递」,被捕获一次就不再
+// 重算,点了另一档之后勾选/上色不会刷新(与 SearchFilterPanel 里记的同一条约束)。
+interface NotificationRowParams {
+  option: NotificationLevelOption;
+  selected: boolean;
+  saving: boolean;
+}
+
 @Component({ freezeWhenInactive: true })
 export struct TopicDetailPage {
   // 窗口常驻全屏布局:主内容列自行避让状态栏(padding 在带背景的列上,背景填满状态栏条);
@@ -146,6 +161,16 @@ export struct TopicDetailPage {
   @State private topicBookmarked: boolean = false;
   // 整主题书签 toggle 请求进行中:标题栏右钮转圈,防连点。
   @State private topicBookmarkLoading: boolean = false;
+  // 本主题通知等级(-1 = 服务端没给 details.notification_level)。
+  // 为什么又要一个基元 @State 而不是直接读 detail.notificationLevel:detail 是 interface 的
+  // @State,**改它的字段不触发重渲染**(与 topicBookmarked 同一个病根)。顶栏铃铛的图标与勾选态
+  // 必须由这个基元驱动;detail 整体替换时经 @Watch 把权威值同步过来。
+  @State private topicNotificationLevel: number = -1;
+  // 通知等级面板与写入请求态。面板是**自绘浮层**(不用 bindSheet):
+  // 本页唯一的 bindSheet 已给反应用户弹层,同一条组件链上第二个 bindSheet 只会让前一个失效
+  // (RootTabPage 里同样写过这条约束)。自绘那套的取舍与理由见 ComposerPage 的分类/标签浮层注释。
+  @State private notificationPanelVisible: boolean = false;
+  @State private notificationSaving: boolean = false;
   // 反应用户弹层状态由页面持有，避免 LazyForEach 的楼层项回收后丢失分页进度。
   @State private showReactionUsersSheet: boolean = false;
   @State private reactionUsersPost: TopicPost | undefined = undefined;
@@ -704,6 +729,13 @@ export struct TopicDetailPage {
       onToggleBookmark: () => {
         this.toggleTopicBookmark();
       },
+      // 通知等级入口。只在服务端给了当前档位时挂载(见 TopicDetailHeader)。
+      notificationLevelKnown: this.currentNotificationLevel() !== undefined,
+      notificationLevel: this.currentNotificationLevel() ?? NOTIFICATION_LEVEL_REGULAR,
+      notificationLoading: this.notificationSaving,
+      onNotificationTap: () => {
+        this.openNotificationPanel();
+      },
       onTitleClick: () => {
         this.jumpToFirstPost();
       },
@@ -1122,6 +1154,55 @@ export struct TopicDetailPage {
       })
     }
 
+    // 通知等级面板(关注 / 跟踪 / 正常 / 静默)。自绘浮层,理由见字段声明处。
+    if (this.notificationPanelVisible) {
+      Stack({ alignContent: Alignment.Bottom }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(SCRIM_STRONG)
+          .onClick(() => {
+            this.closeNotificationPanel();
+          })
+
+        Column() {
+          Row() {
+            Text('这个帖子的通知')
+              .fontSize(17)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 18, bottom: 6 })
+
+          // 四档按"安静→吵"排,当前档右侧打勾。整行可点,点完直接写入并收起 ——
+          // 这类"改一个枚举值"的面板不需要再按一次确认,多一步只会让人以为没生效。
+          ForEach(TOPIC_NOTIFICATION_OPTIONS, (option: NotificationLevelOption) => {
+            this.NotificationLevelRow({
+              option: option,
+              selected: this.isCurrentLevel(option.level),
+              saving: this.notificationSaving
+            })
+          }, (option: NotificationLevelOption): string => `${option.level}`)
+
+          Row()
+            .width('100%')
+            .height(8)
+        }
+        .width('100%')
+        .backgroundColor($r('app.color.page_bg'))
+        .borderRadius({ topLeft: 20, topRight: 20 })
+        .padding({ bottom: this.sysBottomInset + 8 })
+        .clip(true)
+        .transition(TransitionEffect.move(TransitionEdge.BOTTOM).combine(TransitionEffect.OPACITY)
+          .animation({ duration: 240, curve: Curve.EaseOut }))
+      }
+      .width('100%')
+      .height('100%')
+      .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
+    }
+
     }
     .width('100%')
     .height('100%')
@@ -1500,6 +1581,12 @@ export struct TopicDetailPage {
   private onComposerBackTick(): void {
     if (this.showFullComposer) {
       this.closeFullComposer();
+      return;
+    }
+    // 通知等级面板同样吃系统返回键:它是自绘浮层,不在 Navigation 栈里,
+    // Index 拦截返回后只会 bump 这个 tick,不主动接就关不掉(表现为"按返回没反应")。
+    if (this.notificationPanelVisible) {
+      this.closeNotificationPanel();
     }
   }
 
@@ -2660,9 +2747,106 @@ export struct TopicDetailPage {
     return ChallengeShortcutPrefs.isEnabled() && this.challengeBlocked;
   }
 
+  // ==================== 通知等级(关注 / 跟踪 / 正常 / 静默) ====================
+
+  // 顶栏铃铛显示当前档位。服务端没给 details.notification_level 时返回 undefined,
+  // 由标题栏据此**不挂这枚按钮** —— 摆一个点开只会失败的入口不如不给入口。
+  private currentNotificationLevel(): number | undefined {
+    return this.topicNotificationLevel >= 0 ? this.topicNotificationLevel : undefined;
+  }
+
+  private openNotificationPanel(): void {
+    if (!LoginGate.ensureLoggedIn()) {
+      return;
+    }
+    this.notificationPanelVisible = true;
+  }
+
+  private closeNotificationPanel(): void {
+    this.notificationPanelVisible = false;
+  }
+
+  @Builder
+  private NotificationLevelRow(params: NotificationRowParams) {
+    Row() {
+      FaIconView({
+        icon: getFaIcon(params.option.iconId),
+        color: params.selected ? $r('app.color.ld_accent') : $r('app.color.icon_muted'),
+        iconSize: 18
+      })
+        .margin({ right: 12 })
+
+      Column() {
+        Text(params.option.label)
+          .fontSize(15)
+          .fontColor(params.selected ? $r('app.color.ld_accent') : $r('app.color.text_primary'))
+          .width('100%')
+        Text(params.option.hint)
+          .fontSize(12)
+          .fontColor($r('app.color.text_faint'))
+          .width('100%')
+          .margin({ top: 2 })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      if (params.selected) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(16)
+          .fontColor([$r('app.color.ld_accent')])
+      }
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+    .enabled(!params.saving)
+    .opacity(params.saving ? 0.5 : 1)
+    .onClick(() => {
+      this.applyNotificationLevel(params.option.level);
+    })
+  }
+
+  private isCurrentLevel(level: number): boolean {
+    return this.currentNotificationLevel() === level;
+  }
+
+  /**
+   * 写入某一档。**只在服务端明确回 success 时才改本地显示** —— 不做乐观更新。
+   *
+   * 理由:通知等级是"你以为改好了但其实没改"代价很高的东西(静默失败 = 从此收不到提醒,
+   * 而界面已经打了个勾)。一次请求就几百毫秒,等得起。
+   */
+  private async applyNotificationLevel(level: number): Promise<void> {
+    if (this.notificationSaving || !this.detail) {
+      return;
+    }
+    if (this.currentNotificationLevel() === level) {
+      this.closeNotificationPanel();
+      return;
+    }
+    this.notificationSaving = true;
+    const topicId: number = this.detail.id;
+    const result: NetworkResult<boolean> = await new TopicService(this.bridge).setNotificationLevel(topicId, level);
+    this.notificationSaving = false;
+    if (!result.success) {
+      Log.i(`${LOG_TAG} setNotificationLevel failed topic=${topicId} level=${level} status=${result.statusCode}`);
+      this.showComposerToast(result.error ? result.error.message : '设置失败，请稍后重试', 2000);
+      return;
+    }
+    // 改基元 @State 驱动铃铛与面板勾选；同时把值记回 detail 备查,下次整体刷新时
+    // @Watch 会以服务端为准重新对齐（不靠"整体替换 detail"来触发渲染）。
+    this.topicNotificationLevel = level;
+    this.detail.notificationLevel = level;
+    Log.i(`${LOG_TAG} setNotificationLevel ok topic=${topicId} level=${level}`);
+    this.showComposerToast(`已设为「${describeNotificationLevel(level)}」`, 1500);
+    this.closeNotificationPanel();
+  }
+
   // detail 整体加载/替换时,把主题级书签态同步到独立驱动的 topicBookmarked(标题书签图标的真源)。
   private syncTopicBookmarkFromDetail(): void {
     this.topicBookmarked = this.detail?.bookmarked === true;
+    // 通知等级同源同步:服务端没给这个字段时保持 -1(标题栏据此不挂铃铛)。
+    const level: number | undefined = this.detail?.notificationLevel;
+    this.topicNotificationLevel = typeof level === 'number' ? level : -1;
   }
 
   private getTopicMetaText(): string {

@@ -1,5 +1,12 @@
 import { describe, it, expect } from '@ohos/hypium';
-import { CookiePresence, containsCookie, cookieValueFromHeader, presenceFromHeader } from '../main/ets/services/web/CookieProbe';
+import {
+  CookiePresence,
+  NO_COOKIE,
+  containsCookie,
+  cookieValueFromHeader,
+  credentialFingerprint,
+  presenceFromHeader
+} from '../main/ets/services/web/CookieProbe';
 
 export default function cookieProbeTest() {
   describe('cookieProbeTest', () => {
@@ -43,6 +50,29 @@ export default function cookieProbeTest() {
       expect(cookieValueFromHeader('a=1; b=2', '_t')).assertUndefined();
       expect(cookieValueFromHeader('_t=', '_t')).assertUndefined();
       expect(cookieValueFromHeader(undefined, '_t')).assertUndefined();
+    });
+
+    // ---- 凭据指纹：日志要能分辨「换了一枚」与「还是那枚」，又绝不能出现原值 ----
+
+    it('fingerprintIsStableAndDistinguishesValues', 0, () => {
+      expect(credentialFingerprint('abc123')).assertEqual(credentialFingerprint('abc123'));
+      expect(credentialFingerprint('abc123') === credentialFingerprint('abc124')).assertFalse();
+    });
+
+    // 缺失值必须是固定占位符而不是某个真实哈希：调用方拿它判「没有凭据」，
+    // 而「死令牌名单」要求空值**永不匹配**（否则一次误记就把恢复链路焊死一辈子）。
+    it('fingerprintOfMissingValueIsThePlaceholder', 0, () => {
+      expect(credentialFingerprint(undefined)).assertEqual(NO_COOKIE);
+      expect(credentialFingerprint('')).assertEqual(NO_COOKIE);
+    });
+
+    // 定长 8 位十六进制（进日志好对齐、也够挡碰撞），且不泄漏输入的任何片段。
+    it('fingerprintIsFixedLengthHexAndDoesNotLeakInput', 0, () => {
+      const secret: string = 'abcdefghij1234567890-hide-me';
+      const printed: string = credentialFingerprint(secret);
+      expect(printed.length).assertEqual(8);
+      expect(printed.indexOf('1234567890') < 0).assertTrue();
+      expect(credentialFingerprint('x'.repeat(3000)).length).assertEqual(8);
     });
   });
 }

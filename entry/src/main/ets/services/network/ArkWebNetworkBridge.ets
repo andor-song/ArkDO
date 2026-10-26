@@ -58,6 +58,9 @@ interface WebFetchEnvelope {
   // POST 诊断:本次使用的 CSRF token 来源(session/meta/none)与长度,用于定位 403 是否为 CSRF 不匹配。
   csrfSource?: string;
   csrfLength?: number;
+  // 响应头 `Discourse-Logged-Out` 的值(上游在 BAD_TOKEN 时回 "1")。见 NetworkTypes 的说明:
+  // 它把「404 到底是游客还是令牌失效」这件事说清楚了,是会话判定唯一可靠的服务端正面证据。
+  loggedOut?: string;
 }
 
 class PendingJsonRequest {
@@ -883,7 +886,13 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
     const cfMitigated: string = envelope.cfMitigated ? envelope.cfMitigated : '';
     const body: string = envelope.body ? envelope.body : '';
     const challengeState: ChallengeState = detectChallenge(statusCode, contentType, body, cfMitigated);
+    // 「服务端判本次凭据失效」的正面证据。上游在 BAD_TOKEN 时回该头,同时 Set-Cookie 删掉 `_t`,
+    // 因此这一份 cookie 里的令牌已经救不回来了 —— 日志里单独打一行,是排查「谁把我顶下线」的关键。
+    const loggedOut: boolean = (envelope.loggedOut ? envelope.loggedOut : '').length > 0;
     logNetwork(`${method} ${path} response status=${statusCode} contentType=${contentType} bodyLength=${body.length} challenge=${challengeState}`);
+    if (loggedOut) {
+      logNetwork(`${method} ${path} server reported Discourse-Logged-Out (auth token rejected)`);
+    }
     this.logResponseBody(path, contentType, body, method, statusCode, challengeState);
 
     if (challengeState !== ChallengeState.NONE) {
@@ -895,6 +904,7 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
         success: false,
         statusCode: statusCode,
         challengeState: challengeState,
+        loggedOutByServer: loggedOut,
         error: {
           code: NetworkErrorCode.CHALLENGE_REQUIRED,
           message: '需要完成可见 Cloudflare 验证后重试。',
@@ -915,6 +925,7 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
         statusCode: statusCode,
         challengeState: ChallengeState.NONE,
         notLoggedIn: notLoggedIn,
+        loggedOutByServer: loggedOut,
         // 失败态也把 body 带上。Discourse 的 422 会在 body 里给 {"errors":["新用户不能上传附件"]}
         // 这类**能直接展示给用户**的原因;原先这里丢掉 body,上层只能显示「站点返回 HTTP 422」,
         // 用户完全不知道自己踩了哪条规则。success 仍为 false,既有调用方不会误读 data。
@@ -931,6 +942,7 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
       success: true,
       statusCode: statusCode,
       challengeState: ChallengeState.NONE,
+      loggedOutByServer: loggedOut,
       data: body
     };
 

@@ -91,9 +91,14 @@ export interface DiscoursePendingPost {
   created_at?: string;
 }
 
-// topic.json 顶层 details:此处只取 created_by(楼主),其余字段暂不消费。
+// topic.json 顶层 details。上游是 TopicViewDetailsSerializer。
 export interface DiscourseTopicDetailsField {
   created_by?: DiscourseCreatedBy;
+  // 当前用户在本主题的通知等级(TopicUser.notification_level)。
+  // 上游在 topic_user 不存在时**回落 regular(1)**,所以这个字段对游客/未设置过的人也会是 1,
+  // 不能拿它判"当前用户有没有为该帖设过通知"—— 只能拿来显示当前档位。
+  // 取值:0 静默 / 1 正常 / 2 跟踪 / 3 关注(见 lib/notification_levels.rb 的 topic_levels)。
+  notification_level?: number;
 }
 
 export interface DiscourseCreatedBy {
