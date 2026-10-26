@@ -218,7 +218,14 @@ export class AuthTokenStore {
   /** 会话重新建立 = 手里是一枚全新的凭据，旧标记不该继续拦它。 */
   static clearDeadMarks(context: common.Context): void {
     for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
-      AppSettingsStore.remove(context, AuthTokenStore.deadTokenKey(PERSISTED_AUTH_COOKIES[index]));
+      const key: string = AuthTokenStore.deadTokenKey(PERSISTED_AUTH_COOKIES[index]);
+      // 先读再删:这个方法挂在**每次**会话检查成功上(前台、下拉刷新、看门狗都会走),
+      // 而判死标记是极少写的东西 —— 无脑删等于每次成功检查都为两个不存在的键各做一次
+      // 磁盘 flush。读是内存操作，只在确实存着时才付那次写的代价。
+      const stored: string | undefined = AppSettingsStore.getString(context, key);
+      if (stored !== undefined && stored.length > 0) {
+        AppSettingsStore.remove(context, key);
+      }
     }
   }
 
