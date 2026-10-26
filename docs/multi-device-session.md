@@ -8,8 +8,18 @@
 **不是**服务端做了"单会话/单设备限制"。Discourse 正常配置下每个客户端各有一枚独立令牌，
 互不影响（`app/models/user_auth_token.rb` 的 `MAX_SESSION_COUNT = 60`，且只在登录时淘汰最旧的）。
 
-真正的链路是：App 揣着一枚**已被服务端作废的认证令牌**反复重放，而这会打满上游**按 IP** 计的
+最可能的链路是：App 揣着一枚**已被服务端作废的认证令牌**反复重放，而这会打满上游**按 IP** 计的
 限流锁，把同一网络里另一台设备的**有效**令牌一起拖死。
+
+## 证据强度（别把推测当结论）
+
+| 环节 | 强度 | 依据 |
+|---|---|---|
+| 每客户端各一枚独立令牌、正常登录不互踢 | **已证实** | `user_auth_token.rb`（`MAX_SESSION_COUNT = 60`、`enforce_session_count_limit!` 只在 `log_on_user` 里调）、官方 spec `logging on user always creates a new token` |
+| 失效令牌会回 `Discourse-Logged-Out` 并删浏览器 cookie | **已证实** | `default_current_user_provider.rb` 的 `BAD_TOKEN` 分支、`lib/hijack.rb:95`、`request_tracker.rb:410` |
+| 那把限流锁按 IP 计数，刷满后**有效**令牌也会被一并拒绝并删 cookie | **已证实（源码机制）** | `RateLimiter.new(nil, "cookie_auth_#{request.ip}", 10, 1.minute)`；超限走的是「**不查库**直接判 BAD_TOKEN → `raise InvalidAccess(delete_cookie: TOKEN_COOKIE)`」 |
+| App 会留着死令牌反复重放 | **已证实（本仓旧行为）** | 密钥库备份只删「用户主动退出」那一条路，匿名落地路径不删；冷启动无条件写回 |
+| **这条链就是用户看到的"互踢"** | **推测** | 未做两端同时抓包；也可能是站点开 `log_out_strict` 等因素。见下面「明天验收」的判读，就是用来证伪这一条的 |
 
 ## 机制（逐跳）
 
@@ -22,7 +32,9 @@
 3. 同一文件里那把限流锁：`RateLimiter.new(nil, "cookie_auth_#{request.ip}", 10, 1.minute)`。
    key 含 **IP**，且只有"带了认证 cookie 却没认出人"才计数。App 刷满它之后，
    **同一 Wi-Fi 下电脑浏览器的请求会撞上同一道闸** → 那枚有效令牌也被判 BAD_TOKEN 并删 cookie。
-4. 于是表现成双向对称的"互踢"：谁先重放死令牌，另一个人掉线。
+4. 于是可能表现成"互踢"：**谁在重放死令牌，另一台就掉线**。机制本身是对称的（共享的是 IP 桶，
+   不是设备身份），但实践中不对称 —— App 有看门狗、通知轮询、MessageBus 长轮询等自动流量，
+   更容易把桶刷满，所以通常是"手机在后台跑着 → 电脑掉线"。
 
 ## 修了什么
 
@@ -57,6 +69,14 @@
 **C. 顺带确认一个前提**（可选但很有价值）
 网页版「偏好设置 → 安全」里能看到已登录设备列表。若手机 App 与电脑浏览器各自成一行且**同时在线**，
 说明站点没有单会话限制，与上面的结论一致。
+
+## 一个刻意的不对称：未登录也能看到铃铛
+
+上游 `TopicViewDetailsSerializer#notification_level` 对**游客**也回 `regular(1)`（不是 null）——
+那只是"默认值的回落"，不代表用户设过它。所以 App 里游客看到的"当前档"其实是服务端默认值，
+不能当作用户的选择。处理：点铃铛先走登录闸门（`LoginGate.ensureLoggedIn()`，与"俺也一样"按钮
+"仍显示、点了走登录拦截"同一条先例），未登录时**不会**打开面板，也就不会把那个假默认值
+渲染成一个看起来像"我已选过"的勾选态。
 
 ## 仍未证实的（不下结论）
 

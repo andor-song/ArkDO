@@ -85,6 +85,11 @@ interface DiscourseUserDetail {
   // discourse-follow 插件字段(实测 /u/kevin.json 全部返回)。
   can_follow?: boolean;
   is_followed?: boolean;
+  // 静音/忽略:两个独立布尔(当前登录者与 TA 的关系)+ 两个权限位。见 UserProfileDetail 注释。
+  ignored?: boolean;
+  muted?: boolean;
+  can_ignore_user?: boolean;
+  can_mute_user?: boolean;
   total_followers?: number;
   total_following?: number;
   // discourse-category-experts:当前登录者已认可 TA 的记录,元素形如 {category_id,...}。
@@ -451,8 +456,23 @@ export class UserProfileService {
         detail.flairName = sourceUser.flair_name;
       }
       // 布尔字段用 typeof 判断:false 是有效值(「不可关注」「未关注」),不能被 && 短路吃掉。
+      // 静音/忽略四个字段一律"给了才写":服务端没给时留 undefined,让上层区分
+      // "TA 不能被我静音"与"这次响应里压根没这字段"(旧版本/插件裁剪) —— 后者不该
+      // 被当成 false 而把入口永久藏起来。
       if (typeof sourceUser.can_follow === 'boolean') {
         detail.canFollow = sourceUser.can_follow;
+      }
+      if (typeof sourceUser.ignored === 'boolean') {
+        detail.ignored = sourceUser.ignored;
+      }
+      if (typeof sourceUser.muted === 'boolean') {
+        detail.muted = sourceUser.muted;
+      }
+      if (typeof sourceUser.can_ignore_user === 'boolean') {
+        detail.canIgnoreUser = sourceUser.can_ignore_user;
+      }
+      if (typeof sourceUser.can_mute_user === 'boolean') {
+        detail.canMuteUser = sourceUser.can_mute_user;
       }
       if (typeof sourceUser.is_followed === 'boolean') {
         detail.isFollowed = sourceUser.is_followed;

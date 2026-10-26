@@ -46,6 +46,16 @@ export interface UserProfileDetail {
   // 昵称后的状态表情短名(user.status.emoji,如 nerd_face),经 EmojiUrlRegistry 查 url,与帖子详情同源。
   // 昵称后的徽章小金标见 UserSummary.topBadges 的 showInPostHeader(summary 顶层 badges 定义带该字段)。
   statusEmoji?: string;
+  // 当前登录者与 TA 的关系(UserCardSerializer 的 ignored / muted 两个独立布尔)。
+  // 上游保证两者互斥(ignore 会先删 muted、mute 会先删 ignored),但序列化时是两个字段,
+  // 故由 userRelationStateOf() 收敛成一个状态值再给 UI,不让每个调用点各判一遍。
+  ignored?: boolean;
+  muted?: boolean;
+  // 服务端判定的"能不能对 TA 做这件事"(guardian:静音要 TL1+;忽略默认只给管理员/版主/TL2,
+  // 且两者都不能对自己、不能对管理组成员用)。**入口显不显示完全由这两个字段决定** ——
+  // 权限组是站点可配置的,客户端自己猜必错。
+  canIgnoreUser?: boolean;
+  canMuteUser?: boolean;
 }
 
 // 「认可」弹窗里可勾选的一个分类(discourse-category-experts 的 endorsable-categories)。

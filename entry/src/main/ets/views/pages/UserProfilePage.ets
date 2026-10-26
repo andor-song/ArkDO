@@ -26,17 +26,26 @@ import { RichInlineNode, RichInlineType } from '../../services/content/RichConte
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { UserProfileCache } from '../../services/user/UserProfileCache';
 import { UserProfileService } from '../../services/user/UserProfileService';
-import { UserRelationService } from '../../services/user/UserRelationService';
+import {
+  USER_RELATION_IGNORED,
+  USER_RELATION_MUTED,
+  USER_RELATION_NORMAL,
+  UserRelationOption,
+  UserRelationService,
+  buildUserRelationOptions,
+  expiringAtFromNow,
+  userRelationStateOf
+} from '../../services/user/UserRelationService';
 import { FaIconDefinition, FaIconView, getFaIcon } from '../components/FaIcon';
 import { getEmojiUrl } from '../components/EmojiUrlRegistry';
 import { HolographicText } from '../components/HolographicText';
 import { BadgeTile } from '../components/BadgeTile';
 import { UserAvatar } from '../components/UserAvatar';
-import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
+import { SYS_BOTTOM_INSET_KEY, SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { showToast as promptToast } from '../../common/utils/Toast';
 import { badgeHeadLabel, badgeRowFillers, badgeRowsOf, formatCount, formatJoinDate, formatTimeRead, trustLabelOf } from '../../common/utils/ProfileFormat';
 import { CARD_GAP, CARD_PADDING, CARD_RADIUS, PAGE_MARGIN } from '../../common/theme/Metrics';
-import { LIKE_RED } from '../../common/theme/Palette';
+import { LIKE_RED, SCRIM_STRONG } from '../../common/theme/Palette';
 import { immersiveTitleBarContentTopSpacer } from '../../common/ui/ImmersiveTitleBarLayout';
 import {
   ImmersiveLightArea,
@@ -81,6 +90,8 @@ const SEGMENT_LIKED: number = 3;
 export struct UserProfilePage {
   // 窗口常驻全屏布局:内容层自行避让状态栏(背景层已天然铺满整屏,含状态栏条)。
   @StorageProp(SYS_TOP_INSET_KEY) private sysTopInset: number = 0;
+  // 底部安全区（手势条）高度：自绘浮层要按它垫底，否则最后一行被系统条压住。
+  @StorageProp(SYS_BOTTOM_INSET_KEY) private sysBottomInset: number = 0;
   bridge: ArkWebNetworkBridge = new ArkWebNetworkBridge();
   @Prop @Watch('handleArkWebReadyChanged') isArkWebReady: boolean = false;
   username: string = '';
@@ -131,6 +142,15 @@ export struct UserProfilePage {
   @State private endorseLoading: boolean = false;
   @State private endorseSubmitting: boolean = false;
   @State private endorseSelectedIds: number[] = [];
+  // 静音/忽略面板与写入态。面板是**自绘浮层**而不是第二个 bindSheet:本页已有一个 bindSheet
+  // 给「认可」弹窗，同一条组件链上第二个 bindSheet 只会让前一个失效（RootTabPage 里同样记着
+  // 这条约束）。自绘那套的做法与理由见 ComposerPage 的分类/标签浮层注释。
+  @State private showRelationSheet: boolean = false;
+  @State private relationPending: boolean = false;
+  // 当前关系(normal / mute / ignore)的独立驱动状态位。
+  // 不直接读 profileDetail:detail 是**整体替换**的对象，改它不可靠（同 isFollowing 的理由），
+  // 而且写操作成功后我们手上只有"刚发出去的那个值"，没有新的 detail。
+  @State private relationState: string = USER_RELATION_NORMAL;
   // 私信浮层可见态:发私信走原生 ComposerPage 全屏编辑,不再跳 WebView。
   // 返回键由 RootTabPage 的 USER_PROFILE 分支经 PROFILE_PM_BACK_TICK_KEY 消费。
   @State private showPrivateComposer: boolean = false;
@@ -182,6 +202,81 @@ export struct UserProfilePage {
           }
         })
           .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut }))
+      }
+
+      // 静音 / 忽略面板:自绘底部浮层(本页 bindSheet 已被「认可」占用，同链第二个会互相失效)。
+      if (this.showRelationSheet) {
+        Stack({ alignContent: Alignment.Bottom }) {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor(SCRIM_STRONG)
+            .onClick(() => {
+              this.closeRelationSheet();
+            })
+
+          Column() {
+            Text(`对 @${this.username}`)
+              .fontSize(17)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .width('100%')
+              .padding({ left: 20, right: 20, top: 18, bottom: 6 })
+
+            // 内容必须直接调**无参** @Builder 读 this.xxx:带值参的 @Builder 按值捕获一次,
+            // relationPending 翻了也不会重绘(表现就是"转圈不出现")。故列表展开写在这里。
+            ForEach(this.relationOptions(), (option: UserRelationOption) => {
+              Row() {
+                Column() {
+                  Text(option.label)
+                    .fontSize(15)
+                    .fontColor(option.current
+                      ? $r('app.color.ld_accent') : $r('app.color.text_primary'))
+                    .width('100%')
+                  Text(option.hint)
+                    .fontSize(12)
+                    .fontColor($r('app.color.text_faint'))
+                    .width('100%')
+                    .margin({ top: 2 })
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+
+                if (option.current) {
+                  SymbolGlyph($r('sys.symbol.checkmark'))
+                    .fontSize(16)
+                    .fontColor([$r('app.color.ld_accent')])
+                }
+              }
+              .width('100%')
+              .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+              .enabled(!this.relationPending)
+              .opacity(this.relationPending ? 0.5 : 1)
+              .onClick(() => {
+                this.applyUserRelation(option);
+              })
+            }, (option: UserRelationOption): string => {
+              // key 必须带上勾选态与保存态:relationOptions() 的数组是按常量顺序生成的，
+              // 只用 relation:days 当 key 时，档位变了 key 不变 → ForEach 不重建这些行，
+              // 勾选会赖在原来那一行上（本仓 TopicDetailPage 的通知面板同一处坑）。
+              return `${option.relation}:${option.days}:${option.current ? 1 : 0}:${this.relationPending ? 1 : 0}`;
+            })
+
+            Row()
+              .width('100%')
+              .height(8)
+          }
+          .width('100%')
+          .backgroundColor($r('app.color.page_bg'))
+          .borderRadius({ topLeft: 20, topRight: 20 })
+          .padding({ bottom: this.sysBottomInset + 8 })
+          .clip(true)
+          .transition(TransitionEffect.move(TransitionEdge.BOTTOM).combine(TransitionEffect.OPACITY)
+            .animation({ duration: 240, curve: Curve.EaseOut }))
+        }
+        .width('100%')
+        .height('100%')
+        .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
       }
     }
     .width('100%')
@@ -250,7 +345,28 @@ export struct UserProfilePage {
           }
         },
         menu: {
-          value: [{
+          value: this.canManageRelation() ? [{
+            content: {
+              icon: $r('sys.symbol.eye_slash'),
+              // 标题直接说出当前状态：入口若只写"静音或忽略"，用户得点开才知道自己是不是已经
+              // 静音过 TA —— 而"以为没设过、其实设过"正是这类开关最容易踩的空洞。
+              label: this.relationState === USER_RELATION_MUTED ? '已静音 · 点按修改'
+                : (this.relationState === USER_RELATION_IGNORED ? '已忽略 · 点按修改' : '静音或忽略'),
+              isEnabled: true,
+              action: () => {
+                this.openRelationSheet();
+              }
+            }
+          }, {
+            content: {
+              icon: $r('sys.symbol.arrow_right_up_and_square'),
+              label: '在网页中打开',
+              isEnabled: true,
+              action: () => {
+                this.openUserWebPage();
+              }
+            }
+          }] : [{
             content: {
               icon: $r('sys.symbol.arrow_right_up_and_square'),
               label: '在网页中打开',
@@ -1268,9 +1384,102 @@ export struct UserProfilePage {
   }
 
   // 关注/认可态从 detail 落到独立 @State:细粒度翻转不能直接改整体替换的 detail 对象。
+  // ==================== 静音 / 忽略 ====================
+
+  /**
+   * 入口该不该出现。**完全由服务端的两个权限位决定**，不自己算：
+   * 上游 guardian 里「能不能静音/忽略」取决于信任等级与可配置的用户组（忽略默认只给
+   * 管理员/版主/TL2），且都不能作用于自己或管理组成员。客户端猜一遍必错，而且错的方向是
+   * "给了入口、点了被服务端拒"。
+   *
+   * 字段缺失（undefined）也算"不能"：detail 走缓存，旧缓存里没这两个字段时，与其摆一个
+   * 大概率失败的入口，不如等下一次真拿到 detail。
+   *
+   * 这里**不**再叠一次 LoginGate.isLoggedIn()：上游对游客本来就把两个权限位算成 false
+   * （guardian 的 can_mute_users?/can_ignore_users? 遇 anonymous? 直接 return false），
+   * 而那个静态读法不响应式，菜单不会因登录翻转重绘。真被旧缓存带出一个入口也不要紧：
+   * openRelationSheet 里还有登录闸门兜着（与「俺也一样」按钮同一条先例）。
+   */
+  private canManageRelation(): boolean {
+    return this.profileDetail?.canMuteUser === true || this.profileDetail?.canIgnoreUser === true;
+  }
+
+  private relationOptions(): UserRelationOption[] {
+    return buildUserRelationOptions(this.relationState,
+      this.profileDetail?.canMuteUser === true, this.profileDetail?.canIgnoreUser === true);
+  }
+
+  private openRelationSheet(): void {
+    if (!LoginGate.ensureLoggedIn()) {
+      return;
+    }
+    this.showRelationSheet = true;
+  }
+
+  private closeRelationSheet(): void {
+    this.showRelationSheet = false;
+  }
+
+  /**
+   * 应用某一档关系。**不做乐观更新**：静音/忽略是「以为生效了其实没生效」代价很高的事
+   * （继续被吵，或从此看不到 TA 的话还以为自己刷丢了），所以等服务端回成功再翻状态位。
+   *
+   * 三态互斥由服务端保证（ignore 先删 muted、mute 先删 ignored、normal 两个都删），
+   * 客户端**不**自己串「先取消 A 再设 B」—— 那是两个请求，中间态会暴露给用户且可能一半失败。
+   */
+  private async applyUserRelation(option: UserRelationOption): Promise<void> {
+    if (this.relationPending || this.relationService === undefined) {
+      return;
+    }
+    // 「忽略」永远可重选：服务端不告诉我们剩余天数，无法判断"当前选的是哪一档时长"，
+    // 所以对 ignore 不做"同档即返回"的短路（否则点「忽略·3天」会被当成没变化而什么都不发）。
+    if (option.relation === this.relationState && option.relation !== USER_RELATION_IGNORED) {
+      this.closeRelationSheet();
+      return;
+    }
+    this.relationPending = true;
+    // 忽略要带到期时间（上游那列 NOT NULL，缺了服务端直接抛）；其余两档传空串。
+    const expiringAt: string = option.days > 0 ? expiringAtFromNow(Date.now(), option.days) : '';
+    const result: NetworkResult<boolean> =
+      await this.relationService.setUserRelation(this.username, option.relation, expiringAt);
+    this.relationPending = false;
+    if (!result.success) {
+      Log.i(`${LOG_TAG} relation set failed user=${this.username} target=${option.relation} status=${result.statusCode}`);
+      this.showToast(result.error ? result.error.message : '设置失败，请稍后重试');
+      return;
+    }
+    this.relationState = option.relation;
+    this.applyRelationToDetail(option);
+    Log.i(`${LOG_TAG} relation set user=${this.username} target=${option.relation} days=${option.days}`);
+    this.showToast(this.relationToastOf(option));
+    this.closeRelationSheet();
+  }
+
+  /** 写回 detail 与缓存：否则退出再进这页会读到旧状态，看起来像没生效。 */
+  private applyRelationToDetail(option: UserRelationOption): void {
+    const detail: UserProfileDetail | undefined = this.profileDetail;
+    if (detail === undefined) {
+      return;
+    }
+    detail.ignored = option.relation === USER_RELATION_IGNORED;
+    detail.muted = option.relation === USER_RELATION_MUTED;
+    UserProfileCache.setDetail(this.username, detail);
+  }
+
+  private relationToastOf(option: UserRelationOption): string {
+    if (option.relation === USER_RELATION_MUTED) {
+      return '已静音 TA';
+    }
+    if (option.relation === USER_RELATION_IGNORED) {
+      return option.days >= 3650 ? '已一直忽略 TA' : `已忽略 TA · ${option.days} 天`;
+    }
+    return '已恢复正常';
+  }
+
   private syncRelationState(detail?: UserProfileDetail): void {
     this.isFollowing = detail?.isFollowed === true;
     this.endorsedCount = detail?.endorsedCategoryIds ? detail.endorsedCategoryIds.length : 0;
+    this.relationState = userRelationStateOf(detail?.ignored, detail?.muted);
   }
 
   private async loadSummary(service: UserProfileService, username: string): Promise<void> {

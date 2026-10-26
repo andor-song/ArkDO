@@ -1,6 +1,14 @@
 import { describe, it, expect } from '@ohos/hypium';
 import { EndorsableCategoriesResult } from '../main/ets/models/UserProfile';
-import { UserRelationService } from '../main/ets/services/user/UserRelationService';
+import {
+  USER_RELATION_IGNORED,
+  USER_RELATION_MUTED,
+  USER_RELATION_NORMAL,
+  UserRelationService,
+  buildUserRelationOptions,
+  expiringAtFromNow,
+  userRelationStateOf
+} from '../main/ets/services/user/UserRelationService';
 import { ChallengeState, JsonNetworkClient, NetworkResult } from '../main/ets/services/network/NetworkTypes';
 
 // 记录最后一次请求的方法/路径/body:写操作用错 method 或 body 就会误操作,必须锁死。
@@ -136,6 +144,92 @@ export default function userRelationServiceTest() {
       expect(result.success).assertFalse();
       // 没有触达 bridge:方法记录仍是初始空串。
       expect(bridge.lastMethod).assertEqual('');
+    });
+
+    // ---- 静音 / 忽略 ----
+
+    // 端点与官方前端逐字一致：PUT /u/{u}/notification_level.json（userPath + .json）。
+    it('mutesViaNotificationLevelEndpoint', 0, async () => {
+      const bridge: SpyBridge = new SpyBridge(okResponse('{"success":"OK"}'));
+      const result = await new UserRelationService(bridge).setUserRelation('kavingo', USER_RELATION_MUTED, '');
+
+      expect(bridge.lastMethod).assertEqual('PUT_FORM');
+      expect(bridge.lastPath).assertEqual('/u/kavingo/notification_level.json');
+      expect(bridge.lastBody).assertEqual('notification_level=mute');
+      expect(result.success).assertTrue();
+    });
+
+    // 「恢复」由服务端两个都清，客户端只发一个 normal，不去串两次请求。
+    it('sendsNormalWithoutExpiry', 0, async () => {
+      const bridge: SpyBridge = new SpyBridge(okResponse('{"success":"OK"}'));
+      await new UserRelationService(bridge).setUserRelation('a.b', USER_RELATION_NORMAL, '');
+
+      expect(bridge.lastPath).assertEqual('/u/a.b/notification_level.json');
+      expect(bridge.lastBody).assertEqual('notification_level=normal');
+    });
+
+    // 上游 ignored_users.expiring_at 是 NOT NULL，参数缺失会在 Time.parse(nil) 抛 500。
+    // 所以 ignore 缺到期时间必须**在客户端拒发**，而不是发一个注定失败的请求。
+    it('refusesIgnoreWithoutExpiry', 0, async () => {
+      const bridge: SpyBridge = new SpyBridge(okResponse('{"success":"OK"}'));
+      const result = await new UserRelationService(bridge).setUserRelation('x', USER_RELATION_IGNORED, '');
+
+      expect(bridge.lastMethod).assertEqual('');
+      expect(result.success).assertFalse();
+    });
+
+    it('ignoreCarriesUrlEncodedExpiry', 0, async () => {
+      const bridge: SpyBridge = new SpyBridge(okResponse('{"success":"OK"}'));
+      await new UserRelationService(bridge).setUserRelation('x', USER_RELATION_IGNORED, '2026-11-01T00:00:00.000Z');
+
+      expect(bridge.lastBody)
+        .assertEqual('notification_level=ignore&expiring_at=2026-11-01T00%3A00%3A00.000Z');
+    });
+
+    // 到期时间用 UTC ISO：上游 Time.parse / DateTime.parse 都吃，且不引入本地时区歧义。
+    it('expiringAtIsUtcIsoPlusDays', 0, () => {
+      const base: number = Date.UTC(2026, 9, 27, 0, 0, 0);
+      expect(expiringAtFromNow(base, 3)).assertEqual('2026-10-30T00:00:00.000Z');
+      expect(expiringAtFromNow(base, 0)).assertEqual('2026-10-27T00:00:00.000Z');
+    });
+
+    // 上游给的是两个独立布尔；这里收敛成三态，且 ignored 优先（服务端互斥，
+    // 万一历史数据同时为真也不能让 UI 出现"既忽略又静音"）。
+    it('collapsesTwoBooleansIntoOneState', 0, () => {
+      expect(userRelationStateOf(undefined, undefined)).assertEqual(USER_RELATION_NORMAL);
+      expect(userRelationStateOf(false, false)).assertEqual(USER_RELATION_NORMAL);
+      expect(userRelationStateOf(false, true)).assertEqual(USER_RELATION_MUTED);
+      expect(userRelationStateOf(true, false)).assertEqual(USER_RELATION_IGNORED);
+      expect(userRelationStateOf(true, true)).assertEqual(USER_RELATION_IGNORED);
+    });
+
+    // 权限位决定入口：没有 can_mute/can_ignore 时只剩「恢复」一行（不能凭空给入口）。
+    it('optionsFollowServerPermissionFlags', 0, () => {
+      expect(buildUserRelationOptions(USER_RELATION_NORMAL, false, false).length).assertEqual(1);
+      expect(buildUserRelationOptions(USER_RELATION_NORMAL, true, false).length).assertEqual(2);
+      const ignoreOnly = buildUserRelationOptions(USER_RELATION_NORMAL, false, true);
+      expect(ignoreOnly.length).assertEqual(5);
+      expect(buildUserRelationOptions(USER_RELATION_NORMAL, true, true).length).assertEqual(6);
+    });
+
+    // 「忽略」不给任何一行打勾：服务端不告诉剩余天数，标在哪一行都是撒谎的勾选。
+    it('neverClaimsACurrentIgnoreDuration', 0, () => {
+      const options = buildUserRelationOptions(USER_RELATION_IGNORED, true, true);
+      let checked: number = 0;
+      for (let index: number = 0; index < options.length; index++) {
+        if (options[index].current) {
+          checked++;
+        }
+      }
+      expect(checked).assertEqual(0);
+      const muted = buildUserRelationOptions(USER_RELATION_MUTED, true, true);
+      let mutedChecked: number = 0;
+      for (let index: number = 0; index < muted.length; index++) {
+        if (muted[index].current) {
+          mutedChecked++;
+        }
+      }
+      expect(mutedChecked).assertEqual(1);
     });
   });
 }
