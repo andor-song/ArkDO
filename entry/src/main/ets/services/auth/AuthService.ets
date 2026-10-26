@@ -54,7 +54,7 @@ export interface SessionProbe {
   verdict: SessionVerdict;
   user?: User;
   // **服务端亲口宣告这枚认证令牌已作废**（404 + `Discourse-Logged-Out`）。
-  // 上层据此除「把界面切成游客态」之外，还要做销毁备份、清掉 cookie 仓的处置 ——
+  // 上层据此除「把界面切成游客态」之外，还要做隔离凭据的处置（钉指纹 + 清 cookie 仓）——
   // 见 SessionVerdict 文件头与 RootTabPage.handleDeadToken 的说明。
   // 刻意只在 404 时为真：403 + 同一个头是**本机撞上按 IP 的限流**，令牌可能仍然有效，
   // 按作废处置会把「等一分钟就好」误升级成「强制重登」。
@@ -81,8 +81,8 @@ export class AuthService {
   async probeSession(): Promise<NetworkResult<SessionProbe>> {
     const response: NetworkResult<string> = await this.bridge.getJson(CURRENT_SESSION_PATH);
     const cookiePresence: CookiePresence = this.cookiePresence(AUTH_COOKIE_NAME);
-    // 与 verdict 用**同一个口径**（isTokenDeclaredDead）：这条证据决定上层要不要销毁备份，
-    // 两处判断若漂出「清了登录态却没清备份」，就会留下每次冷启动重放死令牌的入口。
+    // 与 verdict 用**同一个口径**（isTokenDeclaredDead）：这条证据决定上层要不要隔离凭据，
+    // 两处判断若漂出「清了登录态却没隔离凭据」，就会留下每次冷启动重放死令牌的入口。
     const declaredDead: boolean = isTokenDeclaredDead(response.statusCode, response.loggedOutByServer);
     if (!response.success) {
       const verdict: SessionVerdict = judgeSession({

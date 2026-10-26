@@ -2164,10 +2164,11 @@ export struct RootTabPage {
     this.lastSessionCheckFailed = false;
     this.anonymousStrikes = 0;
     this.stopSessionWatchdog();
-    // 真登出必须把这枚已注销的凭据从本机彻底隔离:毁备份 + 钉指纹 + 清 cookie 仓。
-    // 只毁备份不够 —— 销毁走系统密钥库是异步的,进程若在登出后立刻被回收,备份还在,
+    // 真登出必须把这枚已注销的凭据从本机彻底隔离:钉指纹 + 清 cookie 仓(备份的销毁交给恢复
+    // 那一步**按值**处理,理由见 AuthTokenStore.rejectAll 的注释)。
+    // 只按别名删备份是不够的 —— 那次删除是异步且不等待:进程若在登出后立刻被回收,备份还在,
     // 下次冷启动会把一个**已经不存在的会话**原样写回来(表现为"退出了又自动登回去")。
-    // 钉住指纹之后,restoreIntoCookieJar 会认出同一枚并跳过,销毁没跑完也拦得住。
+    // 钉住指纹之后,restoreIntoCookieJar 会认出同一枚并跳过,删除有没有跑完都拦得住。
     // 不等它:这是用户主动动作,界面要立刻落到游客态;新会话建立时 clearDeadMarks 会解除。
     AuthTokenStore.revokeLocalSession(this.hostContext()).catch(() => {
       Log.i(`${LOG_TAG} credential quarantine after logout did not finish`);
@@ -2215,8 +2216,9 @@ export struct RootTabPage {
     const verdict: SessionVerdict | undefined = probe !== undefined ? probe.verdict : undefined;
     const applyAnonymous: boolean = verdict !== undefined &&
       shouldApplyAnonymous(verdict, this.anonymousStrikes);
-    // 服务端亲口宣告携带的令牌已作废:除了下面照常落「未登录」,还必须钉指纹 + 毁备份 + 清 jar。
-    // 必须在写登录态**之前**做完 —— 否则这一轮之后又有别的机会把备份灌回去。
+    // 服务端亲口宣告携带的令牌已作废:除了下面照常落「未登录」,还必须钉指纹 + 清 jar
+    // (清 jar 不能省:此刻每个同源请求还在带着死令牌计入按 IP 的限流,连累另一台设备)。
+    // 必须在写登录态**之前**做完 —— 否则这一轮之后又有别的机会把它灌回去。
     if (probe !== undefined && probe.tokenDeclaredDead === true) {
       await this.handleDeadToken(requestId);
       // 处置要读系统密钥库(异步),这一等之间**可能有更新的检查跑完并写好了状态**。
