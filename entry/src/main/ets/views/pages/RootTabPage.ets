@@ -88,10 +88,12 @@ import { FollowersListPage } from './FollowersListPage';
 import { MessageInboxPage } from './MessageInboxPage';
 import { ChatPage } from './ChatPage';
 import { TopicDetailPage } from './TopicDetailPage';
+import { QUICK_ACTION_COMPOSE, QUICK_ACTION_NOTIFICATIONS, QUICK_ACTION_SEARCH, quickActionOfToken } from '../../services/quickaction/QuickAction';
 import { bumpTick, COMPOSER_OVERLAY_BACK_TICK_KEY, COMPOSER_OVERLAY_VISIBLE_KEY, DRAFTS_COMPOSER_BACK_TICK_KEY,
   DRAFTS_COMPOSER_VISIBLE_KEY, DRAFTS_REFRESH_TICK_KEY, IMAGE_VIEWER_BACK_TICK_KEY, IMAGE_VIEWER_VISIBLE_KEY,
-  PROFILE_DRAFT_COUNT_KEY, PROFILE_PM_BACK_TICK_KEY, PROFILE_PM_VISIBLE_KEY, SEARCH_OVERLAY_BACK_TICK_KEY,
-  SEARCH_OVERLAY_VISIBLE_KEY, SETTINGS_DOH_TICK, SITES_TICK, CATEGORY_SHEET_VISIBLE_KEY } from '../../common/constants/StorageKeys';
+  HOME_COMPOSER_REQUEST_KEY, PROFILE_DRAFT_COUNT_KEY, PROFILE_PM_BACK_TICK_KEY, PROFILE_PM_VISIBLE_KEY,
+  QUICK_ACTION_KEY, SEARCH_OVERLAY_BACK_TICK_KEY, SEARCH_OVERLAY_VISIBLE_KEY, SETTINGS_DOH_TICK, SITES_TICK,
+  CATEGORY_SHEET_VISIBLE_KEY } from '../../common/constants/StorageKeys';
 import { DraftEventBus } from '../../services/draft/DraftEventBus';
 import { WebViewPage } from './WebViewPage';
 import { showToast as promptToast } from '../../common/utils/Toast';
@@ -165,6 +167,10 @@ export struct RootTabPage {
   private bottomTabInterceptionSet: boolean = false;
   // 首页分类筛选底部面板可见态镜像:面板打开期间底部 tab 栏让位(逻辑见 build() 合成条件)。
   @StorageProp(CATEGORY_SHEET_VISIBLE_KEY) private categorySheetVisible: boolean = false;
+  // 长按图标的快捷入口令牌(EntryAbility 写入)。@Watch 管热启动(onNewWant),aboutToAppear
+  // 管冷启动(此刻令牌已写好但 watch 不会为初值触发) —— 两条路都走同一个认领方法,幂等靠
+  // "先清令牌再执行"保证。
+  @StorageProp(QUICK_ACTION_KEY) @Watch('consumeQuickAction') private quickActionToken: string = '';
   // 预览返回键信号:Index @Entry 拦截后 bump,经 @Param 透传给 ImageViewer(翻回上一张/首图关闭)。
   @StorageProp(IMAGE_VIEWER_BACK_TICK_KEY) private viewerBackTick: number = 0;
   // 主窗口引用:图片预览期间隐藏/恢复状态栏用(打开时获取,关闭后释放)。
@@ -385,6 +391,11 @@ export struct RootTabPage {
       this.currentUser = this.loadIdentitySnapshot();
     }
     this.updateSessionWatchdog();
+    // 快捷入口的冷启动认领:@Watch 不会为**初值**触发,而 EntryAbility.onCreate 早已把令牌写进
+    // AppStorage,所以这里必须主动认领一次(否则"从图标点发帖进 App"什么也不会发生)。
+    // 陈旧令牌(例如引导页期间写入、当时根页没挂载所以没人认领)由 quickActionOfToken 的年龄
+    // 把关挡掉 —— 它靠的是令牌里自带的时间戳,不靠这里清什么状态。
+    this.consumeQuickAction();
   }
 
   aboutToDisappear(): void {
@@ -1771,6 +1782,45 @@ export struct RootTabPage {
       return;
     }
     this.showBottomTab = false;
+  }
+
+  // 认领并执行长按图标的快捷入口。@Watch(热启动)与 aboutToAppear(冷启动)共用这一个入口。
+  //
+  // 顺序要紧:**先清令牌再执行**。两个触发点可能连着来(热启动时 @Watch 先触发、用户随后
+  // 切回前台又走一遍挂载路径),令牌留着就会把同一个动作执行两遍(编辑器弹两次 / tab 反复跳)。
+  private consumeQuickAction(): void {
+    const stored: string = (AppStorage.get(QUICK_ACTION_KEY) as string | undefined) ?? '';
+    const action: string = quickActionOfToken(stored, Date.now());
+    if (action.length === 0) {
+      // 没有可执行的动作(无令牌 / 陈旧 / 未知值)。**只在确实存着东西时**才清:
+      // 本方法同时挂在 @StorageProp(QUICK_ACTION_KEY) 的 @Watch 上,而自己又会写这个键 ——
+      // 若每次都无脑写一遍 '',空值→空值的写入可能再触发一次 @Watch,形成自我回调的空转。
+      // 加这一道"变了才写"就把链条断在第二次。
+      if (stored.length > 0) {
+        AppStorage.setOrCreate(QUICK_ACTION_KEY, '');
+      }
+      return;
+    }
+    // 有动作:先清令牌再执行(同上,@Watch 会再进来一次,但那次读到空值走上面的早退分支)。
+    AppStorage.setOrCreate(QUICK_ACTION_KEY, '');
+    Log.i(`${LOG_TAG} quick action ${action}`);
+    if (action === QUICK_ACTION_SEARCH) {
+      this.openSearch();
+      return;
+    }
+    if (action === QUICK_ACTION_NOTIFICATIONS) {
+      this.navPathStack.pushPath(new NavPathInfo(AppRouteName.NOTIFICATIONS, buildNotificationsRouteParam('quickAction')));
+      return;
+    }
+    if (action === QUICK_ACTION_COMPOSE) {
+      // 发帖编辑器长在 HomePage 的 Stack 里:栈顶若压着「我的」/通知，编辑器会开在下一页
+      // **下面**看不见。与 CATEGORIES 分支同一处理 —— 先清栈回首页，再请首页开编辑器。
+      if (this.navPathStack.size() > 0) {
+        this.navPathStack.clear(false);
+      }
+      // 置真而不是 bump:首页可能还没挂载(冷启动父先于子),要让它挂载时也能看见这个请求。
+      AppStorage.setOrCreate(HOME_COMPOSER_REQUEST_KEY, true);
+    }
   }
 
   // TabBar 点击分发:切到对应一级页。已在该 tab 时(首页场景)不重复 push。

@@ -11,6 +11,18 @@
     {
       "name": "EntryAbility_label",
       "value": "ArkDO"
+    },
+    {
+      "name": "shortcut_compose",
+      "value": "发帖"
+    },
+    {
+      "name": "shortcut_search",
+      "value": "搜索"
+    },
+    {
+      "name": "shortcut_notifications",
+      "value": "通知"
     }
   ]
 }

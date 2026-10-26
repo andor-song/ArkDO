@@ -74,7 +74,7 @@ import { preferences } from '@kit.ArkData';
 import { FrameCallback } from '@kit.ArkUI';
 import { showToast as promptToast } from '../../common/utils/Toast';
 import { submitNewTopic } from '../../services/topic/CreateTopicFlow';
-import { HOME_COMPOSER_BACK_TICK_KEY, HOME_COMPOSER_VISIBLE_KEY } from '../../common/constants/StorageKeys';
+import { HOME_COMPOSER_BACK_TICK_KEY, HOME_COMPOSER_REQUEST_KEY, HOME_COMPOSER_VISIBLE_KEY } from '../../common/constants/StorageKeys';
 import { SCRIM } from '../../common/theme/Palette';
 import { immersiveTitleBarContentTopSpacer } from '../../common/ui/ImmersiveTitleBarLayout';
 import {
@@ -230,6 +230,10 @@ export struct HomePage {
   @State private showComposer: boolean = false;
   // 返回键信号镜像:Index.onBackPress 在浮层可见时 bump,本页 @Watch 接住关闭。
   @StorageProp(HOME_COMPOSER_BACK_TICK_KEY) @Watch('onComposerBackTick') private composerBackTick: number = 0;
+  // 长按图标的「发帖」快捷入口:由根页发(RootTabPage.consumeQuickAction),它负责先清栈回首页。
+  // 用**布尔请求**而不是 tick 计数:父页 aboutToAppear 早于本页挂载,冷启动那次 bump 本页接不到
+  // (@Watch 不为初值触发),所以本页 aboutToAppear 也要主动查一次 —— 请求置真后由这里消费掉。
+  @StorageProp(HOME_COMPOSER_REQUEST_KEY) @Watch('onComposerRequested') private composerRequested: boolean = false;
   bridge: ArkWebNetworkBridge = new ArkWebNetworkBridge();
   @Prop @Watch('handleArkWebReadyChanged') isArkWebReady: boolean = false;
   // 宿主真就绪信号:宿主每次真正就绪(onPageEnd,executor 已挂)时宿主自增此计数。
@@ -292,6 +296,8 @@ export struct HomePage {
   private announceChecked: boolean = false;
 
   aboutToAppear(): void {
+    // 冷启动快捷入口:根页在本页挂载前就已把请求置真,这里补消费一次。
+    this.onComposerRequested();
     // 页面可能在左手状态已生效后才重新挂载，首帧直接使用当前侧，避免先从右侧飞入。
     this.fabAlignRules = smartReachBottomAlignRules(this.smartReachLeftHanded);
     if (!this.unsubscribeSessionChanged) {
@@ -434,6 +440,26 @@ export struct HomePage {
     if (this.showComposer) {
       this.closeComposer();
     }
+  }
+
+  /**
+   * 接长按图标的「发帖」请求(根页置真,这里消费)。@Watch(热启动)与 aboutToAppear(冷启动)
+   * 共用这一个入口 —— 后者必要:请求是根页在本页挂载**之前**发的,而 @Watch 不为初值触发。
+   *
+   * 值**从 AppStorage 直接读**而不是读下面那个 @StorageProp 字段:@StorageProp 的初值究竟
+   * 何时从 AppStorage 取,取决于框架的绑定顺序;而冷启动这条路径正好依赖"挂载时就已看到 true"。
+   * 读权威源就不依赖这件事(字段只用来挂 @Watch 接热启动)。
+   *
+   * **先消费再打开**:openComposer 里有登录闸门,未登录时会弹登录页并直接 return。
+   * 请求留着不清的话,用户登录完成后编辑器会自己弹出来 —— 那已经是他点过"登录"之后的另一件事了。
+   */
+  private onComposerRequested(): void {
+    const requested: boolean = (AppStorage.get(HOME_COMPOSER_REQUEST_KEY) as boolean | undefined) ?? false;
+    if (!requested) {
+      return;
+    }
+    AppStorage.setOrCreate(HOME_COMPOSER_REQUEST_KEY, false);
+    this.openComposer();
   }
 
   // 发新主题:POST /posts。成功后跳进新帖详情;进审核队列则只提示。返回 true 令浮层关闭。

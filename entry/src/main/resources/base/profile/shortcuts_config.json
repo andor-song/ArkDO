@@ -1,0 +1,46 @@
+{
+  "shortcuts": [
+    {
+      "shortcutId": "compose",
+      "label": "$string:shortcut_compose",
+      "wants": [
+        {
+          "bundleName": "com.kavin.linux.do",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "arkdo_action": "compose"
+          }
+        }
+      ]
+    },
+    {
+      "shortcutId": "search",
+      "label": "$string:shortcut_search",
+      "wants": [
+        {
+          "bundleName": "com.kavin.linux.do",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "arkdo_action": "search"
+          }
+        }
+      ]
+    },
+    {
+      "shortcutId": "notifications",
+      "label": "$string:shortcut_notifications",
+      "wants": [
+        {
+          "bundleName": "com.kavin.linux.do",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "arkdo_action": "notifications"
+          }
+        }
+      ]
+    }
+  ]
+}

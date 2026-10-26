@@ -31,6 +31,8 @@ import { TopicListStylePrefs } from '../common/theme/TopicListStylePrefs';
 import { ReadingFontSizePrefs } from '../common/theme/ReadingFontSizePrefs';
 import { AnimatedAvatarPrefs } from '../services/avatar/AnimatedAvatarPrefs';
 import { VideoTranscoder } from '../services/upload/VideoTranscoder';
+import { parseQuickAction, stampQuickAction } from '../services/quickaction/QuickAction';
+import { QUICK_ACTION_KEY } from '../common/constants/StorageKeys';
 
 const DOMAIN = 0x0000;
 
@@ -51,6 +53,9 @@ export default class EntryAbility extends UIAbility {
     // 深链(arkdo://)须在 CurrentSite.init 之后处理:同站相对路径要按当前论坛的 BASE_URL
     // 才能规整成绝对地址。命中后由 EventBus 挂起,等宿主就绪再消费(冷启动 pending 通路)。
     this.handleDeepLinkWant(want, 'onCreate');
+    // 长按图标的快捷入口同样要在冷启动生效:此刻页面树还没建起来，只能写成待认领的令牌，
+    // 由根页挂载时认领(与上面深链的 pending 通路同构)。
+    this.handleQuickActionWant(want, 'onCreate');
     // 登录态镜像绑定磁盘,须早于任何页面读取 AppStorage:冷启动即恢复上次登录态,
     // 避免已登录用户在首个会话检查回来前被误判为游客(阅读追踪不启动、写操作被拦)。
     LoginGate.initPersist();
@@ -103,6 +108,7 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onNewWant');
     this.handleDeepLinkWant(want, 'onNewWant');
     this.handlePushNotificationWant(want, 'onNewWant');
+    this.handleQuickActionWant(want, 'onNewWant');
   }
 
   // 系统配置变化(切深浅色、定时深色触发、字号等)。颜色模式转给 ThemeManager 刷新 appIsDark——
@@ -279,5 +285,22 @@ export default class EntryAbility extends UIAbility {
     } catch (err) {
       Log.i(`[ArkDO][EntryAbility] push ${source} parse failed error=${JSON.stringify(err)}`);
     }
+  }
+
+  /**
+   * 长按桌面图标的快捷入口。只把动作码写进 AppStorage 当令牌，**不**在这里直接执行任何跳转:
+   * onCreate 阶段页面树还没建起来(RootTabPage 的 aboutToAppear 晚于此),没有可通知的消费者;
+   * 由根页就绪时认领并清空(冷启动与热启动走同一条路,不必分两种情况写)。
+   *
+   * 真正的分发在 RootTabPage —— 那侧才拿得到 navPathStack 与浮层可见态。这里也不判一遍动作码
+   * 白名单之外的东西:判白名单已经在 parseQuickAction 里做完,再判一处迟早会漂。
+   */
+  private handleQuickActionWant(want: Want, source: string): void {
+    const action: string = parseQuickAction(want.parameters);
+    if (action.length === 0) {
+      return;
+    }
+    Log.i(`[ArkDO][EntryAbility] quick action ${source} action=${action}`);
+    AppStorage.setOrCreate(QUICK_ACTION_KEY, stampQuickAction(action, Date.now()));
   }
 }

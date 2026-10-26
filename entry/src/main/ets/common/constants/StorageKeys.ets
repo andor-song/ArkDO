@@ -47,6 +47,25 @@ export const DRAFTS_REFRESH_TICK_KEY: string = 'draftsRefreshTick';
 // 「我的」页草稿角标。单独绑定 AppStorage，避免页面藏在 Navigation 栈中时 @Prop 对象停留在旧快照。
 export const PROFILE_DRAFT_COUNT_KEY: string = 'profileDraftCount';
 
+// 长按图标快捷入口(发帖 / 搜索 / 通知)。
+//
+// QUICK_ACTION_KEY 是 EntryAbility 写入、RootTabPage 消费的**令牌**:快捷入口要在冷启动就生效,
+// 而 EntryAbility.onCreate 早于任何页面 aboutToAppear,直接调方法没有接收方;写进 AppStorage
+// 等根页就绪来认领,与推送/深链那套 pending 同一思路。
+//
+// 只有**一个**消费者(根页),不让首页自己认领发帖:发帖编辑器长在 HomePage 的 Stack 里,
+// 若当前栈顶压着「我的」/通知,编辑器会开在下一页**下面**看不见(分类面板正是为此先清栈,
+// 见 RootTabPage.handleBottomTabSelect 的 CATEGORIES 分支)。所以根页统一负责"清栈回首页",
+// 再用下面这个请求让首页开编辑器。
+export const QUICK_ACTION_KEY: string = 'quickAction';
+// 根页 → 首页的"请打开发帖编辑器"请求。
+//
+// 为什么是**布尔请求**而不是 bumpTick 计数器:父(RootTabPage)的 aboutToAppear 早于子
+// (HomePage)挂载,冷启动时根页在这里发信号,首页还没订阅 —— @Watch 不会为**初值**触发,
+// tick 就此被吃掉,表现为"从图标点发帖进 App 什么也没发生"。布尔请求让首页**挂载时也查一次**
+// (aboutToAppear 里消费),两个时机都能接上,消费即置 false 保证只开一次。
+export const HOME_COMPOSER_REQUEST_KEY: string = 'homeComposerRequest';
+
 // 站点列表变更信号(站点管理页改动后通知首页抽屉重读)。
 export const SITES_TICK: string = 'sites_tick';
 

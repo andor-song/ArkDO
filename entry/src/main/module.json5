@@ -67,6 +67,15 @@
               "ohos.want.action.viewData"
             ]
           }
+        ],
+        // 长按应用图标的快捷入口(发帖 / 搜索 / 通知)。对齐官方 iOS App 的三个快速入口。
+        // 必须挂在 ability 上:hvigor 只扫 abilities / extensionAbilities 的 metadata
+        // (target-task-service.js 的 getShortcutsJsonFileNames),写在 module 级不会被收集。
+        "metadata": [
+          {
+            "name": "ohos.ability.shortcuts",
+            "resource": "$profile:shortcuts_config"
+          }
         ]
       }
     ],

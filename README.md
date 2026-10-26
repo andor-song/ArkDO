@@ -84,6 +84,7 @@ ArkDO 是 LINUX DO 社区的**非官方**第三方客户端，由社区成员 [@
 - 三态深色模式：跟随系统 / 强制浅色 / 强制深色
 - 平板横屏双栏、竖屏单栏自适应
 - DoH 自定义 DNS（内置优选服务器，支持增删、切换、测速）
+- 长按应用图标的快捷入口：发帖 / 搜索 / 通知
 
 ## 技术实现
 
@@ -139,24 +140,25 @@ entry/src/main/ets/
 ├── common/          常量、主题管理、断点适配
 ├── models/          数据模型
 ├── navigation/      路由定义（单 @Entry + Navigation 路由栈）
-├── services/        14 个服务子域
+├── services/        28 个服务子域
 │   ├── network/     ArkWeb 网桥、DoH、头像缓存
 │   ├── challenge/   Cloudflare 挑战检测与恢复
 │   ├── content/     cooked HTML 解析、公式、下载、链接路由
 │   ├── topic/       话题分页、回应、投票
 │   ├── session/     登录态与写操作拦截
 │   ├── push/        系统推送：Push Kit token、中继订阅、通知深链
+│   ├── quickaction/ 长按图标的快捷入口（发帖 / 搜索 / 通知）
 │   └── ...          auth / bookmark / connect / draft / logging / notification / reading / site / user / web
 └── views/
-    ├── pages/       15 个页面
-    └── components/  40 个组件
+    ├── pages/       33 个页面
+    └── components/  49 个组件
 
 server/              推送中继（Python，部署在自己的服务器上）
 ├── relay.py         Web Push 解密 → 华为 Push Kit 转发
 └── README.md        部署文档
 ```
 
-约 2.6 万行 ArkTS，唯一的第三方运行时依赖是 `@rv/image-preview`。
+约 6.9 万行 ArkTS，唯一的第三方运行时依赖是 `@rv/image-preview`。
 
 ## 构建
 

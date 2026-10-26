@@ -4,6 +4,7 @@ import cookieProbeTest from './CookieProbe.test';
 import sessionVerdictTest from './SessionVerdict.test';
 import authTokenStoreTest from './AuthTokenStore.test';
 import topicNotificationLevelsTest from './TopicNotificationLevels.test';
+import quickActionTest from './QuickAction.test';
 import identitySnapshotTest from './IdentitySnapshot.test';
 import presenceUplinkThrottleTest from './PresenceUplinkThrottle.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
@@ -109,6 +110,7 @@ export default function testsuite() {
   sessionVerdictTest();
   authTokenStoreTest();
   topicNotificationLevelsTest();
+  quickActionTest();
   identitySnapshotTest();
   presenceUplinkThrottleTest();
 }
