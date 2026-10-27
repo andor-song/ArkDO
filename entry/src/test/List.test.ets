@@ -8,6 +8,7 @@ import quickActionTest from './QuickAction.test';
 import identitySnapshotTest from './IdentitySnapshot.test';
 import presenceUplinkThrottleTest from './PresenceUplinkThrottle.test';
 import userFacingErrorTest from './UserFacingError.test';
+import versionAnnouncementTest from './VersionAnnouncement.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
 import topicServiceTest from './TopicService.test';
 import authServiceTest from './AuthService.test';
@@ -120,4 +121,5 @@ export default function testsuite() {
   // 新套件务必两处都加。
   reactionMutationTest();
   userFacingErrorTest();
+  versionAnnouncementTest();
 }

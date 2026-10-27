@@ -12,6 +12,15 @@ const ANNOUNCE_USERNAME: string = 'joeyyin';
 // 从帖尾往前最多「补拉」多少条未加载的楼找匹配。首屏已返回的楼(前 20,多为较旧的版本公告)
 // 会先被免费扫一遍;这个上限只约束帖尾那些要单独补拉的新楼,避免帖子很大时发太多请求。
 const MAX_TAIL_FETCH: number = 15;
+// 补拉走**批量**端点:一次把尾部这些楼全带上(`post_ids[]=a&post_ids[]=b&…`)。
+//
+// 原先是一楼一发(逐个 await),冷启动时 5 秒内连打 15 个 `posts.json` —— 实测直接撞上
+// Cloudflare 的 429 挑战页,把整个首页拖进过盾流程(2026-10-27 真机日志)。而同一个
+// `posts.json` 端点本来就接受多个 post_ids[],批量拿回一次就够:请求数 15 → 1。
+//
+// 批大小的上限与 MAX_TAIL_FETCH 一致即可;真要调大,注意 URL 长度(15 个 id ≈ 15×20 字符,
+// 离常见 8KB 上限还很远,但别无限涨)。
+const FETCH_BATCH_SIZE: number = MAX_TAIL_FETCH;
 // 版本标记正则:[v900008]。Discourse 里这写法无匹配引用,会原样留在 cooked 中,
 // 哪怕被 **加粗** 包成 <strong>[v900008]</strong>,子串仍在,照样命中。
 const MARKER_PATTERN: RegExp = new RegExp('\\[v(\\d+)\\]', 'g');
@@ -89,28 +98,35 @@ export class VersionAnnouncementService {
         loadedById.set(loaded[i].id, loaded[i]);
       }
 
+      // 先把「要补拉的尾部楼」挑出来,一次批量取回;之后整趟扫描就只在本地 Map 上走,
+      // 不再边扫边发请求。顺序保持「从帖尾往前」,因为命中当前版本时要立刻停。
+      const tailIds: number[] = [];
+      for (let i: number = stream.length - 1; i >= 0 && tailIds.length < FETCH_BATCH_SIZE; i--) {
+        const id: number = stream[i];
+        if (!loadedById.has(id)) {
+          tailIds.push(id);
+        }
+      }
+      let fetched: number = 0;
+      if (tailIds.length > 0) {
+        const tailPosts: RawPost[] = await this.fetchPostsByIds(tailIds);
+        fetched = tailIds.length;
+        for (let i: number = 0; i < tailPosts.length; i++) {
+          loadedById.set(tailPosts[i].id, tailPosts[i]);
+        }
+        Log.i(`${LOG_TAG} 批量补拉 tailIds=${tailIds.length} 取回=${tailPosts.length}`);
+      }
+
       let current: VersionAnnouncement | null = null;
       let newer: VersionAnnouncement | null = null;
-      let fetched: number = 0;
       for (let i: number = stream.length - 1; i >= 0; i--) {
         const id: number = stream[i];
-        let post: RawPost | undefined = loadedById.get(id);
-        let source: string = '首屏';
-        if (!post) {
-          // 补拉配额用完后不再发请求,但继续往前走——剩下的首屏楼还能免费扫,
-          // 当前版本的公告常年就躺在那 20 楼里。
-          if (fetched >= MAX_TAIL_FETCH) {
-            continue;
-          }
-          fetched++;
-          source = '补拉';
-          post = await this.fetchPostById(id);
-        }
+        const post: RawPost | undefined = loadedById.get(id);
         if (!post) {
           continue;
         }
 
-        const marked: VersionAnnouncement | null = this.readAnnouncement(post, source);
+        const marked: VersionAnnouncement | null = this.readAnnouncement(post, '已加载');
         if (!marked) {
           continue;
         }
@@ -135,21 +151,28 @@ export class VersionAnnouncementService {
     }
   }
 
-  // 按单个 id 补拉一楼(stream 末尾那条通常不在首页返回的前 20 楼里)。
-  private async fetchPostById(id: number): Promise<RawPost | undefined> {
-    const path: string = `/t/${ANNOUNCE_TOPIC_ID}/posts.json?post_ids%5B%5D=${id}&include_suggested=false`;
+  // 批量补拉 stream 末尾那些不在首屏里的楼。**一次请求**取回全部:
+  // 同一个 posts.json 端点接受多个 post_ids[],没必要一楼一发(那样冷启动时会连撞 CF 限流)。
+  //
+  // 拿不到就返回空数组:公告扫描是「有就弹、没有就算了」的锦上添花功能,
+  // 任何失败都不该影响首页加载,也不该抛出到外层。
+  private async fetchPostsByIds(ids: number[]): Promise<RawPost[]> {
+    const params: string[] = [];
+    for (let i: number = 0; i < ids.length; i++) {
+      params.push(`post_ids%5B%5D=${ids[i]}`);
+    }
+    const path: string = `/t/${ANNOUNCE_TOPIC_ID}/posts.json?${params.join('&')}&include_suggested=false`;
     const res: NetworkResult<string> = await this.bridge.getJson(path);
     if (!res.success || res.data === undefined) {
-      return undefined;
+      Log.w(`${LOG_TAG} 批量补拉失败 status=${res.statusCode} 请求数=${ids.length}`);
+      return [];
     }
-    // 单条畸形响应只跳过这一楼,不能让异常冒到外层 catch 去中止整轮补拉扫描。
     try {
       const parsed: RawTopic = JSON.parse(res.data) as RawTopic;
-      const posts: RawPost[] = parsed.post_stream?.posts ?? [];
-      return posts.length > 0 ? posts[0] : undefined;
+      return parsed.post_stream?.posts ?? [];
     } catch (error) {
-      Log.w(`${LOG_TAG} 补拉楼 id=${id} 响应不是有效 JSON,跳过`);
-      return undefined;
+      Log.w(`${LOG_TAG} 批量补拉响应不是有效 JSON,本轮跳过`);
+      return [];
     }
   }
 

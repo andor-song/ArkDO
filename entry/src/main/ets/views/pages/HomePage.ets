@@ -1354,7 +1354,9 @@ export struct HomePage {
       // 诊断:这块全屏"访问验证/加载失败"提示在什么情形下弹出。它只在列表为空时出现,
       // 关键要靠时间戳配合前后的既有日志(冷启动标志/前后台切换/上一笔 latest.json 是否返回空列表)还原
       // "使用中列表怎么变空的"。这里记本次失败的指纹:是 CF 拦截还是普通网络失败、状态码、错误信息。
-      Log.i(`${DIAG_TAG} stage=homeEmptyPromptShown requiresChallenge=${this.requiresChallenge} status=${result.statusCode} isLoggedIn=${this.isLoggedIn} errCode=${result.error?.code ?? ''} errMsg=${result.error?.message ?? ''}`);
+      // 统一用 rawFailure:它带着 failureKind,排查时能直接看出是「盾/断网/没选论坛/环境没就绪」
+      // 哪一档,不必再靠 errMsg 的措辞去猜(那正是这次要消灭的做法)。
+      Log.i(`${DIAG_TAG} stage=homeEmptyPromptShown isLoggedIn=${this.isLoggedIn} ${rawFailure(result)}`);
     } else {
       this.footerMessage = friendlyMessage;
     }
