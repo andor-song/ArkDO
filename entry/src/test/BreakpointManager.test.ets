@@ -78,8 +78,11 @@ export default function breakpointManagerTest() {
     });
 
     it('splitNavBarAlignsToCreaseWhenUnfolded', 0, () => {
-      // 双折叠内屏 741 对半是 370:本来就没触顶,豁免上限前后一致(回归护栏)。
-      expect(BreakpointManager.splitNavBarWidth(741, true)).assertEqual(370);
+      // 双折叠内屏 741:本来就没触顶,豁免上限前后一致(回归护栏)。
+      // 注意是 371 不是 370 —— 741 是奇数,一半是 370.5,而 JS 的 Math.round 半值**向上**。
+      // 引入它的那次提交(5208717)把这条写成"算出 370"、用例照抄,于是红了三个月;
+      // 代码本身没错(改前改后都走同一个 Math.round,行为一致),错的是那句算术。
+      expect(BreakpointManager.splitNavBarWidth(741, true)).assertEqual(371);
       // Pura X Max 展开横持 939 对半是 470:改前被 420 夹住、分割线偏离折痕约 50vp,
       // 展开态豁免上限后取满一半,压在折痕上,右栏 469。
       expect(BreakpointManager.splitNavBarWidth(939, true)).assertEqual(470);

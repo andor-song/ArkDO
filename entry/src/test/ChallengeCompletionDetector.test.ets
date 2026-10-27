@@ -1,8 +1,13 @@
-import { describe, it, expect } from '@ohos/hypium';
+import { describe, it, expect, beforeAll, afterAll } from '@ohos/hypium';
+import { SiteFixture } from './SiteFixture';
 import { isChallengeCompletionResponse } from '../main/ets/services/challenge/ChallengeCompletionDetector';
 
 export default function challengeCompletionDetectorTest() {
   describe('challengeCompletionDetectorTest', () => {
+
+    beforeAll(() => SiteFixture.pinLinuxDo());
+
+    afterAll(() => SiteFixture.restore());
     it('resolvesWhenChallengeMainFrameReturnsOrigin404', 0, () => {
       expect(isChallengeCompletionResponse({
         url: 'https://linux.do/challenge',

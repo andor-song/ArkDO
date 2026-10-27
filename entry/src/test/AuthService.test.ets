@@ -187,7 +187,7 @@ export default function authServiceTest() {
       expect(result.success).assertFalse();
       expect(result.error?.code).assertEqual(NetworkErrorCode.UNEXPECTED_RESPONSE);
     });
-  });
+
     // ---- probeSession：cookie 三态 + 四态判定 ----
 
     // 404 不再等于「确认登出」（真机日志证明 `_t` 探测不可信），只降级为待第二振。
@@ -279,5 +279,5 @@ export default function authServiceTest() {
 
       expect(result.success).assertFalse();
     });
-
+  });
 }

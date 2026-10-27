@@ -1,4 +1,5 @@
-import { describe, it, expect } from '@ohos/hypium';
+import { describe, it, expect, beforeAll, afterAll } from '@ohos/hypium';
+import { SiteFixture } from './SiteFixture';
 import {
   extractRouteFromDiscoursePayload,
   parsePushNotificationRouteFromParameters,
@@ -19,6 +20,10 @@ interface TestPushClickParameters {
 
 export default function pushNotificationNavigationTest() {
   describe('pushNotificationNavigationTest', () => {
+    beforeAll(() => SiteFixture.pinLinuxDo());
+
+    afterAll(() => SiteFixture.restore());
+
     it('resolvesRelativeDiscourseTopicUrl', 0, () => {
       expect(resolveDiscoursePushUrl('/t/topic/2590051/99')).assertEqual('https://linux.do/t/topic/2590051/99');
     });

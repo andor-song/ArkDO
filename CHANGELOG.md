@@ -24,6 +24,53 @@
   - **退出登录走同一套隔离**（钉指纹 + 清 jar），补掉一个一直存在的洞：原先只毁备份、而那次销毁是异步且不等待 —— 进程若在登出后立刻被回收，密钥库里那枚**已注销**的凭据还在，下次冷启动会把一个已经不存在的会话原样写回来（表现为"退出了又自动登回去"）。现在同一枚的指纹先被钉进名单，恢复时认出即跳过，销毁有没有跑完都拦得住。
   - 顺带让 `AppSettingsStore.remove()` 校验"键确实没了"并在日志里暴露删除未生效（原先只记 `deleteSync` 抛异常那一种，"没抛但键还在"完全静默）。
   - **为什么确认后不直接把密钥库备份删掉**（看着更彻底，其实不安全）：删除发生在 `await loadBackup()` 之后，从"读完"到"删掉"之间用户可能刚好重新登录并备份一枚**新的有效凭据**（同一个别名），而删除按别名生效 → 新备份被连坐抹掉。名单钉的是"值"的属性，新备份指纹不同、天然不受影响；真正的删除留给唯一能精确认出"就是这一枚"的那一步（恢复时读到值、比对名单，再用 `removeBackupIfSame` **按值**删）。
+- **修好一处一直存在的单测结构缺陷，并借此把全仓单测扫了一遍**：`TopicService.test.ets` 里
+  `rejectsInvalidReactionUsersPayload` 漏了收尾的花括号，把它后面的两个用例**整段吞成了一段死代码** ——
+  那两条（改主题分类/标签的请求体断言）编译得过、但从来没跑过。补齐后一并加入新用例。
+
+  顺着同一类问题把 **57 个套件逐个跑了一遍**：绿的从 44 → **53**；红的从 10 个套件降到 2 个，
+  其中**可修的 18 条用例全部转绿**，剩下 4 条仍是那 2 个只能在 DevEco/真机上跑的套件。抓到四件事：
+
+  1. **`AuthService.test.ets` 同类但更严重的括号错位**：`describe` 提前闭合，把 6 条 `probeSession`
+     用例挂到了组外。**核过 hypium 源码后修正一处说法**：它们并非"不会被执行" —— `describe()` 收尾会把
+     `currentRunningSuite` 弹回 rootSuite（`service.js:232-241`），组外的 `it()` 于是注册进 rootSuite 的用例表，
+     `asyncRun` 会跑它（`service.js:769-796`）。真正的毛病是**归属与统计**：rootSuite 的 `description` 是空串，
+     而汇总 `getSummary()` 与用例清单都只遍历 `rootSuite.childSuites`（`service.js:426-429`、`444-447`）——
+     这 6 条跑在哪个组下、成没成，都不在报告里。表现就是「`authServiceTest` 只报 7 条用例，
+     且怎么改 `probeSession` 都不会让这套件变红」。补齐闭合后 6 条正常归属并通过；
+     而 `probeSession` 正是 1.0.6 会话韧性那批修复的核心判定。
+     - 顺带把本地 harness 改成**硬报错**（`it()` 出现在任何 describe 之外直接抛）：旧替身在注册当场就执行
+       用例，等于把这个结构缺陷盖了三个月 —— 它数出来的"全绿"里混着游离用例。
+  2. **站点改造漏改了测试（13 条）**：0dd98c4「站点地址改为运行时可配」把 `AppConstants.BASE_URL`
+     从编译期常量改成运行时注入，**一个测试都没跟着改** —— 测试进程里没人调 `CurrentSite.init()`，
+     它是空串，凡靠 `BASE_URL` 把相对路径补成绝对地址的断言整批落空（`CookedHtmlParser` 6 /
+     `PushNotificationNavigation` 4 / `LinkClicks` 1 / `DraftService` 1 / `ChallengeCompletionDetector` 1）。
+     顺带发现一种**更隐蔽的空过**：`ChallengeCompletionDetector` 那 3 条「不该判成过盾」的用例在站点为空时
+     恒成立（被测函数对任何 URL 都回 false），它们测的是"站点没配"而不是判定逻辑。
+     → 新增 `entry/src/test/SiteFixture.ets` 集中"钉站点 + 先存后还"（范式照仓内 `PushSubscriptionKeys.test`，
+     站点是进程级全局态，不还原就成了"谁先跑谁通过"），五个 describe 各调一次。
+  3. **去品牌化漏改的断言（2 条）**：51dbc6e 把「Linux.do …」文案改成「站点…」，`DraftService` /
+     `PushSubscriptionService` 各一条留在旧值上。
+     以上两类一律**只动测试侧**：那两次源码改动都是有意的（多站架构 / 上架合规），把 `https://linux.do`
+     写回源码等于违背架构。
+  4. **两条属于"样式这套可调项自己带的红用例"**（`TopicListStyle` 2），其中一条正是本次真 bug 的信号：
+     - `acceptsOnlyKnownFontWeights` 断 `450 → MEDIUM`，而 24a1ef2 把回退值改成 REGULAR 后它返回 400 ——
+       **这条从 bug 落地那一刻起就是红的**。它一直在报警，只是没人跑测试，于是报警和"没有测试"完全等价。
+       （我一开始把这条写成"绿测试盖住了 bug"，那是错的：对照 72c43e4 与 24a1ef2 的函数体，
+       断言钉的 450 走的是回退分支，回退值一改它就红 —— 红而不跑，和没有测试等价。）
+     - `defaultsReproduceLegacyHardcodedMetrics` 是**过期断言**而行为正确：`avatarGap` 钉的仍是头像 48 时代的 8
+       （24a1ef2 把头像默认调到 40，间距随之变 7），`metaRowGap`/`blurbGap` 钉的是 72c43e4 之前的 3/4。
+       它在**第一条断言**就抛，后面几条有没有过期根本看不见 —— 已按"从未改过的"与"被有意调紧的"**拆成两组**，
+       后者钉当前默认并注明出处 commit：下次再调必须主动改它，而不是让它悄悄红着。
+     - `BreakpointManager` 1 同属"断言写错、行为没错"：741 的一半是 370.5，而 JS 的 `Math.round` 半值**向上**
+       取到 371；引入它那次提交的 message 写成"算出 370"，用例照抄，于是红了三个月 —— 代码改前改后走的是
+       同一个 `Math.round`。
+  - 仍红的 2 个套件（`ArkWebNetworkBridge` / `ThemeManager`）**不是回归**：被测代码本体直接读 `@kit.*`
+    运行时枚举（`ConfigurationConstant.ColorMode`、真实 executor），本地纯逻辑 harness 给的是"碰一下就抛"的
+    桩，只能在 DevEco/真机里跑。同理 3 个套件本地**加载不了**（`HomeIncomingTopicsPrompt` / `TopicBadges`
+    依赖 ArkUI `struct`，`List` 是注册表）—— 这是 harness 的边界，不是代码的问题。
+
+
 
 ### 新增
 

@@ -1,4 +1,5 @@
-import { describe, it, expect } from '@ohos/hypium';
+import { describe, it, expect, beforeAll, afterAll } from '@ohos/hypium';
+import { SiteFixture } from './SiteFixture';
 import { buildLinkClicks, clicksForHref } from '../main/ets/services/topic/LinkClicks';
 import { DiscourseLinkCount } from '../main/ets/services/topic/TopicApiTypes';
 
@@ -13,6 +14,10 @@ function count(url: string, clicks: number, reflection: boolean = false, interna
 
 export default function linkClicksTest() {
   describe('LinkClicks', () => {
+    beforeAll(() => SiteFixture.pinLinuxDo());
+
+    afterAll(() => SiteFixture.restore());
+
     it('maps external links to their click counts', 0, () => {
       const map: Map<string, number> | undefined =
         buildLinkClicks(REAL_COOKED, [count('https://so.252035.xyz/', 477), count('https://github.com/fish2018/pansou', 192)]);

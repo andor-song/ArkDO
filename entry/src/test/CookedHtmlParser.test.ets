@@ -1,9 +1,14 @@
-import { describe, it, expect } from '@ohos/hypium';
+import { describe, it, expect, beforeAll, afterAll } from '@ohos/hypium';
+import { SiteFixture } from './SiteFixture';
 import { CookedHtmlParser } from '../main/ets/services/content/CookedHtmlParser';
 import { RichBlock, RichBlockType, RichInlineNode, RichInlineType, RichTableRow } from '../main/ets/services/content/RichContentTypes';
 
 export default function cookedHtmlParserTest() {
   describe('cookedHtmlParserTest', () => {
+    beforeAll(() => SiteFixture.pinLinuxDo());
+
+    afterAll(() => SiteFixture.restore());
+
     it('parsesParagraphInlineStylesAndLinks', 0, () => {
       const blocks: RichBlock[] = CookedHtmlParser.parse('<p>Hello <strong>ArkDO</strong> <a href="/t/123">Linux.do</a> <code>x()</code></p>');
 

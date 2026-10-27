@@ -327,7 +327,7 @@ export default function pushSubscriptionServiceTest() {
 
       expect(result.success).assertFalse();
       // 失败消息会带上诊断信息(status=403 + 服务端原因),故只断言包含前缀,不锁死拼接格式。
-      expect(result.message).assertContain('linux.do 推送订阅失败');
+      expect(result.message).assertContain('推送订阅失败');
       expect(result.message).assertContain('403');
       expect(result.requiresChallenge).assertTrue();
     });

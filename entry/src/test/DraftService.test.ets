@@ -1,4 +1,5 @@
-import { describe, it, expect } from '@ohos/hypium';
+import { describe, it, expect, beforeAll, afterAll } from '@ohos/hypium';
+import { SiteFixture } from './SiteFixture';
 import { DraftService } from '../main/ets/services/draft/DraftService';
 import { DraftEventBus } from '../main/ets/services/draft/DraftEventBus';
 import {
@@ -56,6 +57,10 @@ function ok(payload: string): NetworkResult<string> {
 
 export default function draftServiceTest() {
   describe('draftServiceTest', () => {
+    beforeAll(() => SiteFixture.pinLinuxDo());
+
+    afterAll(() => SiteFixture.restore());
+
     it('deletesDraftWithKeyAndSequence', 0, async () => {
       const bridge: FakeBridge = new FakeBridge(ok('{"success":"OK"}'));
       const service: DraftService = new DraftService(bridge);
@@ -75,7 +80,7 @@ export default function draftServiceTest() {
       const result: NetworkResult<boolean> = await new DraftService(bridge).deleteDraft('topic_42', 3);
 
       expect(result.success).assertFalse();
-      expect(result.error?.message).assertEqual('Linux.do 未确认草稿已删除。');
+      expect(result.error?.message).assertEqual('站点未确认草稿已删除。');
     });
 
     it('publishesDraftDeletionToCurrentSubscribersOnly', 0, () => {
