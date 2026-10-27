@@ -34,6 +34,8 @@ const LOG_TAG: string = '[ArkDO][AuthToken]';
 // 需要备份的认证 cookie。两个都要备：`_t` 是 remember-me 令牌（服务端据此重建会话），
 // `_forum_session` 是承载会话的 session cookie；只补其中一个，真机实测仍可能判匿名。
 export const PERSISTED_AUTH_COOKIES: string[] = ['_t', '_forum_session'];
+// remember-me 令牌的 cookie 名。恢复策略对它单独对待，见 restoreIntoCookieJar 的注释。
+const AUTH_TOKEN_COOKIE: string = '_t';
 
 const SECRET_ALIAS_PREFIX: string = 'arkdo_auth_';
 // 「这枚凭据被服务端判过死」的标记（值 = 那枚凭据的指纹）。
@@ -59,6 +61,47 @@ export interface AuthTokenSnapshot {
   lastRejectedAt: number;
   lastRejectedFingerprint: string;
   headerLength: number;
+}
+
+// 冷启动「要不要把备份写回 jar」的决策结果。抽成纯函数是因为**决策本身**出过一次真 bug
+// (用更旧的备份覆盖了 jar 里更新的 `_t`),而它藏在系统 API 调用中间时无法用单测钉住。
+export enum RestoreDecision {
+  // 备份是已知的死令牌:跳过,并按值删掉它。
+  SKIP_DEAD_BACKUP = 'skip_dead_backup',
+  // jar 里已有一枚可用令牌:保留它,不覆盖。
+  KEEP_JAR = 'keep_jar',
+  // 没有更好的可用值:用备份写回。
+  RESTORE_BACKUP = 'restore_backup'
+}
+
+/**
+ * 决定冷启动时如何处理某一枚 cookie 的备份。纯函数(不碰存储/系统 API)。
+ *
+ * @param cookieName      `_t` 或 `_forum_session`
+ * @param jarValue        jar 里读到的值(undefined = 读不到;`_t` 是 HttpOnly,读不到是常态)
+ * @param backupValue     密钥库里备份的值(undefined = 没有备份)
+ * @param backupDead      备份是否已被判死
+ * @param jarDead         jar 那枚是否已被判死
+ */
+export function decideRestore(cookieName: string, jarValue: string | undefined,
+  backupValue: string | undefined, backupDead: boolean, jarDead: boolean): RestoreDecision {
+  if (backupValue === undefined) {
+    return RestoreDecision.SKIP_DEAD_BACKUP; // 无备份,调用方本就会 continue;归到"不恢复"
+  }
+  if (backupDead) {
+    return RestoreDecision.SKIP_DEAD_BACKUP;
+  }
+  // `_forum_session` 必须覆盖:ArkWeb 会从磁盘恢复出登录前的匿名 session,
+  // 而 Discourse 先认 session 再认 `_t`,旧的匿名 session 会把有效 `_t` 挡住。
+  if (cookieName === AUTH_TOKEN_COOKIE) {
+    // `_t` 则相反:备份只可能等于或落后于 jar(它是从 jar 抄的),用旧的盖新的只会把
+    // 一枚可能还活着的令牌换成已作废的那枚。
+    const jarUsable: boolean = jarValue !== undefined && jarValue.length > 0 && !jarDead;
+    if (jarUsable) {
+      return RestoreDecision.KEEP_JAR;
+    }
+  }
+  return RestoreDecision.RESTORE_BACKUP;
 }
 
 export class AuthTokenStore {
@@ -187,10 +230,13 @@ export class AuthTokenStore {
     for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
       const cookieName: string = PERSISTED_AUTH_COOKIES[index];
       const jarValue: string | undefined = WebSessionManager.readCookieValue(AppConstants.BASE_URL, cookieName);
-      AuthTokenStore.markRejectedValue(context, cookieName, jarValue, true);
+      // 传 rejectedByServer 而不是写死 true:用户主动退出走的是同一个 quarantineAll,
+      // 把"退出登录"记成"被服务端拒签"会让下次排查把两件性质相反的事看成一件
+      // (revokeLocalSession 事后会删掉时间线,但日志里那行 reason= 仍是错的)。
+      AuthTokenStore.markRejectedValue(context, cookieName, jarValue, rejectedByServer);
       const backupValue: string | undefined = await AuthTokenStore.loadBackup(context, cookieName);
       if (backupValue !== undefined) {
-        AuthTokenStore.markRejectedValue(context, cookieName, backupValue, true);
+        AuthTokenStore.markRejectedValue(context, cookieName, backupValue, rejectedByServer);
       }
       // **无条件**删 cookie 仓里那一枚，不先看 jar 里有没有：`_t` 是 HttpOnly，而
       // fetchCookieSync 没有 includeHttpOnly 参数（见 WebSessionManager.deleteCookie），
@@ -310,22 +356,50 @@ export class AuthTokenStore {
   /**
    * 冷启动写回（必须在首次会话检查**之前**）。
    *
-   * **总是覆盖**，不是「缺了才补」：真机实测 ArkWeb 能把登录前的匿名 `_forum_session` 从磁盘
-   * 恢复出来，而 Discourse 取值时先认 session、再认 `_t` —— 旧的匿名 session 会把刚补上的
-   * 有效 `_t` 挡住，服务端照样回 404（2026-10-14 14:22 那次）。
+   * ## 两枚 cookie 的覆盖策略**不同**（这里踩过一次真 bug）
+   *
+   * `_forum_session`：**总是覆盖**。ArkWeb 能把登录前的匿名 session 从磁盘恢复出来，而
+   * Discourse 取值时先认 session、再认 `_t` —— 旧的匿名 session 会把刚补上的有效 `_t` 挡住，
+   * 服务端照样回 404（2026-10-14 14:22 那次）。
+   *
+   * `_t`：**jar 里已有可用值时不覆盖**。备份是从 jar 抄出来的（backupCurrentCookies 只读 jar），
+   * 所以它**只可能等于或落后于** jar，用备份盖 jar 在 `_t` 上只有坏处、没有好处。
+   * 2026-10-27 真机就撞上了这个坏处：jar 里是刚由 Chromium 恢复的 6614ce22，备份是更旧的
+   * 592d6d46；无条件覆盖后服务端回 404 + `Discourse-Logged-Out`，这枚旧令牌被（正确地）判死，
+   * jar 一并清空 —— 用户从「已登录」直接掉成游客，而 jar 里那枚本来可能还能用。
+   *
+   * 只在 jar 里没有值、或那枚已被判死时，才用备份兜底。
    */
   static async restoreIntoCookieJar(context: common.Context): Promise<void> {
     for (let index: number = 0; index < PERSISTED_AUTH_COOKIES.length; index++) {
       const cookieName: string = PERSISTED_AUTH_COOKIES[index];
       const value: string | undefined = await AuthTokenStore.loadBackup(context, cookieName);
-      if (value === undefined) {
-        continue;
-      }
-      if (AuthTokenStore.isMarkedDead(context, cookieName, value)) {
+      const jarValue: string | undefined = WebSessionManager.readCookieValue(AppConstants.BASE_URL, cookieName);
+      const backupDead: boolean = value !== undefined && AuthTokenStore.isMarkedDead(context, cookieName, value);
+      const jarDead: boolean = jarValue !== undefined && AuthTokenStore.isMarkedDead(context, cookieName, jarValue);
+      const decision: RestoreDecision =
+        decideRestore(cookieName, jarValue, value, backupDead, jarDead);
+
+      if (decision === RestoreDecision.SKIP_DEAD_BACKUP) {
+        if (value === undefined) {
+          continue;
+        }
         Log.i(`${LOG_TAG} backup is a known-dead token, not restoring name=${cookieName}`);
         // 删的是**刚读出来这一份值**，不是"这个别名下的当前值":异步删除之间若有新备份写入
         // (用户刚好登录成功并备份了新凭据)，按别名删会把有效凭据连坐删掉。值对上了才动手。
         await AuthTokenStore.removeBackupIfSame(cookieName, value);
+        continue;
+      }
+
+      if (decision === RestoreDecision.KEEP_JAR) {
+        // jar 里那枚是 Chromium 自己从磁盘恢复的、且没被判死 —— 它比备份新，保留它。
+        // 这里**不**更新备份：等这次会话检查成功，persistAuthCookies 会把 jar 的当前值抄进
+        // 备份，那才是权威时刻（现在还不知道这枚到底活不活）。
+        Log.i(`${LOG_TAG} jar already holds a usable token, keep it name=${cookieName}`);
+        continue;
+      }
+
+      if (value === undefined) {
         continue;
       }
       Log.i(`${LOG_TAG} restoring backup name=${cookieName} token=${credentialFingerprint(value)}`);

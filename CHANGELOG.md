@@ -2,6 +2,46 @@
 
 本项目所有重要变更都会记录在此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，版本号遵循语义化版本。
 
+## [1.0.11] - 2026-10-27
+
+### 修复
+
+- **冷启动会把自己从「已登录」打成游客**（真机复现，1.0.8 引入）。现象：某次冷启动后突然要重新登录，
+  而这台设备从没在别处登出过。
+  - 根因在 `AuthTokenStore.restoreIntoCookieJar()` 的**覆盖策略**。它的注释写着「**总是覆盖**，
+    不是缺了才补」，理由是要盖掉 ArkWeb 从磁盘恢复出的**登录前匿名** `_forum_session`
+    （Discourse 先认 session 再认 `_t`，旧的匿名 session 会把有效 `_t` 挡住）。
+    但代码对两枚 cookie 一视同仁，于是 `_t` 也被更旧的备份覆盖了。
+  - 而备份是**从 jar 抄出来的**（`backupCurrentCookies` 只读 jar），**只可能等于或落后于 jar**
+    —— 用备份盖 jar 在 `_t` 上只有坏处。真机日志（2026-10-27 17:55:53）：
+    ```
+    cookie save success token=6614ce22          ← jar 里本来有一枚（Chromium 刚从磁盘恢复）
+    restoring backup name=_t token=592d6d46     ← 被更旧的备份覆盖
+    404 + Discourse-Logged-Out                  ← 服务端判定这枚旧的已作废
+    token quarantined fingerprint=592d6d46      ← 判死（判据本身没错）
+    loggedIn=false                              ← 用户掉登录
+    ```
+    之后每次冷启动都是 `backup is a known-dead token, not restoring`，再也回不来。
+  - 现在两枚 cookie **刻意不对称**：`_t` 在 jar 里已有可用值时**保留 jar**（不覆盖）；
+    `_forum_session` 仍然**总是覆盖**。决策抽成纯函数 `decideRestore()`，
+    单测里用两条**互斥**用例锁住这个不对称 —— 谁把它「统一」成同一策略，测试立刻红。
+  - 顺带修掉 `quarantineAll()` 里硬编码的 `rejectedByServer=true`：用户主动退出登录走的是同一个
+    函数，原先会把「主动登出」记成「被服务端拒签」（时间线随后会被删，但日志里那行 `reason=` 是错的）。
+
+### 变更
+
+- **版本公告补拉改批量**（原 1.0.10 的内容，此处一并记录）：冷启动时逐楼单发 15 个
+  `posts.json?post_ids[]=<单个id>`，5 秒内连撞 Cloudflare 429 挑战页，把整个首页拖进过盾流程。
+  同一个端点本来就接受多个 `post_ids[]`，改为一次批量取回，**请求数 15 → 1**，耗时 5.05s → 0.44s。
+  新增 `VersionAnnouncement.test`（7 条），核心断言就是**请求次数 = 1**。
+
+## [1.0.10] - 2026-10-27
+
+### 变更
+
+- **版本公告补拉改批量**：详见上方 1.0.11「变更」一节（该修复先以 1.0.10 构建，随后与掉登录修复
+  一并发布为 1.0.11）。
+
 ## [1.0.9] - 2026-10-27
 
 ### 修复

@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@ohos/hypium';
-import { AuthTokenStore } from '../main/ets/services/session/AuthTokenStore';
+import { AuthTokenStore, decideRestore, RestoreDecision } from '../main/ets/services/session/AuthTokenStore';
 import { NO_COOKIE } from '../main/ets/services/web/CookieProbe';
 
 // 只测这个服务里**不碰存储/系统 API** 的两个纯函数:死令牌名单的合并与匹配。
@@ -49,6 +49,54 @@ export default function authTokenStoreTest() {
       // 子串不算命中(指纹是比对整枚 token 的,不是前缀匹配)。
       expect(AuthTokenStore.deadListContains(list, 'aaaa')).assertFalse();
       expect(AuthTokenStore.deadListContains('', 'aaaa1111')).assertFalse();
+    });
+
+    // —— 冷启动恢复决策 ——
+    // 这一组钉的是 2026-10-27 真机掉登录的根因:jar 里已有一枚更新的 `_t`,
+    // 却被更旧的备份无条件覆盖,覆盖后服务端判它作废,用户从已登录掉成游客。
+    // 备份是从 jar 抄出来的,只可能等于或落后于 jar —— 用旧的盖新的在 `_t` 上只有坏处。
+    it('keepsNewerJarTokenInsteadOfOverwritingWithOlderBackup', 0, () => {
+      expect(decideRestore('_t', 'jar-value-newer', 'backup-value-older', false, false))
+        .assertEqual(RestoreDecision.KEEP_JAR);
+    });
+
+    // jar 读不到 `_t` 是常态(HttpOnly + fetchCookieSync 无 includeHttpOnly),
+    // 此时必须走备份兜底 —— 否则恢复链路等于没有。
+    it('fallsBackToBackupWhenJarTokenUnreadable', 0, () => {
+      expect(decideRestore('_t', undefined, 'backup-value', false, false))
+        .assertEqual(RestoreDecision.RESTORE_BACKUP);
+    });
+
+    // jar 里那枚已被判死:不能用它,退回备份(备份若也是死的,上一档会先拦掉)。
+    it('ignoresDeadJarTokenAndRestoresBackup', 0, () => {
+      expect(decideRestore('_t', 'jar-dead', 'backup-value', false, true))
+        .assertEqual(RestoreDecision.RESTORE_BACKUP);
+    });
+
+    // 备份被判死:无论 jar 里有什么都不能恢复它,而且要让调用方按值删掉。
+    it('neverRestoresDeadBackup', 0, () => {
+      expect(decideRestore('_t', undefined, 'backup-dead', true, false))
+        .assertEqual(RestoreDecision.SKIP_DEAD_BACKUP);
+      expect(decideRestore('_t', 'jar-ok', 'backup-dead', true, false))
+        .assertEqual(RestoreDecision.SKIP_DEAD_BACKUP);
+      expect(decideRestore('_forum_session', 'jar-ok', 'backup-dead', true, false))
+        .assertEqual(RestoreDecision.SKIP_DEAD_BACKUP);
+    });
+
+    // `_forum_session` **必须**覆盖:ArkWeb 会从磁盘恢复出登录前的匿名 session,
+    // 而 Discourse 先认 session 再认 `_t`,旧的匿名 session 会把有效 `_t` 挡住(1.0.6 真机)。
+    // 这条与上一条相反,是刻意的不对称 —— 谁把它"统一"成同一策略,这条会红。
+    it('alwaysOverwritesForumSessionEvenWhenJarHasOne', 0, () => {
+      expect(decideRestore('_forum_session', 'jar-session', 'backup-session', false, false))
+        .assertEqual(RestoreDecision.RESTORE_BACKUP);
+      expect(decideRestore('_forum_session', undefined, 'backup-session', false, false))
+        .assertEqual(RestoreDecision.RESTORE_BACKUP);
+    });
+
+    // 没有备份:什么都不恢复(也不该误删)。
+    it('doesNothingWhenThereIsNoBackup', 0, () => {
+      expect(decideRestore('_t', 'jar-value', undefined, false, false))
+        .assertEqual(RestoreDecision.SKIP_DEAD_BACKUP);
     });
   });
 }
