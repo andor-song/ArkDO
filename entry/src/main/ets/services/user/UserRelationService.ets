@@ -1,5 +1,5 @@
 import { EndorsableCategoriesResult, EndorsableCategory } from '../../models/UserProfile';
-import { ChallengeState, JsonNetworkClient, NetworkErrorCode, NetworkResult } from '../network/NetworkTypes';
+import { ChallengeState, JsonNetworkClient, NetworkErrorCode, NetworkFailureKind, NetworkResult } from '../network/NetworkTypes';
 import { forwardFailure, unexpectedFrom } from '../network/NetworkResults';
 
 // 关注/认可等「对他人的写操作」。与只读的 UserProfileService 分开:
@@ -216,10 +216,13 @@ export class UserRelationService {
     expiringAt: string): Promise<NetworkResult<boolean>> {
     const body: string = buildUserRelationBody(relation, expiringAt);
     if (body.length === 0) {
+      // 注意:unexpectedFrom 只从入参取 statusCode/challengeState,error 对象本身会被**丢弃**。
+      // 所以分类必须作为实参传下去 —— 写在 error 字面量里看着像标了,实际没人读。
       return unexpectedFrom<boolean>({
         success: false, statusCode: 0, challengeState: ChallengeState.NONE,
         error: { code: NetworkErrorCode.UNEXPECTED_RESPONSE, message: '请求被客户端拦下：参数不完整。', requiresChallenge: false }
-      }, `未知的用户关系档位或忽略缺少到期时间：${relation}`);
+      }, `未知的用户关系档位或忽略缺少到期时间：${relation}`, '设置用户关系时参数不完整，请重试',
+        NetworkFailureKind.LOCAL_ABORT);
     }
     const response: NetworkResult<string> = await this.bridge.putForm(
       `/u/${encodeURIComponent(username)}/notification_level.json`, body);
@@ -286,7 +289,10 @@ export class UserRelationService {
         success: false,
         statusCode: 0,
         challengeState: ChallengeState.NONE,
-        error: { code: NetworkErrorCode.UNEXPECTED_RESPONSE, message: '请至少选择一个类别。', requiresChallenge: false }
+        error: { code: NetworkErrorCode.UNEXPECTED_RESPONSE, message: '请至少选择一个类别。', requiresChallenge: false,
+          // 这句本来就是写给用户看的(不是内部名词),所以同时标成 userReason:
+          // 界面原样显示它,而不是退化成「检查网络」或「操作没发出去」。
+          userReason: '请至少选择一个类别', failureKind: NetworkFailureKind.LOCAL_ABORT }
       };
     }
     const parts: string[] = [];

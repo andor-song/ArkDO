@@ -2,6 +2,7 @@ import { Log } from '../../services/logging/Log';
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { Topic, TopicCategory } from '../../models/Topic';
 import { JsonNetworkClient, NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { TopicPage, TopicService } from '../../services/topic/TopicService';
 import { TopicListItem } from '../components/TopicListItem';
@@ -185,8 +186,9 @@ export struct ReadTopicsPage {
 
     if (!result.success || result.data === undefined) {
       this.loadFailed = true;
-      this.message = result.error?.message ? result.error.message : '加载失败，请重试';
-      Log.i(`${LOG_TAG} initial load failed status=${result.statusCode}`);
+      // 界面只说用户语言;原始 message 只进日志(下方一行),诊断快照据此仍可回溯。
+      this.message = friendlyFailure(result, { subject: '内容', action: '加载' });
+      Log.i(`${LOG_TAG} initial load failed ${rawFailure(result)}`);
       return;
     }
 

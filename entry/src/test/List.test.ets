@@ -7,6 +7,7 @@ import topicNotificationLevelsTest from './TopicNotificationLevels.test';
 import quickActionTest from './QuickAction.test';
 import identitySnapshotTest from './IdentitySnapshot.test';
 import presenceUplinkThrottleTest from './PresenceUplinkThrottle.test';
+import userFacingErrorTest from './UserFacingError.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
 import topicServiceTest from './TopicService.test';
 import authServiceTest from './AuthService.test';
@@ -113,4 +114,10 @@ export default function testsuite() {
   quickActionTest();
   identitySnapshotTest();
   presenceUplinkThrottleTest();
+  // 漏在这里 = DevEco 里根本不会跑(import 了不等于注册)。本仓历史上已经漏过一次
+  // reactionMutationTest:第 21 行 import 了它,却从没在 testsuite() 里调用,于是 5 条用例
+  // 在 DevEco 里长期不跑(本地 harness 单文件直跑是绿的,所以这个洞一直没人发现)。
+  // 新套件务必两处都加。
+  reactionMutationTest();
+  userFacingErrorTest();
 }

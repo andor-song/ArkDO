@@ -5,6 +5,7 @@ import { common, OpenLinkOptions } from '@kit.AbilityKit';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { WebSessionManager } from '../../services/web/WebSessionManager';
+import { friendlyWebLoadFailure } from '../../services/network/UserFacingError';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { showToast as promptToast } from '../../common/utils/Toast';
 import { immersiveTitleBarBottomOffset } from '../../common/ui/ImmersiveTitleBarLayout';
@@ -282,9 +283,13 @@ export struct WebViewPage {
     if (!event || !event.request || !event.request.isMainFrame()) {
       return;
     }
-    this.errorDetail = event.error ? event.error.getErrorInfo() : '';
+    // 引擎给的是 ERR_NAME_NOT_RESOLVED 这类内部串:原文只进日志(排查要靠它),
+    // 界面换成说清「下一步能做什么」的用户语言。错误码一并记,免得丢证据。
+    const rawInfo: string = event.error ? event.error.getErrorInfo() : '';
+    const errorCode: number = event.error ? event.error.getErrorCode() : 0;
+    this.errorDetail = friendlyWebLoadFailure(errorCode);
     this.hasError = true;
-    Log.i(`${LOG_TAG} main frame error host=${this.hostOf(this.currentUrl())} info=${this.errorDetail}`);
+    Log.i(`${LOG_TAG} main frame error host=${this.hostOf(this.currentUrl())} code=${errorCode} info=${rawInfo}`);
   }
 
   private reload(): void {

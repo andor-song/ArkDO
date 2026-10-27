@@ -3,6 +3,7 @@ import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { UserBadgeGroup, UserBadgeItem } from '../../models/UserProfile';
 import { RelativeTime } from '../../common/utils/RelativeTime';
 import { JsonNetworkClient, NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { UserProfileService } from '../../services/user/UserProfileService';
 import { BadgeTile, badgeTypeColor } from '../components/BadgeTile';
 import { LoadStateView } from '../components/LoadStateView';
@@ -268,8 +269,8 @@ export struct BadgesPage {
 
     if (!result.success || result.data === undefined) {
       this.loadFailed = true;
-      this.message = result.error?.message ? result.error.message : '加载失败，请重试';
-      Log.i(`${LOG_TAG} load failed status=${result.statusCode}`);
+      this.message = friendlyFailure(result, { subject: '徽章', action: '加载' });
+      Log.i(`${LOG_TAG} load failed ${rawFailure(result)}`);
       return;
     }
 

@@ -1661,6 +1661,10 @@ export class TopicService {
     if (reason.length === 0) {
       return forwardFailure<T>(response);
     }
-    return unexpectedResponse<T>(response.statusCode, response.challengeState, reason);
+    // reason 同时作 message 与 userReason:message 让日志与旧的按 message 展示的调用点照旧能看到
+    // 站点原文;userReason 是 1.0.9 界面映射层唯一认的「可直接给用户看」通道。
+    // (桥在非 2xx 分支已标过一次 userReason,这里是第二道:副站点桥、以及 body 只在 service
+    // 手上才解析得出来的那些路径。)
+    return unexpectedResponse<T>(response.statusCode, response.challengeState, reason, reason);
   }
 }

@@ -41,12 +41,16 @@ export function buildCsrfScript(options: CsrfScriptOptions): string {
       const requestUrl = new URL(${options.urlExpr}, window.location.origin);
       let csrfSource = 'none';
       let csrfLength = 0;
-      const fail = (error) => {
+      // reasonKind 是**结构化的失败分类**,不是给用户看的文案:界面层靠它区分「该去重新登录」
+      // 与「该检查网络」。CSRF 取不到几乎只有一个原因 —— 会话过期 —— 而把它混进
+      // 「fetch 失败」会让界面提示「检查网络」,用户重试多少次都不会成功。
+      const fail = (error, reasonKind) => {
         window.ArkDOBridge.onJsonResult(requestId, JSON.stringify({
           statusCode: 0,
           contentType: '',
           body: '',
           errorMessage: String(error),
+          failureKind: reasonKind || '',
           csrfSource: csrfSource,
           csrfLength: csrfLength
         }));
@@ -84,7 +88,8 @@ export function buildCsrfScript(options: CsrfScriptOptions): string {
         // 的 _t 失效),
         // 直接带诊断信息失败,让上层提示重登,比发出一个注定 403 的请求强。
         if (!csrf) {
-          fail('CSRF token unavailable source=' + csrfSource + ' - write aborted, session may be expired, please re-login');
+          fail('CSRF token unavailable source=' + csrfSource + ' - write aborted, session may be expired, please re-login',
+            'session_expired');
           return;
         }
 ${options.prelude}        const fetchOptions = {

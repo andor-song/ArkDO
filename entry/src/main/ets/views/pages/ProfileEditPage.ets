@@ -6,6 +6,7 @@ import { UserProfileCache } from '../../services/user/UserProfileCache';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
 import { UploadOutcome, UploadService } from '../../services/upload/UploadService';
 import { NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { showToast as promptToast } from '../../common/utils/Toast';
 import { CARD_GAP, CARD_PADDING, CARD_RADIUS, PAGE_MARGIN } from '../../common/theme/Metrics';
@@ -72,9 +73,8 @@ export struct ProfileEditPage {
       Log.i(`${LOG_TAG} editable loaded username=${data.username}`);
     } else {
       this.loadFailed = true;
-      const reason: string = result.error ? result.error.message : '加载失败';
-      promptToast(this.getUIContext(), reason, 2500);
-      Log.i(`${LOG_TAG} editable load failed status=${result.statusCode}`);
+      promptToast(this.getUIContext(), friendlyFailure(result, { subject: '资料', action: '加载' }), 2500);
+      Log.i(`${LOG_TAG} editable load failed ${rawFailure(result)}`);
     }
   }
 
@@ -130,9 +130,8 @@ export struct ProfileEditPage {
       promptToast(this.getUIContext(), '资料已保存', 1500);
       this.onSaved();
     } else {
-      const reason: string = result.error ? result.error.message : '保存失败，请稍后重试。';
-      promptToast(this.getUIContext(), reason, 2500);
-      Log.i(`${LOG_TAG} profile update failed status=${result.statusCode}`);
+      promptToast(this.getUIContext(), friendlyFailure(result, { subject: '资料', action: '保存' }), 2500);
+      Log.i(`${LOG_TAG} profile update failed ${rawFailure(result)}`);
     }
   }
 

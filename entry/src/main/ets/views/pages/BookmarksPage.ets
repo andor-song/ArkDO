@@ -6,6 +6,7 @@ import { TopicCategory } from '../../models/Topic';
 import { RelativeTime } from '../../common/utils/RelativeTime';
 import { BookmarkService } from '../../services/bookmark/BookmarkService';
 import { JsonNetworkClient, NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { UserAvatar } from '../components/UserAvatar';
 import { LoadStateView } from '../components/LoadStateView';
@@ -315,8 +316,8 @@ export struct BookmarksPage {
 
     if (!result.success || result.data === undefined) {
       this.loadFailed = true;
-      this.message = result.error?.message ? result.error.message : '书签加载失败，请重试';
-      Log.i(`${LOG_TAG} initial load failed status=${result.statusCode}`);
+      this.message = friendlyFailure(result, { subject: '书签', action: '加载' });
+      Log.i(`${LOG_TAG} initial load failed ${rawFailure(result)}`);
       return;
     }
 
@@ -387,8 +388,8 @@ export struct BookmarksPage {
     }
     const result: NetworkResult<boolean> = await this.service.togglePin(item.id);
     if (!result.success) {
-      this.showToast(result.error?.message ? result.error.message : '操作失败，请稍后再试');
-      Log.i(`${LOG_TAG} toggle pin failed id=${item.id} status=${result.statusCode}`);
+      this.showToast(friendlyFailure(result, { subject: '书签置顶', action: '设置' }));
+      Log.i(`${LOG_TAG} toggle pin failed id=${item.id} ${rawFailure(result)}`);
       return;
     }
     // 本地翻转 pinned 并重排(置顶置顶),避免整页重拉。
@@ -433,8 +434,8 @@ export struct BookmarksPage {
     }
     const result: NetworkResult<boolean> = await this.service.deleteBookmark(item.id);
     if (!result.success) {
-      this.showToast(result.error?.message ? result.error.message : '删除失败，请稍后再试');
-      Log.i(`${LOG_TAG} delete failed id=${item.id} status=${result.statusCode}`);
+      this.showToast(friendlyFailure(result, { subject: '书签', action: '删除' }));
+      Log.i(`${LOG_TAG} delete failed id=${item.id} ${rawFailure(result)}`);
       return;
     }
     const next: Bookmark[] = [];
@@ -538,8 +539,8 @@ export struct BookmarksPage {
     const result: NetworkResult<boolean> = await this.service.updateBookmarkName(id, name);
     this.renameSaving = false;
     if (!result.success) {
-      this.showToast(result.error?.message ? result.error.message : '保存失败，请稍后再试');
-      Log.i(`${LOG_TAG} rename bookmark failed id=${id} status=${result.statusCode}`);
+      this.showToast(friendlyFailure(result, { subject: '书签备注', action: '保存' }));
+      Log.i(`${LOG_TAG} rename bookmark failed id=${id} ${rawFailure(result)}`);
       return;
     }
     // 本地更新 name 并关闭弹窗:空串表示清除备注(退回默认标题)。

@@ -5,6 +5,7 @@ import { NotificationApi } from '../../services/notification/NotificationApi';
 import { NotificationEventBus } from '../../services/notification/NotificationEventBus';
 import { LoginGate } from '../../services/session/LoginGate';
 import { JsonNetworkClient, NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { NotificationListItem } from '../components/NotificationListItem';
 import { LoadStateView } from '../components/LoadStateView';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
@@ -243,8 +244,10 @@ export struct NotificationPage {
       }
       this.notLoggedIn = false;
       this.loadFailed = true;
-      this.message = '通知加载失败,请重试';
-      Log.i(`${LOG_TAG} initial load failed status=${result.statusCode}`);
+      // 与其余列表页同一套分类:挑战/断网/请求环境没就绪/站点限流各有各的说法,
+      // 不再一律「通知加载失败」——那会让「还没选论坛」看起来像网络故障。
+      this.message = friendlyFailure(result, { subject: '通知', action: '加载' });
+      Log.i(`${LOG_TAG} initial load failed ${rawFailure(result)}`);
       return;
     }
 

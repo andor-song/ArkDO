@@ -22,6 +22,7 @@ import {
 } from '../../models/UserProfile';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
 import { NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { RichInlineNode, RichInlineType } from '../../services/content/RichContentTypes';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { UserProfileCache } from '../../services/user/UserProfileCache';
@@ -1445,7 +1446,7 @@ export struct UserProfilePage {
     this.relationPending = false;
     if (!result.success) {
       Log.i(`${LOG_TAG} relation set failed user=${this.username} target=${option.relation} status=${result.statusCode}`);
-      this.showToast(result.error ? result.error.message : '设置失败，请稍后重试');
+      this.showToast(friendlyFailure(result, { subject: '用户关系', action: '设置' }));
       return;
     }
     this.relationState = option.relation;
@@ -1610,8 +1611,8 @@ export struct UserProfilePage {
       // 返回 true 令 ComposerPage 自行关闭(其内部 ok 后自调 onBack)。
       return true;
     }
-    const reason: string = result.error ? result.error.message : '发送失败，请稍后重试。';
-    promptToast(this.getUIContext(), reason, 2500);
+    promptToast(this.getUIContext(), friendlyFailure(result, { subject: '私信', action: '发送' }), 2500);
+    Log.i(`${LOG_TAG} private message failed user=${this.username} ${rawFailure(result)}`);
     return false;
   }
 
@@ -1670,8 +1671,8 @@ export struct UserProfilePage {
 
     if (!result.success) {
       // 没做乐观翻转,失败无需回滚,只提示。
-      this.showToast(result.error?.message ? result.error.message : (target ? '关注失败' : '取消关注失败'));
-      Log.i(`${LOG_TAG} follow toggle failed user=${this.username} target=${target} status=${result.statusCode}`);
+      this.showToast(friendlyFailure(result, { subject: target ? '关注' : '取消关注', action: '设置' }));
+      Log.i(`${LOG_TAG} follow toggle failed user=${this.username} target=${target} ${rawFailure(result)}`);
       return;
     }
     this.isFollowing = target;
@@ -1726,8 +1727,8 @@ export struct UserProfilePage {
       await this.relationService.endorseCategories(this.username, selected);
     this.endorseSubmitting = false;
     if (!result.success) {
-      this.showToast(result.error?.message ? result.error.message : '认可失败');
-      Log.i(`${LOG_TAG} endorse failed user=${this.username} status=${result.statusCode}`);
+      this.showToast(friendlyFailure(result, { subject: '认可', action: '提交' }));
+      Log.i(`${LOG_TAG} endorse failed user=${this.username} ${rawFailure(result)}`);
       return;
     }
     // 认可后更新计数与 detail 缓存里的已认可分类,并关闭弹窗。

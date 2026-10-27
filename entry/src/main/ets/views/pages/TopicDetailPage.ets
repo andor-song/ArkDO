@@ -17,6 +17,7 @@ import { ImageShareService } from '../../services/content/ImageShareService';
 import { User } from '../../models/User';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
 import { NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { AppStateEventBus } from '../../services/session/AppStateEventBus';
 import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { LoginGate } from '../../services/session/LoginGate';
@@ -1632,8 +1633,9 @@ export struct TopicDetailPage {
       return true;
     }
 
-    const reason: string = result.error ? result.error.message : '发表失败，请稍后重试。';
-    this.showComposerToast(reason, 2000);
+    // 发表失败最常见的是站点校验(字数/频率/附件),站点原文已在 userReason 里,优先透出。
+    this.showComposerToast(friendlyFailure(result, { subject: '回复', action: '发表' }), 2000);
+    Log.i(`${LOG_TAG} createReply failed ${rawFailure(result)}`);
     return false;
   }
 
@@ -1665,8 +1667,8 @@ export struct TopicDetailPage {
       return true;
     }
 
-    const reason: string = result.error ? result.error.message : 'Boost 发送失败，请稍后重试。';
-    this.showComposerToast(reason, 2000);
+    this.showComposerToast(friendlyFailure(result, { subject: 'Boost', action: '发送' }), 2000);
+    Log.i(`${LOG_TAG} createBoost failed ${rawFailure(result)}`);
     return false;
   }
 
@@ -1682,7 +1684,7 @@ export struct TopicDetailPage {
       await new TopicService(this.bridge).deleteBoost(boost.id, this.detail.id);
     if (!result.success) {
       Log.i(`${LOG_TAG} deleteBoost failed id=${boost.id} status=${result.statusCode}`);
-      this.showComposerToast(result.error ? result.error.message : 'Boost 删除失败，请稍后重试', 2000);
+      this.showComposerToast(friendlyFailure(result, { subject: 'Boost', action: '删除' }), 2000);
       return false;
     }
 
@@ -2066,8 +2068,8 @@ export struct TopicDetailPage {
     if (result.success && result.data) {
       return result.data;
     }
-    const reason: string = result.error ? result.error.message : '加载回复失败，请稍后重试。';
-    this.showComposerToast(reason, 2000);
+    this.showComposerToast(friendlyFailure(result, { subject: '回复', action: '加载' }), 2000);
+    Log.i(`${LOG_TAG} getPostReplies failed postId=${post.id} ${rawFailure(result)}`);
     return null;
   }
 
@@ -2130,7 +2132,7 @@ export struct TopicDetailPage {
       return;
     }
 
-    const message: string = result.error?.message ? result.error.message : '加载表情回应失败，请稍后重试。';
+    const message: string = friendlyFailure(result, { subject: '表情回应', action: '加载' });
     if (reset) {
       this.reactionUsersInitialError = message;
     } else {
@@ -2165,7 +2167,8 @@ export struct TopicDetailPage {
       await new TopicService(this.bridge).toggleAcceptedAnswer(post.id, accept);
     if (!result.success) {
       Log.i(`${LOG_TAG} acceptAnswer failed postId=${post.id} accept=${accept} status=${result.statusCode}`);
-      this.showComposerToast(result.error ? result.error.message : (accept ? '采纳失败，请稍后重试' : '取消采纳失败，请稍后重试'), 2000);
+      this.showComposerToast(friendlyFailure(result,
+        { subject: accept ? '采纳' : '取消采纳', action: '设置' }), 2000);
       return false;
     }
     // 采纳/取消成功后重载详情:面板与列表绿勾都会对齐服务端新态。
@@ -2249,7 +2252,7 @@ export struct TopicDetailPage {
       await new TopicService(this.bridge).deletePost(post.id, this.detail.id);
     if (!result.success) {
       Log.i(`${LOG_TAG} deletePost failed id=${post.id} status=${result.statusCode}`);
-      this.showComposerToast(result.error ? result.error.message : '删除失败，请稍后重试', 2000);
+      this.showComposerToast(friendlyFailure(result, { subject: '这条回复', action: '删除' }), 2000);
       return false;
     }
     // 从楼流移除;若删除的是主题一楼,整体数据已失效,交给页面刷新(统一 toast)。
@@ -2287,7 +2290,7 @@ export struct TopicDetailPage {
       await new TopicService(this.bridge).flagPost(post.id, this.detail.id);
     if (!result.success) {
       Log.i(`${LOG_TAG} flagPost failed id=${post.id} status=${result.statusCode}`);
-      this.showComposerToast(result.error ? result.error.message : '举报失败，请稍后重试', 2000);
+      this.showComposerToast(friendlyFailure(result, { subject: '举报', action: '提交' }), 2000);
       return false;
     }
     this.showComposerToast('已举报，感谢反馈', 1500);
@@ -2354,7 +2357,7 @@ export struct TopicDetailPage {
         this.showComposerToast('已取消收藏', 1500);
       } else {
         Log.i(`${LOG_TAG} toggleTopicBookmark remove failed=${result.statusCode}`);
-        this.showComposerToast(result.error ? result.error.message : '操作失败，请稍后重试', 2000);
+        this.showComposerToast(friendlyFailure(result, { subject: '收藏', action: '取消' }), 2000);
       }
     } else {
       const result: NetworkResult<number> = await service.addBookmark(firstPost.id, topicId);
@@ -2368,7 +2371,7 @@ export struct TopicDetailPage {
         this.showComposerToast('已收藏', 1500);
       } else {
         Log.i(`${LOG_TAG} toggleTopicBookmark add failed=${result.statusCode}`);
-        this.showComposerToast(result.error ? result.error.message : '操作失败，请稍后重试', 2000);
+        this.showComposerToast(friendlyFailure(result, { subject: '收藏', action: '添加' }), 2000);
       }
     }
     this.topicBookmarkLoading = false;
@@ -2590,8 +2593,8 @@ export struct TopicDetailPage {
     }
 
     this.requiresChallenge = result.error?.requiresChallenge === true;
-    this.message = result.error?.message ? result.error.message : '帖子详情加载失败';
-    Log.i(`${LOG_TAG} load detail failed topicId=${this.param.topicId} status=${result.statusCode}`);
+    this.message = friendlyFailure(result, { subject: '帖子详情', action: '加载' });
+    Log.i(`${LOG_TAG} load detail failed topicId=${this.param.topicId} ${rawFailure(result)}`);
   }
 
   private async loadMorePosts(): Promise<void> {
@@ -2622,7 +2625,9 @@ export struct TopicDetailPage {
       return;
     }
 
-    this.loadMoreMessage = result.error?.message ? `${result.error.message}，上拉重试` : '加载更多失败，上拉重试';
+    // 原先这里拼「${原始文案}，上拉重试」;映射层的每句话**本身就以「请…重试」收尾**,
+    // 再拼一次会变成「…请稍后重试，上拉重试」。上拉是列表的天然手势,不必再用文案教一遍。
+    this.loadMoreMessage = friendlyFailure(result, { subject: '更多楼层', action: '加载' });
   }
 
   // 确定"上次访问"红线锚楼:快照水位后第一条未读楼的**上一楼**(最后一条已读)。
@@ -2686,8 +2691,8 @@ export struct TopicDetailPage {
       return;
     }
 
-    Log.i(`${LOG_TAG} prefetchEarlier failed topicId=${topicId} status=${result.statusCode} err=${result.error?.message ?? ''}`);
-    this.showComposerToast(result.error?.message ? result.error.message : '加载更早楼层失败', 1500);
+    Log.i(`${LOG_TAG} prefetchEarlier failed topicId=${topicId} ${rawFailure(result)}`);
+    this.showComposerToast(friendlyFailure(result, { subject: '更早楼层', action: '加载' }), 1500);
   }
 
   // 第二步:把预取好的更早楼层头插进数据源。响应到达时立即插入，保证用户第一次回看前
@@ -2830,7 +2835,7 @@ export struct TopicDetailPage {
     this.notificationSaving = false;
     if (!result.success) {
       Log.i(`${LOG_TAG} setNotificationLevel failed topic=${topicId} level=${level} status=${result.statusCode}`);
-      this.showComposerToast(result.error ? result.error.message : '设置失败，请稍后重试', 2000);
+      this.showComposerToast(friendlyFailure(result, { subject: '通知等级', action: '设置' }), 2000);
       return;
     }
     // 改基元 @State 驱动铃铛与面板勾选；同时把值记回 detail 备查,下次整体刷新时

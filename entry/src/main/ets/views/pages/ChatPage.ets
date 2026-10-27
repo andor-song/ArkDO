@@ -7,6 +7,7 @@ import { ChatMessage, ChatMessageReaction, ChatMessageUser } from '../../models/
 import { User } from '../../models/User';
 import { RelativeTime } from '../../common/utils/RelativeTime';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import {
   ChatMessageRaw,
   ChatService,
@@ -202,8 +203,8 @@ export struct ChatPage {
 
     if (!result.success || result.data === undefined) {
       this.loadFailed = true;
-      this.stateMessage = result.error?.message ? result.error.message : '加载失败，请重试';
-      Log.i(`${LOG_TAG} initial load failed status=${result.statusCode}`);
+      this.stateMessage = friendlyFailure(result, { subject: '聊天记录', action: '加载' });
+      Log.i(`${LOG_TAG} initial load failed ${rawFailure(result)}`);
       return;
     }
     this.messages = result.data.messages;
@@ -311,7 +312,9 @@ export struct ChatPage {
           this.messages = copy;
         }
         this.pendingStagedIds.delete(stagedId);
-        showToast(this.getUIContext(), result.error?.message ? result.error.message : '发送失败', 1800);
+        // 站点拒绝发送时(被静音/被限流/内容校验)原文已在 userReason 里,优先透出。
+        showToast(this.getUIContext(), friendlyFailure(result, { subject: '消息', action: '发送' }), 1800);
+        Log.i(`${LOG_TAG} send failed ${rawFailure(result)}`);
         return;
       }
       // 成功:替换为服务端正式消息(pending=false)。MessageBus sent 事件随后幂等去重。

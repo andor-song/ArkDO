@@ -20,6 +20,7 @@ import { LdcCreditService } from '../../services/credit/LdcCreditService';
 import { LdcCreditSession } from '../../services/credit/LdcCreditSession';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
 import { NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { LdcCreditWebHost } from '../components/LdcCreditWebHost';
 import { SiteCapabilities } from '../../services/site/SiteCapabilities';
 import { formatLdcAmount } from '../../common/utils/LdcFormat';
@@ -1101,8 +1102,8 @@ export struct ProfilePage {
     const result: NetworkResult<boolean> = await new AuthService(this.bridge).logout(username);
     this.isLoggingOut = false;
     if (!result.success) {
-      this.showToast(result.error?.message ? result.error.message : '退出登录失败，请稍后再试');
-      Log.i(`${LOG_TAG} logout failed status=${result.statusCode}`);
+      this.showToast(friendlyFailure(result, { subject: '登录', action: '退出' }));
+      Log.i(`${LOG_TAG} logout failed ${rawFailure(result)}`);
       return;
     }
     Log.i(`${LOG_TAG} logout success`);

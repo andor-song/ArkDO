@@ -7,7 +7,9 @@ import { ChallengeEventBus } from '../challenge/ChallengeEventBus';
 import { DownloadEventBus } from '../content/DownloadEventBus';
 import { detectChallenge } from './ChallengeDetector';
 import { FileLogger } from '../logging/FileLogger';
-import { ChallengeState, HttpHeaderEntry, JsonNetworkClient, JsonRequestOptions, NetworkErrorCode, NetworkResult } from './NetworkTypes';
+import { ChallengeState, HttpHeaderEntry, JsonNetworkClient, JsonRequestOptions, NetworkErrorCode,
+  NetworkFailureKind, NetworkResult } from './NetworkTypes';
+import { discourseErrorMessage } from './DiscourseErrors';
 import { buildMessageBusScript } from './webscript/MessageBusScriptTemplate';
 import { createFetchScript, createFormScript, createHeaderedFetchScript, createImageFetchScript, createPostJsonScript,
   createPutScript, createUploadScript, REQUEST_ID_TOKEN } from './ArkWebFetchScriptFactory';
@@ -55,6 +57,9 @@ interface WebFetchEnvelope {
   cfMitigated?: string;
   body?: string;
   errorMessage?: string;
+  // 注入脚本给的**结构化**失败分类(目前只有 'session_expired'):CSRF 取不到 = 会话过期。
+  // 刻意不用 errorMessage 里的英文字符串判断 —— 那是给日志看的,不是契约。
+  failureKind?: string;
   // POST 诊断:本次使用的 CSRF token 来源(session/meta/none)与长度,用于定位 403 是否为 CSRF 不匹配。
   csrfSource?: string;
   csrfLength?: number;
@@ -65,13 +70,27 @@ interface WebFetchEnvelope {
 
 class PendingJsonRequest {
   resolve: (value: string) => void;
-  reject: (reason: string) => void;
+  reject: (reason: ExecutorFailure) => void;
   timeoutId: number;
 
-  constructor(resolve: (value: string) => void, reject: (reason: string) => void, timeoutId: number) {
+  constructor(resolve: (value: string) => void, reject: (reason: ExecutorFailure) => void, timeoutId: number) {
     this.resolve = resolve;
     this.reject = reject;
     this.timeoutId = timeoutId;
+  }
+}
+
+// executor 失败时抛出的原因。**带分类**,因为「超时」「脚本没跑起来」「注入的 fetch 自己失败」
+// 这三件事在用户语言里的引导不同,而旧写法把三者压成同一个字符串、再在 execute() 的 catch 里
+// 统一换成「ArkWeb 请求失败。」——分类信息就此丢失,界面层想区分只能去猜 message,那是静默失效
+// 的老路(见 UserFacingError 的说明)。字符串原文仍保留在 .message 里进日志。
+class ExecutorFailure {
+  message: string;
+  kind: NetworkFailureKind;
+
+  constructor(message: string, kind: NetworkFailureKind) {
+    this.message = message;
+    this.kind = kind;
   }
 }
 
@@ -141,19 +160,21 @@ class WebviewJsonExecutor implements ArkWebJsonExecutor, ArkWebResultReceiver {
     this.requestSequence++;
     logNetwork(`ArkWeb executor start requestId=${requestId}`);
 
-    return new Promise<string>((resolve: (value: string) => void, reject: (reason: string) => void) => {
+    return new Promise<string>((resolve: (value: string) => void, reject: (reason: ExecutorFailure) => void) => {
       const timeoutId: number = setTimeout(() => {
-        this.rejectRequest(requestId, 'ArkWeb 请求超时。');
+        this.rejectRequest(requestId, new ExecutorFailure('ArkWeb 请求超时。', NetworkFailureKind.TIMEOUT));
       }, AppConstants.DEFAULT_TIMEOUT_MS);
       this.pendingRequests.set(requestId, new PendingJsonRequest(resolve, reject, timeoutId));
 
       try {
         this.controller.runJavaScript(script.replace(REQUEST_ID_TOKEN, requestId))
           .catch(() => {
-            this.rejectRequest(requestId, 'ArkWeb 脚本执行失败。');
+            this.rejectRequest(requestId,
+              new ExecutorFailure('ArkWeb 脚本执行失败。', NetworkFailureKind.SCRIPT_FAILURE));
           });
       } catch (error) {
-        this.rejectRequest(requestId, 'ArkWeb 脚本执行失败。');
+        this.rejectRequest(requestId,
+          new ExecutorFailure('ArkWeb 脚本执行失败。', NetworkFailureKind.SCRIPT_FAILURE));
       }
     });
   }
@@ -189,16 +210,16 @@ class WebviewJsonExecutor implements ArkWebJsonExecutor, ArkWebResultReceiver {
     return this.messageBusClientId;
   }
 
-  private rejectRequest(requestId: string, message: string): void {
+  private rejectRequest(requestId: string, failure: ExecutorFailure): void {
     const pendingRequest: PendingJsonRequest | undefined = this.pendingRequests.get(requestId);
     if (!pendingRequest) {
       return;
     }
 
-    logNetwork(`ArkWeb executor reject requestId=${requestId} reason=${message}`);
+    logNetwork(`ArkWeb executor reject requestId=${requestId} reason=${failure.message} kind=${failure.kind}`);
     clearTimeout(pendingRequest.timeoutId);
     this.pendingRequests.delete(requestId);
-    pendingRequest.reject(message);
+    pendingRequest.reject(failure);
   }
 }
 
@@ -677,7 +698,11 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
       error: {
         code: NetworkErrorCode.NETWORK_FAILURE,
         message: '尚未选择论坛。',
-        requiresChallenge: false
+        requiresChallenge: false,
+        // 只标 failureKind、**不**再标 userReason:两个都标会让分类层先命中 USER_REASON,
+        // NO_ACTIVE_SITE 那一档于是永远走不到(文案恰好一样,所以肉眼看不出来)。
+        // 一个事实只留一个来源,文案由映射层给。
+        failureKind: NetworkFailureKind.NO_ACTIVE_SITE
       }
     };
   }
@@ -695,7 +720,8 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
       error: {
         code: NetworkErrorCode.NETWORK_FAILURE,
         message: 'ArkWeb 宿主尚未就绪。',
-        requiresChallenge: false
+        requiresChallenge: false,
+        failureKind: NetworkFailureKind.HOST_NOT_READY
       }
     };
   }
@@ -735,14 +761,22 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
       return this.convertEnvelope(requestPath, JSON.parse(rawResult) as WebFetchEnvelope, method, options);
     } catch (error) {
       logNetwork(`${verb} ${requestPath} failed before response envelope`);
+      // executor 抛的是带分类的 ExecutorFailure;其它异常(主要是 JSON.parse 失败)归到
+      // SCRIPT_FAILURE —— 回执来了但不是能读的 JSON,同样是「环境没给出可用结果」,不是断网。
+      const failure: ExecutorFailure | undefined = error instanceof ExecutorFailure ? error : undefined;
+      const kind: NetworkFailureKind = failure !== undefined
+        ? failure.kind
+        : NetworkFailureKind.SCRIPT_FAILURE;
+      const message: string = failure !== undefined ? failure.message : 'ArkWeb 请求失败。';
       return {
         success: false,
         statusCode: 0,
         challengeState: ChallengeState.NONE,
         error: {
           code: NetworkErrorCode.NETWORK_FAILURE,
-          message: 'ArkWeb 请求失败。',
-          requiresChallenge: false
+          message: message,
+          requiresChallenge: false,
+          failureKind: kind
         }
       };
     }
@@ -869,6 +903,11 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
 
     if (envelope.errorMessage) {
       logNetwork(`${method} ${path} envelope error=${envelope.errorMessage}`);
+      // 脚本可以给出结构化分类(目前只有 session_expired):优先认它,其余一律 TRANSPORT。
+      // 不按 errorMessage 里有没有 'CSRF' 去猜 —— 改一次措辞判定就静默失真。
+      const scriptKind: NetworkFailureKind = envelope.failureKind === NetworkFailureKind.SESSION_EXPIRED
+        ? NetworkFailureKind.SESSION_EXPIRED
+        : NetworkFailureKind.TRANSPORT;
       return {
         success: false,
         statusCode: 0,
@@ -876,7 +915,10 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
         error: {
           code: NetworkErrorCode.NETWORK_FAILURE,
           message: envelope.errorMessage,
-          requiresChallenge: false
+          requiresChallenge: false,
+          // 其余是注入页面的 fetch 自己失败了(断网 / 连接被拒 / DNS 污染 / CORS)。原文是浏览器
+          // 给的英文(典型值 `TypeError: Failed to fetch`),只进日志;界面按 TRANSPORT 说「检查网络」。
+          failureKind: scriptKind
         }
       };
     }
@@ -920,6 +962,16 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
       // 在桥这一层统一解析(它握着原始 body),任何调用方都能从 result.notLoggedIn 区分
       // 「去登录」和「重试」两种引导,不必各自翻体。
       const notLoggedIn: boolean = this.isNotLoggedInBody(body, statusCode);
+      // Discourse 的业务校验文案(422/409 的 errors[])是站点按用户语言写好的,只有这一层握着
+      // 原始 body 能把它捞出来。标进 userReason 后,**所有**调用点的界面都自动说得出具体原因
+      // ——原先只有 TopicService.postFailure 三个点单独搬进 message,列表/书签/资料那一片
+      // 撞 422 时用户只能看到一句「没通过论坛校验」,不知道自己踩了哪条。
+      const serverReason: string = discourseErrorMessage({
+        success: false,
+        statusCode: statusCode,
+        challengeState: ChallengeState.NONE,
+        data: body
+      });
       return {
         success: false,
         statusCode: statusCode,
@@ -933,7 +985,8 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
         error: {
           code: NetworkErrorCode.UNEXPECTED_RESPONSE,
           message: `站点返回 HTTP ${statusCode}。`,
-          requiresChallenge: false
+          requiresChallenge: false,
+          userReason: serverReason.length > 0 ? serverReason : undefined
         }
       };
     }

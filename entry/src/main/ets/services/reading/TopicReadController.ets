@@ -6,7 +6,7 @@ import { TopicReadState, TopicReadStateEventBus } from '../session/TopicReadStat
 import { ReadingTracker, ReportTimingsFn } from './ReadingTracker';
 import { LoginGate } from '../session/LoginGate';
 import { CurrentSite } from '../site/CurrentSite';
-import { ChallengeState, NetworkErrorCode, NetworkResult } from '../network/NetworkTypes';
+import { ChallengeState, NetworkErrorCode, NetworkFailureKind, NetworkResult } from '../network/NetworkTypes';
 
 // 相邻楼层错峰翻已读的间隔:让蓝点淡出动画自上而下依次开始,对齐官网的级联观感。
 const READ_STAGGER_STEP_MS: number = 80;
@@ -152,7 +152,10 @@ export class TopicReadController {
           error: {
             code: NetworkErrorCode.NETWORK_FAILURE,
             message: '已切换论坛,丢弃上一个论坛的阅读上报。',
-            requiresChallenge: false
+            requiresChallenge: false,
+            // 这次上报是被我们自己丢掉的(换了论坛,旧批次不再有意义),既不是网络坏也不是服务端错。
+            // 不标这一档,界面会把它当断网,让用户去检查网络 —— 而重试也永远不会成功。
+            failureKind: NetworkFailureKind.LOCAL_ABORT
           }
         };
         return Promise.resolve(skipped);

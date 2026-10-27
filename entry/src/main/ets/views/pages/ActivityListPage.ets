@@ -4,6 +4,7 @@ import { TopicCategory } from '../../models/Topic';
 import { UserActivityItem, UserActivityPage } from '../../models/UserProfile';
 import { RelativeTime } from '../../common/utils/RelativeTime';
 import { JsonNetworkClient, NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { UserProfileService } from '../../services/user/UserProfileService';
 import { TopicMetadataBadges } from '../components/TopicBadges';
@@ -243,8 +244,8 @@ export struct ActivityListPage {
 
     if (!result.success || result.data === undefined) {
       this.loadFailed = true;
-      this.message = result.error?.message ? result.error.message : '加载失败，请重试';
-      Log.i(`${LOG_TAG} initial load failed filter=${this.filter} status=${result.statusCode}`);
+      this.message = friendlyFailure(result, { subject: '动态', action: '加载' });
+      Log.i(`${LOG_TAG} initial load failed filter=${this.filter} ${rawFailure(result)}`);
       return;
     }
 

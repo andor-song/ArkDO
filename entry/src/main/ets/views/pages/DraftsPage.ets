@@ -8,6 +8,7 @@ import { DraftService } from '../../services/draft/DraftService';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { CreateTopicOutcome, TagSuggestion, TopicService } from '../../services/topic/TopicService';
 import { JsonNetworkClient, NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { LoadStateView } from '../components/LoadStateView';
 import { ComposerPage } from './ComposerPage';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
@@ -396,9 +397,13 @@ export struct DraftsPage {
     }
 
     if (result === undefined || !result.success) {
-      const errorMessage: string = result?.error?.message ? result.error.message : '删除失败，请稍后再试';
+      // 请求抛异常(result===undefined)时没有 NetworkResult 可分类,只能给一句通用文案;
+      // 有失败对象时按结构分类,不再把内部 message 直接弹给用户。
+      const errorMessage: string = result !== undefined
+        ? friendlyFailure(result, { subject: '草稿', action: '删除' })
+        : '草稿删除失败，请稍后重试';
       promptToast(this.getUIContext(), errorMessage);
-      Log.i(`${LOG_TAG} delete failed key=${item.draftKey} status=${result?.statusCode ?? 0}`);
+      Log.i(`${LOG_TAG} delete failed key=${item.draftKey} ${result !== undefined ? rawFailure(result) : 'threw'}`);
       return;
     }
 
@@ -582,8 +587,10 @@ export struct DraftsPage {
       }
       return true;
     }
-    const reason: string = result.error ? result.error.message : '发送失败，请稍后重试。';
-    promptToast(this.getUIContext(), reason, 2500);
+    // 发送失败最常见的原因是站点校验(附件/字数/频率),站点原文已在 error.userReason 里,
+    // 映射层会优先透出它;没有可信原因时才回落到「发送失败」模板。
+    promptToast(this.getUIContext(), friendlyFailure(result, { subject: '私信', action: '发送' }), 2500);
+    Log.i(`${LOG_TAG} send failed ${rawFailure(result)}`);
     return false;
   }
 
@@ -639,8 +646,8 @@ export struct DraftsPage {
     }
     if (!result.success || result.data === undefined) {
       this.loadFailed = true;
-      this.message = result.error?.message ? result.error.message : '草稿加载失败，请重试';
-      Log.i(`${LOG_TAG} initial load failed status=${result.statusCode}`);
+      this.message = friendlyFailure(result, { subject: '草稿', action: '加载' });
+      Log.i(`${LOG_TAG} initial load failed ${rawFailure(result)}`);
       return;
     }
 

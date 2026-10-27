@@ -4,6 +4,7 @@ import { TopicCategory } from '../../models/Topic';
 import { SolvedPostItem, SolvedPostPage } from '../../models/UserProfile';
 import { RelativeTime } from '../../common/utils/RelativeTime';
 import { JsonNetworkClient, NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { UserProfileService } from '../../services/user/UserProfileService';
 import { TopicMetadataBadges } from '../components/TopicBadges';
@@ -242,8 +243,8 @@ export struct SolvedPostsPage {
 
     if (!result.success || result.data === undefined) {
       this.loadFailed = true;
-      this.message = result.error?.message ? result.error.message : '加载失败，请重试';
-      Log.i(`${LOG_TAG} initial load failed user=${this.username} status=${result.statusCode}`);
+      this.message = friendlyFailure(result, { subject: '内容', action: '加载' });
+      Log.i(`${LOG_TAG} initial load failed user=${this.username} ${rawFailure(result)}`);
       return;
     }
 

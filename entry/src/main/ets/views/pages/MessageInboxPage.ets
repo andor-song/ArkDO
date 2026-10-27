@@ -4,6 +4,7 @@ import { MessageInboxPage as MessageInboxData, MessageThread } from '../../model
 import { User } from '../../models/User';
 import { RelativeTime } from '../../common/utils/RelativeTime';
 import { JsonNetworkClient, NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { MessageService } from '../../services/message/MessageService';
 import { LoadStateView } from '../components/LoadStateView';
 import { UserAvatar } from '../components/UserAvatar';
@@ -273,8 +274,8 @@ export struct MessageInboxPage {
 
     if (!result.success || result.data === undefined) {
       this.loadFailed = true;
-      this.message = result.error?.message ? result.error.message : '加载失败，请重试';
-      Log.i(`${LOG_TAG} initial load failed status=${result.statusCode}`);
+      this.message = friendlyFailure(result, { subject: '私信', action: '加载' });
+      Log.i(`${LOG_TAG} initial load failed ${rawFailure(result)}`);
       return;
     }
 

@@ -1,6 +1,8 @@
 import { JsonNetworkClient, NetworkResult } from '../network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../network/UserFacingError';
 import { CreateTopicOutcome, TopicService } from './TopicService';
 import { ToastFn } from './PostActions';
+import { Log } from '../logging/Log';
 
 // 发新主题的完整闭环:POST /posts → 按结果提示 → 直接发布时回调跳转。
 // 首页与草稿页原先各写一份逐字相同的实现(连三档 toast 时长 2000/1500/2500 都一样),
@@ -35,7 +37,9 @@ export async function submitNewTopic(
     return true;
   }
 
-  const reason: string = result.error ? result.error.message : '发布失败，请稍后重试。';
-  toast(reason, 2500);
+  // 发布被拒几乎都是站点校验(标题太短/分类不对/发得太频繁),站点原文已在 userReason 里,
+  // 映射层优先透出;没有可信原因才回落到「发布失败」模板。
+  toast(friendlyFailure(result, { subject: '帖子', action: '发布' }), 2500);
+  Log.i(`[ArkDO][CreateTopic] publish failed ${rawFailure(result)}`);
   return false;
 }

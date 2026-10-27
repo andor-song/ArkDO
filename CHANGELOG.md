@@ -2,6 +2,63 @@
 
 本项目所有重要变更都会记录在此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，版本号遵循语义化版本。
 
+## [1.0.9] - 2026-10-27
+
+### 修复
+
+- **底层错误文案直接上屏**（`docs/known-issues.md` 问题 1，面最广的一条）：界面曾把网络层/服务层的
+  内部文案原样显示给用户，例如「ArkWeb 请求失败。」「ArkWeb 宿主尚未就绪。」「站点帖子列表响应不是
+  有效 JSON。」「站点返回 HTTP 422。」。用户看不懂，也做不了任何事。
+  - 新增 `services/network/UserFacingError.ets` 作为**唯一**映射处：调用点只说「我在做什么」
+    （`friendlyFailure(result, { subject: '帖子详情', action: '加载' })`），说什么话由它一处决定。
+  - **按结构分类，不按 message 字符串匹配**。靠「含不含 ArkWeb」去猜，改一次措辞就静默失真
+    （与 1.0.8 的「红而不跑等于没有测试」同一类坑，这次不重犯）。
+  - 每一档都给「下一步能做什么」：过盾 / 重新登录 / 检查网络 / 去添加论坛 / 等请求环境就绪 /
+    稍后重试。**过盾优先于一切**；**未登录优先于服务端原文**（否则「去登录」会被一句
+    「您需要登录才能执行此操作。」擦掉）。
+  - 站点给的原因**优先于我们的模板**：Discourse 422 的 `errors[]` 是站点按用户语言写好的
+    （「附件数量超过限制」之类），比任何模板都有用，原样透出。
+  - 原始 message 只进日志：新增 `rawFailure(result)` 输出 `code/status/kind/challenge/errMsg`，
+    「设置 → 诊断日志 → 网络快照」的排查材料不因界面变干净而减少。
+  - 覆盖 14 个页面文件，另加 `NotificationPage`（原先固定一句「通知加载失败」）、
+    `SearchOverlay`、`CreateTopicFlow`；`WebViewPage` 的 `getErrorInfo()` 也改为
+    `friendlyWebLoadFailure(errorCode)` —— 用户不再读到 `ERR_NAME_NOT_RESOLVED`，
+    而是「域名解析失败，请在设置里开启 DoH 后重试」（DNS 污染是本仓最常见的一条）。
+
+  为了让分类有据可依，补了三处**结构**（缺了就只能猜字符串）：
+  - `NetworkError.failureKind`：区分「没选论坛 / 请求环境没就绪 / 断网 / 超时 / 脚本失败 /
+    会话过期 / 本仓自己拦下」。其中**会话过期与断网必须分开**：前者要重新登录，说「检查网络」
+    会让用户在网络设置里白折腾，而重试永远不会成功（写请求取不到 CSRF 就是这一档）。
+  - `NetworkError.userReason`：给「可直接展示的原因」一个专用通道，与排查用的 message 分开。
+  - 桥的 executor 失败改为带分类的 `ExecutorFailure`：原先超时、脚本失败、回执解析失败被统一
+    压成「ArkWeb 请求失败。」，分类在 catch 里就丢了。
+
+  顺带修掉两处会让映射失效的结构缺陷：
+  - `forwardFailure()` 原先只搬 4 个字段，**丢掉 `notLoggedIn` / `loggedOutByServer`** ——
+    「未登录」这个信息穿过任何一个 service 就没了，页面判 `result.notLoggedIn` 恒为 undefined。
+  - 桥在非 2xx 分支把 body 留在 `data`，但只有发帖那三个点会去读；现在桥自己解析一次并标进
+    `userReason`，列表/书签/资料撞 422 时也能说出具体原因，而不是「没通过论坛校验」。
+
+### 测试
+
+- **`ArkWebNetworkBridge.test` 3 条红用例其实不是「只能在真机跑」**：它们只是缺 `SiteFixture.pinLinuxDo()`，
+  被桥的「未选论坛」早退拦掉（`skipped: no active site`），断言拿到空串/0。补齐后 6/6 通过，
+  并新增一条「没选论坛」的分类断言。1.0.8 的 CHANGELOG 把它归因于设备能力，那条解释就这 3 条而言不成立。
+- **`List.test.ets` 里 `reactionMutationTest` 只 import、从未在 `testsuite()` 调用** ——
+  DevEco 里那 5 条用例长期不跑（本地单文件直跑是绿的，所以一直没被发现）。已注册。
+- 新增 `UserFacingError.test`（16 条）：分类矩阵、优先级（盾 > 未登录 > 服务端原因 > 状态码）、
+  「会话过期不许说检查网络」、网页错误码翻译，以及一条**性质断言** ——
+  遍历所有分类，界面文案都不许出现 `ArkWeb` / 宿主 / JSON / cookie / token / 会话 / HTTP /
+  站点 / WebView / CSRF 等内部词。改措辞时这条自动兜住「顺手把内部名词写回去」。
+
+全量：**55 个套件全绿（439/440 断言）**。仍红的 1 条是 `ThemeManager.mapsThemeModeToSystemColorMode`
+（被测代码直接读 `ConfigurationConstant.ColorMode`，本地 harness 的设备桩碰一下就抛，属真·只能在 DevEco/真机跑）；
+3 个套件本地加载不了（ArkUI `struct` 语法，Node 不认）。两者都是 harness 边界，不是回归。
+
+构建：`assembleHap` 通过（CompileArkTS + PackageHap + SignHap）；`test` 任务的 `UnitTestArkTS`
+编译 0 错误（随后因本机无设备而阻塞，属预期）。真编译器这轮抓到一个本地 harness 抓不到的错误：
+测试里给参数写了匿名结构类型，触发 `arkts-no-untyped-obj-literals`（28 处）——已改为显式 `interface`。
+
 ## [1.0.8] - 2026-10-27
 
 ### 修复

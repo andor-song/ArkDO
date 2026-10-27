@@ -11,6 +11,7 @@ import { TopicListItem } from '../components/TopicListItem';
 import { ListFooter } from '../components/ListFooter';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
 import { NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { LoadStateView } from '../components/LoadStateView';
 import { TopicReadState, TopicReadStateEventBus } from '../../services/session/TopicReadStateEventBus';
@@ -1344,9 +1345,9 @@ export struct HomePage {
     }
 
     this.requiresChallenge = result.error?.requiresChallenge === true;
-    const friendlyMessage: string = this.requiresChallenge
-      ? '内容加载遇到访问验证，请稍后重试'
-      : '加载失败，请检查网络后重试';
+    // 文案统一由映射层给:挑战态/断网/请求环境没就绪/论坛没选/站点限流各有各的引导,
+    // 原先这里只分「盾 or 网络」两档,把「还没选论坛」也说成「检查网络」。
+    const friendlyMessage: string = friendlyFailure(result, { subject: '内容', action: '加载' });
     if (this.topics.length === 0) {
       this.loadFailed = true;
       this.listMessage = friendlyMessage;
@@ -1355,7 +1356,7 @@ export struct HomePage {
       // "使用中列表怎么变空的"。这里记本次失败的指纹:是 CF 拦截还是普通网络失败、状态码、错误信息。
       Log.i(`${DIAG_TAG} stage=homeEmptyPromptShown requiresChallenge=${this.requiresChallenge} status=${result.statusCode} isLoggedIn=${this.isLoggedIn} errCode=${result.error?.code ?? ''} errMsg=${result.error?.message ?? ''}`);
     } else {
-      this.footerMessage = '刷新失败，请重试';
+      this.footerMessage = friendlyMessage;
     }
     this.runPendingSessionRefresh();
     this.runPendingIncomingRefresh();
@@ -1397,12 +1398,9 @@ export struct HomePage {
     }
 
     this.requiresChallenge = result.error?.requiresChallenge === true;
-    // 与首次加载同款友好文案:不把桥层「ArkWeb 请求超时。」类原始错误透传给用户。
-    // 原始错误进诊断日志,便于排查。
-    this.footerMessage = this.requiresChallenge
-      ? '内容加载遇到访问验证，请稍后重试'
-      : '加载失败，请检查网络后重试';
-    Log.i(`${LOG_TAG} load more failed err=${result.error?.message ?? 'unknown'}`);
+    // 与首次加载同款:界面只拿映射层给的用户语言,桥层「ArkWeb 请求超时。」这类原文只进日志。
+    this.footerMessage = friendlyFailure(result, { subject: '内容', action: '加载' });
+    Log.i(`${LOG_TAG} load more failed ${rawFailure(result)}`);
     this.runPendingSessionRefresh();
     this.runPendingIncomingRefresh();
   }

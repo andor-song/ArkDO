@@ -3,7 +3,8 @@ import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { TopicCategory } from '../../models/Topic';
 import { UserHistoryItem, UserHistoryPage } from '../../models/UserProfile';
 import { RelativeTime } from '../../common/utils/RelativeTime';
-import { ChallengeState, JsonNetworkClient, NetworkErrorCode, NetworkResult } from '../../services/network/NetworkTypes';
+import { ChallengeState, JsonNetworkClient, NetworkErrorCode, NetworkFailureKind, NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { UserProfileService } from '../../services/user/UserProfileService';
 import { TopicMetadataBadges } from '../components/TopicBadges';
@@ -250,8 +251,8 @@ export struct UserHistoryListPage {
 
     if (!result.success || result.data === undefined) {
       this.loadFailed = true;
-      this.message = result.error?.message ? result.error.message : '加载失败，请重试';
-      Log.i(`${LOG_TAG} initial load failed user=${this.username} kind=${this.kind} status=${result.statusCode}`);
+      this.message = friendlyFailure(result, { subject: '内容', action: '加载' });
+      Log.i(`${LOG_TAG} initial load failed user=${this.username} kind=${this.kind} ${rawFailure(result)}`);
       return;
     }
 
@@ -298,7 +299,10 @@ export struct UserHistoryListPage {
         success: false,
         statusCode: 0,
         challengeState: ChallengeState.NONE,
-        error: { code: NetworkErrorCode.NETWORK_FAILURE, message: '请求环境未就绪', requiresChallenge: false }
+        // 页面自己拦下的:服务还没挂上(等价于请求环境没就绪)。标成 HOST_NOT_READY,
+        // 界面会说「正在准备请求环境」而不是「检查网络」——后者会让用户白折腾 Wi-Fi。
+        error: { code: NetworkErrorCode.NETWORK_FAILURE, message: '请求环境未就绪', requiresChallenge: false,
+          failureKind: NetworkFailureKind.HOST_NOT_READY }
       };
     }
     if (this.kind === 'reactions') {

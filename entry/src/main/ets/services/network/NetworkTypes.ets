@@ -11,10 +11,46 @@ export enum NetworkErrorCode {
   NETWORK_FAILURE = 'network_failure'
 }
 
+// 失败原因的细分。为什么要有它：上面几种 code 都是 NETWORK_FAILURE / UNEXPECTED_RESPONSE，
+// 但在**用户语言里的引导完全不同** —— 没选论坛要「先去添加论坛」、请求环境没就绪是「正在准备，
+// 等几秒」、页面里 fetch 都发不出去是「检查网络」、脚本没回话是「重试」，而本仓自己拦下没发请求的
+// 那些（参数不完整 / 档位非法 / 中途切了论坛）说「检查网络」纯属误导。
+//
+// 旧结构里这些共用一个 code + 一句内部文案，想区分只能去猜 message 含不含「宿主」「超时」。
+// 字符串匹配是静默失效的源头：改一次措辞，判定当场失真而测试还是绿的。所以由**产出方**在造
+// 失败对象时一次标好，界面层按值分类，永不读文案。
+//
+// 注意：标不上就留 undefined（按「未知失败」给一句通用引导），不要为了填值乱标一个 ——
+// 乱标的代价是把用户往错的方向领（把真断网说成「正在准备请求环境」，用户会一直干等）。
+export enum NetworkFailureKind {
+  NO_ACTIVE_SITE = 'no_active_site',
+  HOST_NOT_READY = 'host_not_ready',
+  // 注入页面的 fetch 自己失败了（断网、连接被拒、DNS 污染都归这一档）。
+  TRANSPORT = 'transport',
+  // 等满 DEFAULT_TIMEOUT_MS 没回执：请求环境僵死的典型信号。
+  TIMEOUT = 'timeout',
+  // 脚本抛错 / 回执不是可解析的 JSON：环境在，但这次没给出能读的结果。
+  SCRIPT_FAILURE = 'script_failure',
+  // 写请求拿不到 CSRF（会话已过期）。**必须与 TRANSPORT 分开**：这条的正确引导是「重新登录」，
+  // 说「检查网络」会让用户在网络设置里白折腾一圈，而重试永远不会成功。
+  SESSION_EXPIRED = 'session_expired',
+  // 本仓在发请求前自己拦下（本地校验、会话代次已变）。不是网络问题，别引导用户去查网络。
+  LOCAL_ABORT = 'local_abort'
+}
+
 export interface NetworkError {
   code: NetworkErrorCode;
   message: string;
   requiresChallenge: boolean;
+  // 见 NetworkFailureKind。仅当 code===NETWORK_FAILURE 且有意义时给出。
+  failureKind?: NetworkFailureKind;
+  // **可以直接展示给用户**的原因:服务端按站点语言本地化过的校验文案(Discourse 422 的 errors[]),
+  // 或本仓自己写给用户看的校验提示(如「请至少选择一个类别」)。
+  //
+  // 刻意与 message 分开、而不是复用 message:message 是排查用的原文,里面允许出现「ArkWeb」「宿主」
+  // 「JSON」这类内部名词,它只进日志与诊断快照;userReason 才是界面语言。
+  // 缺省 undefined = 没有可信文案,由映射层按结构分类给一句用户语言。
+  userReason?: string;
 }
 
 export interface NetworkResult<T> {

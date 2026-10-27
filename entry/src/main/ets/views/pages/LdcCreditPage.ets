@@ -4,6 +4,7 @@ import { LinuxDoConstants } from '../../common/constants/AppConstants';
 import { LdcDailyStat, LdcUserInfo } from '../../models/LdcCredit';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
 import { NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { LdcCreditEventBus } from '../../services/credit/LdcCreditEventBus';
 import { LdcCreditService } from '../../services/credit/LdcCreditService';
 import { LdcCreditSession } from '../../services/credit/LdcCreditSession';
@@ -530,7 +531,9 @@ export struct LdcCreditPage {
       return;
     }
 
-    this.errorMessage = result.error ? result.error.message : '';
+    // LDC 是副站点(credit.linux.do),失败文案同样是内部语言;按结构分类后再说给用户。
+    this.errorMessage = friendlyFailure(result, { subject: '等级信息', action: '加载' });
+    Log.i(`${LOG_TAG} credit load failed ${rawFailure(result)}`);
     this.phase = LdcPhase.ERROR;
   }
 

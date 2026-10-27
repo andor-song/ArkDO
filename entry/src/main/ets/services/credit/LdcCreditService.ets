@@ -2,7 +2,7 @@ import { Log } from '../logging/Log';
 import { LinuxDoConstants } from '../../common/constants/AppConstants';
 import { LdcDailyStat, LdcUserInfo } from '../../models/LdcCredit';
 import { ArkWebNetworkBridge } from '../network/ArkWebNetworkBridge';
-import { ChallengeState, HttpHeaderEntry, NetworkErrorCode, NetworkResult } from '../network/NetworkTypes';
+import { ChallengeState, HttpHeaderEntry, NetworkErrorCode, NetworkFailureKind, NetworkResult } from '../network/NetworkTypes';
 import { LdcCreditParser } from './LdcCreditParser';
 
 const LOG_TAG: string = '[ArkDO][Ldc]';
@@ -101,7 +101,8 @@ export class LdcCreditService {
       error: result.error ? result.error : {
         code: NetworkErrorCode.NETWORK_FAILURE,
         message: 'LDC 请求失败。',
-        requiresChallenge: false
+        requiresChallenge: false,
+        failureKind: NetworkFailureKind.TRANSPORT
       }
     };
   }

@@ -7,6 +7,7 @@ import { LoginGate } from '../../services/session/LoginGate';
 import { Topic, TopicCategory } from '../../models/Topic';
 import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge';
 import { NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { SearchResult, TopicService } from '../../services/topic/TopicService';
 import { SearchHistoryStore } from '../../services/search/SearchHistoryStore';
 import { SearchFilters } from '../../services/search/SearchFilters';
@@ -764,9 +765,9 @@ export struct SearchOverlay {
     } else {
       this.requiresChallenge = result.error?.requiresChallenge === true;
       this.notLoggedIn = false;
-      this.errorMessage = this.requiresChallenge ? '搜索遇到访问验证，请稍后重试' : '搜索失败，请检查网络后重试';
+      this.errorMessage = friendlyFailure(result, { subject: '用户', action: '搜索' });
     }
-    Log.i(`${LOG_TAG} user search failed status=${result.statusCode} notLoggedIn=${result.notLoggedIn}`);
+    Log.i(`${LOG_TAG} user search failed ${rawFailure(result)}`);
   }
 
   private async runTopicSearch(reset: boolean): Promise<void> {
@@ -822,10 +823,10 @@ export struct SearchOverlay {
     } else {
       this.notLoggedIn = false;
       if (reset) {
-        this.errorMessage = this.requiresChallenge ? '搜索遇到访问验证，请稍后重试' : '搜索失败，请检查网络后重试';
+        this.errorMessage = friendlyFailure(result, { subject: '内容', action: '搜索' });
       }
     }
-    Log.i(`${LOG_TAG} search failed page=${page} status=${result.statusCode} requiresChallenge=${this.requiresChallenge} notLoggedIn=${result.notLoggedIn}`);
+    Log.i(`${LOG_TAG} search failed page=${page} ${rawFailure(result)} notLoggedIn=${result.notLoggedIn}`);
   }
 
   // 去重收集(同一主题不同页可能重复出现)。

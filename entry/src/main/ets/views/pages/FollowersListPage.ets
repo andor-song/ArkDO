@@ -2,6 +2,7 @@ import { Log } from '../../services/logging/Log';
 import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { FollowListPage, FollowUserItem } from '../../models/UserProfile';
 import { JsonNetworkClient, NetworkResult } from '../../services/network/NetworkTypes';
+import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { UserProfileService } from '../../services/user/UserProfileService';
 import { UserRelationService } from '../../services/user/UserRelationService';
 import { User } from '../../models/User';
@@ -248,8 +249,8 @@ export struct FollowersListPage {
 
     if (!result.success || result.data === undefined) {
       this.loadFailed = true;
-      this.message = result.error?.message ? result.error.message : '加载失败，请重试';
-      Log.i(`${LOG_TAG} initial load failed kind=${this.kind} status=${result.statusCode}`);
+      this.message = friendlyFailure(result, { subject: '用户列表', action: '加载' });
+      Log.i(`${LOG_TAG} initial load failed kind=${this.kind} ${rawFailure(result)}`);
       return;
     }
 
