@@ -26,6 +26,7 @@ import {
   TITLE_FONT_WEIGHT_MEDIUM,
   TITLE_FONT_WEIGHT_REGULAR,
   TITLE_FONT_WEIGHT_SEMI_BOLD,
+  TITLE_FONT_WEIGHT_DEFAULT,
   titleLineHeight,
   unreadBadgeFontSize,
   unreadBadgeRadius,
@@ -34,8 +35,13 @@ import {
 
 export default function topicListStyleTest() {
   describe('topicListStyleTest', () => {
-    // 这一组是回归护栏:默认值必须逐像素还原改造前 TopicListItem 里的硬编码数字,
-    // 否则不动设置的老用户升级后会发现列表"自己变了样"。
+    // 这一组是回归护栏，但**拆成两段**才诚实：
+    // ① 自 72c43e4「列表样式可调」以来从未改过的那些派生值，必须逐像素等于改造前 TopicListItem
+    //    里的硬编码数字 —— 不动设置的老用户升级后列表不该"自己变了样"。
+    // ② 之后被有意调紧的三项（头像间距随 24a1ef2 头像 48→40 变 7；meta/摘要间距随 7c35f03
+    //    行留白 8→5 变 4）钉的是**当前默认值**。它们已经不是"还原硬编码"了，写成那样只会让人
+    //    以为改动是回归：上一版正是这样，avatarGap 写着 8、metaRowGap 写着 3，而真实默认是 7 和 4 ——
+    //    用例在第一条断言处就抛，后面每一条有没有过期根本看不见。
     it('defaultsReproduceLegacyHardcodedMetrics', 0, () => {
       expect(TITLE_FONT_SIZE_DEFAULT).assertEqual(17);
       expect(titleLineHeight(TITLE_FONT_SIZE_DEFAULT, LINE_HEIGHT_RATIO_DEFAULT)).assertEqual(23);
@@ -45,8 +51,15 @@ export default function topicListStyleTest() {
       expect(unseenDotFontSize(TITLE_FONT_SIZE_DEFAULT)).assertEqual(8);
       expect(inlineIconSize(TITLE_FONT_SIZE_DEFAULT)).assertEqual(15);
       expect(inlineIconGap(inlineIconSize(TITLE_FONT_SIZE_DEFAULT))).assertEqual(5);
-      expect(avatarGap(AVATAR_SIZE_DEFAULT)).assertEqual(8);
-      expect(metaRowGap(ROW_PADDING_DEFAULT)).assertEqual(3);
+    });
+
+    // ② 密度调紧后的当前默认。改动都有明确意图与 commit，这里的作用是：下次再调时**必须**
+    // 主动来改这一组，而不是让它悄悄红成"测试坏了"。
+    it('densityRetunedDefaultsPinCurrentValues', 0, () => {
+      // 头像 40 → 间距 40/6 = 6.67 → 7（头像 48 时代是 8）。
+      expect(avatarGap(AVATAR_SIZE_DEFAULT)).assertEqual(7);
+      // 行留白 5 → meta 5/2 = 2.5 → 下限 4；摘要 5*3/4 = 3.75 → 4。
+      expect(metaRowGap(ROW_PADDING_DEFAULT)).assertEqual(4);
       expect(blurbGap(ROW_PADDING_DEFAULT)).assertEqual(4);
     });
 
@@ -82,11 +95,19 @@ export default function topicListStyleTest() {
     });
 
     // 字重只认三个值,不做就近取整:450 不该悄悄变成 400 或 500 的某一个"看起来对"的结果。
+    //
+    // MEDIUM 那一行是这次的回归点:24a1ef2 把脏值回退从 MEDIUM 改成 REGULAR 时没把它列进接受集,
+    // 于是设置页上「中等」这个真实存在的档位一点就跳回「常规」。
+    //
+    // 别把这次漏网记成"用例被改绿了":旧断言 450 → MEDIUM 走的是回退分支,回退值一改成 400,
+    // 它当场就该红。真实原因是这套单测从没有自动化的跑测入口 —— 红而无人知晓。
+    // 这次补的是**正面**断言 500 → 500:原先"这一档活着"只是回退值的副产品,从没被直接钉过。
     it('acceptsOnlyKnownFontWeights', 0, () => {
       expect(normalizeTitleFontWeight(TITLE_FONT_WEIGHT_REGULAR)).assertEqual(TITLE_FONT_WEIGHT_REGULAR);
+      expect(normalizeTitleFontWeight(TITLE_FONT_WEIGHT_MEDIUM)).assertEqual(TITLE_FONT_WEIGHT_MEDIUM);
       expect(normalizeTitleFontWeight(TITLE_FONT_WEIGHT_SEMI_BOLD)).assertEqual(TITLE_FONT_WEIGHT_SEMI_BOLD);
-      expect(normalizeTitleFontWeight(450)).assertEqual(TITLE_FONT_WEIGHT_MEDIUM);
-      expect(normalizeTitleFontWeight(NaN)).assertEqual(TITLE_FONT_WEIGHT_MEDIUM);
+      expect(normalizeTitleFontWeight(450)).assertEqual(TITLE_FONT_WEIGHT_DEFAULT);
+      expect(normalizeTitleFontWeight(NaN)).assertEqual(TITLE_FONT_WEIGHT_DEFAULT);
     });
 
     // 行高必须随字号一起长:存倍率而非绝对值就是为了这个。

@@ -108,12 +108,24 @@ export function clampLineHeightRatio(value: number): number {
   return Math.round(bounded * 100) / 100;
 }
 
-/** 字重只认三个合法值,其余(含旧数据/脏值)一律回默认,不做就近取整。 */
+/**
+ * 字重只认那三个合法值,其余(旧数据/脏值)一律回**默认档**,不做就近取整。
+ *
+ * 三个合法值必须**逐个列全**,少列一个就等于把设置页上的一个档位废掉:
+ * 「中等」正是这么消失的 —— 24a1ef2 把脏值回退从 MEDIUM 改成 REGULAR(想让默认变常规),
+ * 但没把 MEDIUM 加进接受集,于是 normalize(500) 落回 400,用户在「帖子列表样式」里点
+ * 「中等」被当场改回「常规」,高亮也跳回常规那一格。在此之前它能工作纯属巧合:
+ * 回退值恰好就是 500,把自己吞掉的那一档又吐了出来。
+ *
+ * 回退值写 TITLE_FONT_WEIGHT_DEFAULT 而不是字面量 REGULAR:这次的坑根子上是
+ * "改默认档的人不知道这里还藏着一份默认档"。引用同一个常量,下次改默认就不会再漏一半。
+ */
 export function normalizeTitleFontWeight(value: number): number {
-  if (value === TITLE_FONT_WEIGHT_REGULAR || value === TITLE_FONT_WEIGHT_SEMI_BOLD) {
+  if (value === TITLE_FONT_WEIGHT_REGULAR || value === TITLE_FONT_WEIGHT_MEDIUM ||
+    value === TITLE_FONT_WEIGHT_SEMI_BOLD) {
     return value;
   }
-  return TITLE_FONT_WEIGHT_REGULAR;
+  return TITLE_FONT_WEIGHT_DEFAULT;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,18 +171,20 @@ export function inlineIconGap(iconSize: number): number {
   return Math.max(3, Math.round(iconSize / 3));
 }
 
-/** 头像与文字列的间距:默认 8。 */
+/** 头像与文字列的间距:默认 7(随头像走)。原为 8 —— 头像是 48 时 48/6=8;24a1ef2 把头像默认
+ * 调到 40 后这一间距随之变 7,注释当时没跟上,于是"默认 8"这个谎留到了今天。 */
 export function avatarGap(avatarSize: number): number {
   return Math.max(6, Math.round(clampAvatarSize(avatarSize) / 6));
 }
 
-/** 分类/标签/时间那一行与标题的间距:默认 6(随行留白松紧)。原为默认 3,标题行高
- * 23 而下方 3vp 就贴徽章行、再 3vp 贴时间,信息层级挤在一起是首页"糙感"主因。 */
+/** 分类/标签/时间那一行与标题的间距:默认 4(随行留白松紧)。历史:改造前硬编码 3 →
+ * 72c43e4 抬到 6(标题行高 23 而下方 3vp 就贴徽章行、再 3vp 贴时间,信息层级挤在一起是
+ * 首页"糙感"主因) → 7c35f03 把下限放到 4、行留白默认 8→5,默认档于是落回 4。 */
 export function metaRowGap(rowPadding: number): number {
   return Math.max(4, Math.round(clampRowPadding(rowPadding) / 2));
 }
 
-/** 搜索摘要与标题的间距:默认 6。 */
+/** 搜索摘要与标题的间距:默认 4(行留白拉满 20 时为 15)。同 metaRowGap:7c35f03 下限 6→4。 */
 export function blurbGap(rowPadding: number): number {
   return Math.max(4, Math.round(clampRowPadding(rowPadding) * 3 / 4));
 }
