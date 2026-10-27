@@ -10,7 +10,15 @@ export enum FeedKey {
   NEW = 'new',
   // 唯一一个不是 Discourse filter 名的 key:它是 latest + `order=created`,拼装规则见 TopicListQuery。
   // Discourse 没有「按发布时间」的 filter —— latest 排的是 bumped_at,老帖被回复就顶上来。
-  CREATED = 'created'
+  CREATED = 'created',
+  // 已读。`read` 是 Discourse core 的一等 list filter(`lib/discourse.rb` 的 `Discourse.filters`
+  // 里就有它),所以 `/read.json`、`/c/{slug}/l/read.json`、`/tag/{slug}/l/read.json`
+  // 都由同一张 filters 表循环生成 —— **可以**与版块/标签组合,分页也走同一套。
+  // 与 unread/new 一样属匿名不可用(`Discourse.anonymous_filters` 只有 latest/top/categories/hot)。
+  //
+  // (曾一度误以为它是"用户活动端点、不可组合",并据此加过置灰逻辑;核对上游 `Discourse.filters`
+  // 与 routes.rb 的 `Discourse.filters.each` 后已纠正。)
+  READ = 'read'
 }
 
 /** 一个内容入口的展示元数据。requiresLogin 的入口未登录时在抽屉里置灰(不隐藏)。 */
@@ -38,7 +46,10 @@ const OPTIONAL_FEEDS: FeedDef[] = [
   // 曾叫「新主题」,名实不符:linux.do 开着 new_new_view,/new.json 回的是「未读 + 从没打开过」
   // 的合集,还按 bumped_at 排(抓包实测 30 条里 3 条是读过一半的老帖,最新发布的那条被压到第 8 位)。
   // 想要「刚发出来的帖子」看 CREATED。
-  { key: FeedKey.NEW, label: '未读新帖', requiresLogin: true }
+  { key: FeedKey.NEW, label: '未读新帖', requiresLogin: true },
+  // 「已读」收在最后,与「未读 / 未读新帖」形成一组:先未读后已读,语义上是同一根轴的两端。
+  // 需要登录(/read.json 固定回当前用户),且不可与版块/标签组合(见 FeedKey.READ 的注释)。
+  { key: FeedKey.READ, label: '已读', requiresLogin: true }
 ];
 
 /** 内容入口的元数据表:抽屉顶部的过滤器 chips 按「最新 + 其余」渲染,标签与登录要求都从这儿取。 */

@@ -5,6 +5,8 @@ import { JsonNetworkClient, NetworkResult } from '../../services/network/Network
 import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { TopicPage, TopicService } from '../../services/topic/TopicService';
+import { emptyStateForFeed } from '../../services/topic/TopicListQuery';
+import { FeedKey } from '../../services/site/FeedPrefs';
 import { TopicListItem } from '../components/TopicListItem';
 import { LoadStateView } from '../components/LoadStateView';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
@@ -16,6 +18,7 @@ import {
   requiresHdsLayoutSafeAreaAvoidance
 } from '../../common/ui/ImmersiveLightMaterial';
 import { buildImmersiveTitleBarStyle } from '../../common/ui/ImmersiveTitleBarStyle';
+import { TopicReadState, TopicReadStateEventBus } from '../../services/session/TopicReadStateEventBus';
 
 const LOG_TAG: string = '[ArkDO][ReadTopicsPage]';
 
@@ -45,13 +48,48 @@ export struct ReadTopicsPage {
   private currentPage: number = 0;
   private loading: boolean = false;
   private scroller: Scroller = new Scroller();
+  // 已读状态回传的订阅句柄(详情页离开时结算一次)。与首页同一条链路,
+  // 否则在详情页读完后返回这里,未读徽标还停在旧值 —— 用户会以为没读进去。
+  private unsubscribeReadState: (() => void) | undefined = undefined;
 
   aboutToAppear(): void {
     if (this.bridge) {
       this.service = new TopicService(this.bridge);
     }
+    // 幂等:aboutToAppear 理论上只跑一次,但订阅泄漏的代价是整页持有旧引用,
+    // 与首页保持同一种写法(先判空)。
+    if (this.unsubscribeReadState === undefined) {
+      this.unsubscribeReadState = TopicReadStateEventBus.subscribe(
+        (state: TopicReadState): void => {
+          this.handleTopicReadStateChanged(state);
+        });
+    }
     this.loadCategories();
     this.loadInitial();
+  }
+
+  aboutToDisappear(): void {
+    if (this.unsubscribeReadState !== undefined) {
+      this.unsubscribeReadState();
+      this.unsubscribeReadState = undefined;
+    }
+  }
+
+  // 与 HomePage.handleTopicReadStateChanged 同构:只改命中的那一条,靠 @Observed 精准重渲染。
+  private handleTopicReadStateChanged(state: TopicReadState): void {
+    for (let index: number = 0; index < this.topics.length; index++) {
+      const topic: Topic = this.topics[index];
+      if (topic.id !== state.topicId) {
+        continue;
+      }
+      topic.unseen = state.unseen;
+      topic.unreadPosts = state.unreadPosts;
+      // 同步已读水位:再点未读徽标时,跳转目标才是最新的第一条未读楼。
+      if (topic.highestPostNumber !== undefined && topic.highestPostNumber > 0) {
+        topic.lastReadPostNumber = Math.max(0, topic.highestPostNumber - state.unreadPosts);
+      }
+      return;
+    }
   }
 
   build() {
@@ -95,7 +133,11 @@ export struct ReadTopicsPage {
           loadingText: '加载中…',
           message: this.message.length > 0 ? this.message : '加载失败',
           showRetry: this.loadFailed,
-          emptyTitle: '还没有读过的帖子',
+          // 直接取「已读」筛选那一档的空态文案,不再另写一份 —— 两处各写一句迟早会漂,
+          // 而这个页与「已读」筛选本来就是同一件事的两个入口。
+          emptyTitle: emptyStateForFeed(FeedKey.READ).title,
+          emptySubtitle: emptyStateForFeed(FeedKey.READ).subtitle,
+          emptyIcon: $r('sys.symbol.arrow_counterclockwise_clock'),
           onRetry: () => {
             this.loadInitial();
           }

@@ -27,10 +27,23 @@ import {
   resolveBadgeAssetUrl
 } from './TopicBadgeUtils';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
+import { CategorySearchHit, searchCategories } from '../../services/site/CategorySearch';
 import { SYS_BOTTOM_INSET_KEY, SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 
 const LOG_TAG: string = '[ArkDO][Drawer]';
 const ROW_HEIGHT: number = 48;
+// 分组标题与行同高(48),层级靠**字号 + 颜色**表达(13 号 secondary vs 15 号 primary)。
+// 曾经压到 40 想做出"章节更矮"的观感,但整行就是手风琴唯一的热区 —— 40 低于 48vp 的
+// 最小触摸目标,标题反而比下面的行更难点。视觉层级不值得用可点性去换。
+const GROUP_HEADER_HEIGHT: number = ROW_HEIGHT;
+// chips 横向滚动条的高度 = 胶囊 32 + 胶囊自带的下外边距 8。
+// 给固定高度是因为横向 List 在 Column 里量不出内容高度,不给就塌成 0。
+const FEED_CHIP_STRIP_HEIGHT: number = 40;
+// 选中态统一用 info_soft_bg + brand(与 ChoiceChip 一致)。
+//
+// 原先列表行用 surface_muted、chips 用 info_soft_bg —— 同一个「选中」语义两套底色,
+// 在深色模式下 surface_muted 与页面底几乎同色,选中行只剩文字变蓝,远看像没选中。
+// 统一之后,面板里任何「选中的东西」都是同一种淡蓝底,不必再分辨这是哪一区。
 // 标签联想防抖:与搜索面板同一量级,避免每次击键都打 /tags/filter/search。
 const TAG_DEBOUNCE_MS: number = 300;
 // 两个 Tab 的下划线指示器:横向长出来的那一下。
@@ -53,6 +66,12 @@ interface CategoryRowParams {
   isChild: boolean;
   // 图标兜底用的父版块;顶级版块传自身。
   parent: TopicCategory;
+  // 搜索结果里的祖先路径(「开发调优 / 其他」)。常规浏览树不传。
+  // 同名子版块(多个分类下都有「其他」)只能靠它分辨。
+  breadcrumb?: string;
+  // 搜索结果不渲染子行,所以不能画展开箭头 —— 点了只会转一下箭头却不展开任何东西,
+  // 还会偷偷改宿主的 expandedIds(清空搜索回到浏览态时该版块莫名其妙是展开的)。
+  hideExpandArrow?: boolean;
 }
 
 // 标签行:「我的标签」「热门标签」「搜索结果」三处共用一个 Builder,故先归一成这个形状。
@@ -79,6 +98,13 @@ interface TabParams {
   badge: number;
 }
 
+// 已选条件胶囊。@Builder 一律收单个对象参数(本文件顶部注释:多参数会踩 ArkTS/Rollup 的
+// Argument name clash),函数也塞进对象里传。
+interface ConditionPillParams {
+  label: string;
+  onRemove: () => void;
+}
+
 /**
  * 首页筛选抽屉。
  *
@@ -100,7 +126,10 @@ export struct CategoryDrawer {
   bridge: ArkWebNetworkBridge = new ArkWebNetworkBridge();
   isArkWebReady: boolean = false;
   // 分类异步加载,@Prop 才能在父组件更新后同步进抽屉(普通成员变量只在创建时赋值一次)。
-  @Prop categories: TopicCategory[] = [];
+  // @Watch:分类是异步从 /site.json 取的。用户可能在它回来之前就开始打字,
+  // 那一次 onChange 拿到的 categoryHits 是空数组;分类到了不重算,搜索框里就永远显示
+  // 「没有匹配的版块」—— 明明数据已经到了。
+  @Prop @Watch('onCategoriesChanged') categories: TopicCategory[] = [];
   @Prop isLoggedIn: boolean = false;
   // 底部面板布局:为 true 时 root 从「全高左侧抽屉」切换成「圆角底部面板」(底部安全区/拖拽条/顶部圆角),
   // 为 false(默认)保持抽屉原样。面板本身的宿主定位由外侧容器负责,组件内部只管这几种布局差异。
@@ -144,6 +173,17 @@ export struct CategoryDrawer {
   @State private tagQuery: string = '';
   @State private tagResults: TagSuggestion[] = [];
   @State private tagLoading: boolean = false;
+  // 版块搜索。与标签搜索同款输入框 —— 同一个抽屉里两页能力对齐,用户不必记「标签能搜、版块不能」。
+  @State private categoryQuery: string = '';
+  // 搜索结果。放在 @State 而不是渲染时现算:@Builder 里没有语句位置,
+  // 而同一个 builder 会连读两遍(渲染 ForEach + 判空),现算等于每次重绘遍历两遍分类表。
+  @State private categoryHits: CategorySearchHit[] = [];
+  // 过滤器 chips 的横向滚动器:打开面板时把当前选中的那一枚滚进视野。
+  // 用 List 而不是 Scroll,是因为只有 List 的 scrollToIndex 是按下标精确滚动 ——
+  // Scroll 得自己估算每枚胶囊的宽度,估偏了会停在两枚之间,反而像卡住了。
+  private feedChipScroller: Scroller = new Scroller();
+  // 选中 chip 是否已经滚到位。onAreaChange 会随布局反复触发,不加这个闸会来回跳。
+  private chipScrolled: boolean = false;
   private tagDebounceTimer: number = -1;
   // 标签联想请求序号:丢弃过期响应。
   private tagSeq: number = 0;
@@ -155,6 +195,38 @@ export struct CategoryDrawer {
 
   aboutToDisappear(): void {
     this.clearTagDebounce();
+  }
+
+  /**
+   * 把当前选中的过滤器滚进视野。chips 改成横向单行后,「未读新帖」「已读」默认在屏幕外 ——
+   * 打开面板却看不到自己选的那一枚,会让人以为筛选丢了。
+   *
+   * 由 List 的 onAreaChange 触发(而不是 aboutToAppear + setTimeout):Scroller 在 build 之前
+   * 还没绑定,而 setTimeout(0) 是宏任务、不保证排在首帧布局之后 —— 拿不准就静默无效。
+   * onAreaChange 是布局真的量出尺寸的那一刻,这时 scrollToIndex 才有意义。
+   * 只做一次(guard),否则滚动引起的新布局会再次触发它,形成来回跳。
+   */
+  private scrollSelectedChipIntoView(): void {
+    if (this.chipScrolled) {
+      return;
+    }
+    const feeds: FeedDef[] = this.allFeeds();
+    for (let index: number = 0; index < feeds.length; index++) {
+      if (feeds[index].key === this.draft.filter) {
+        this.chipScrolled = true;
+        // 不带动画:面板本身正在滑入,再来一段横向滚动会打架。
+        this.feedChipScroller.scrollToIndex(index, false, ScrollAlign.CENTER);
+        return;
+      }
+    }
+  }
+
+  // 分类表到达/刷新时重算搜索结果(见 categories 上的 @Watch 注释)。
+  private onCategoriesChanged(): void {
+    if (this.categoryQuery.trim().length === 0) {
+      return;
+    }
+    this.categoryHits = searchCategories(this.categories, this.categoryQuery);
   }
 
   build() {
@@ -209,11 +281,14 @@ export struct CategoryDrawer {
     }
     .width('100%')
     .height('100%')
-    // 面板模式:不再避让顶部状态栏(顶部换成 16 间距,圆角就是面板自己的上沿),改在底部让出安全区;
-    // 抽屉模式保持原样(顶部让出状态栏、底部不垫)。数值三元内联在属性位,避开 ArkTS 对资源存字段的限制。
+    // 面板模式不再避让顶部状态栏(顶部换成 16 间距,圆角就是面板自己的上沿);
+    // 抽屉模式顶部让出状态栏。
+    //
+    // **底部一律 0**:安全区由 ConfirmBar 自己垫(它最后渲染、贴着面板底边)。
+    // 这里再垫一次会让按钮下方留白变成 2×inset(实机上是两条安全区的空白)。
     .padding({
       top: this.panelMode ? 16 : this.sysTopInset,
-      bottom: this.panelMode ? this.sysBottomInset + 8 : 0
+      bottom: 0
     })
     .borderRadius({
       topLeft: this.panelMode ? 20 : 0,
@@ -265,27 +340,82 @@ export struct CategoryDrawer {
   @Builder
   private FilterSection() {
     Column() {
-      Flex({ wrap: FlexWrap.Wrap }) {
+      // 横向单行滚动,不再换行。
+      //
+      // 原先用 Flex wrap:入口从一个长到七个之后要占三行,把版块树挤下去近百 vp。
+      // 换行还有个副作用 —— 每次增减入口,整个面板的纵向布局都跟着跳。
+      //
+      // 代价是最后几枚(未读新帖 / 已读)默认看不见。这一点由**底部确认条**里的
+      // 「已选条件」胶囊兜底:即便没滑到,选中的那枚也会在那儿显示成可移除的胶囊。
+      List({ scroller: this.feedChipScroller }) {
         ForEach(this.allFeeds(), (feed: FeedDef) => {
-          ChoiceChip({
-            label: feed.label,
-            selected: this.draft.filter === feed.key,
-            chipDisabled: this.isFilterBlocked(feed.key),
-            onTap: () => {
-              this.setFilter(feed.key);
-            },
-            onBlockedTap: () => {
-              this.onNotice('登录后可查看该入口');
-            }
-          })
+          ListItem() {
+            ChoiceChip({
+              label: feed.label,
+              selected: this.draft.filter === feed.key,
+              chipDisabled: this.isFilterBlocked(feed.key),
+              onTap: () => {
+                this.setFilter(feed.key);
+              },
+              onBlockedTap: () => {
+                this.onNotice('登录后可查看该入口');
+              }
+            })
+          }
         }, (feed: FeedDef) => `f${feed.key}`)
       }
+      .listDirection(Axis.Horizontal)
+      // Fade 而不是 Spring:横向列表的弹簧回弹会在边界露出一段空白,
+      // 而这里两边贴着的就是面板边缘,淡出更干净。
+      .edgeEffect(EdgeEffect.Fade)
+      .scrollBar(BarState.Off)
       .width('100%')
+      .height(FEED_CHIP_STRIP_HEIGHT)
+      // 布局完成的那一刻再把选中项滚进视野(见 scrollSelectedChipIntoView 的注释)。
+      .onAreaChange(() => {
+        this.scrollSelectedChipIntoView();
+      })
     }
     .width('100%')
-    // chips 自带 bottom margin 8,底部这里就不再补,否则与下面的分割线之间会空一大截。
     .padding({ left: 16, right: 16, top: 2 })
     .alignItems(HorizontalAlign.Start)
+  }
+
+  // ==================== ①.5 已选条件 ====================
+
+  private hasActiveConditions(): boolean {
+    return this.draft.filter !== FeedKey.LATEST
+      || this.draft.category !== undefined
+      || this.draft.tag !== undefined;
+  }
+
+  // 取过滤器的展示名。feedDef 返回 undefined 时退回 key 本身(不猜、不隐藏 ——
+  // 真出现未知 key 时显示原文,比显示一个空白胶囊好排查)。
+  private filterLabelOf(key: string): string {
+    const def: FeedDef | undefined = FeedPrefs.feedDef(key);
+    return def !== undefined ? def.label : key;
+  }
+
+  @Builder
+  private ConditionPill(p: ConditionPillParams) {
+    Row({ space: 4 }) {
+      Text(p.label)
+        .fontSize(12)
+        .fontColor($r('app.color.brand'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      FaIconView({ icon: this.iconOf('xmark'), color: $r('app.color.brand'), iconSize: 9 })
+    }
+    .height(26)
+    .padding({ left: 10, right: 9 })
+    .margin({ right: 6 })
+    .backgroundColor($r('app.color.info_soft_bg'))
+    .borderRadius(13)
+    // 整枚都是热区:12 号字上挂一个 9px 的 ✕ 单独点很难点中,
+    // 点胶囊任意位置即移除,符合「这颗胶囊整体代表一个可撤销的选择」。
+    .onClick(() => {
+      p.onRemove();
+    })
   }
 
   // ==================== ②③ Tab ====================
@@ -402,6 +532,53 @@ export struct CategoryDrawer {
   @Builder
   private CategoryTab() {
     Column() {
+      // 版块搜索。与标签页同款输入框、同样缩进 —— 两页能力对齐。
+      Row() {
+        Row() {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(14)
+            .fontColor([$r('app.color.text_tertiary')])
+            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+            .margin({ right: 8 })
+          TextInput({ text: $$this.categoryQuery, placeholder: '搜索版块' })
+            .layoutWeight(1)
+            .backgroundColor(Color.Transparent)
+            .borderRadius(0)
+            .padding({ left: 0, right: 0, top: 8, bottom: 8 })
+            .fontSize(14)
+            .fontColor($r('app.color.text_primary'))
+            .placeholderColor($r('app.color.text_tertiary'))
+            .onChange((value: string) => {
+              this.categoryQuery = value;
+              this.categoryHits = searchCategories(this.categories, value);
+            })
+        }
+        .layoutWeight(1)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor($r('app.color.surface_muted'))
+        .borderRadius(10)
+        .alignItems(VerticalAlign.Center)
+      }
+      .width('100%')
+      // top 与标签页对齐(那边是 Column 的 top:10),两页搜索框视觉一致。
+      .padding({ left: 16, right: 16, top: 10, bottom: 6 })
+
+      if (this.categoryQuery.trim().length > 0) {
+        // 搜索态直出扁平结果:这时用户要的是「搜到的那几个」,
+        // 再让他先展开「所有版块」手风琴纯属添堵(标签页也是同一处理)。
+        this.CategorySearchResults()
+      } else {
+        this.CategoryBrowse()
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  // 常规浏览:不限版块 + 两个手风琴分组(或直接铺开整棵树)。
+  @Builder
+  private CategoryBrowse() {
+    Column() {
       this.AllCategoriesRow()
 
       // 有自选版块时两组走手风琴(同时只展开一组);没有就退回原样——整棵树直接铺开、不套分组标题,
@@ -438,6 +615,34 @@ export struct CategoryDrawer {
         }
       } else {
         this.CategoryTree()
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  // 搜索结果:扁平列表,子版块缩进 + 带父版块名(重名子版块靠它分辨)。
+  @Builder
+  private CategorySearchResults() {
+    Column() {
+      ForEach(this.categoryHits, (hit: CategorySearchHit) => {
+        this.CategoryRow({
+          category: hit.category,
+          isChild: hit.isChild,
+          parent: hit.parent,
+          breadcrumb: hit.breadcrumb,
+          hideExpandArrow: true
+        })
+      }, (hit: CategorySearchHit) => `cs${hit.category.id}`)
+
+      if (this.categoryHits.length === 0) {
+        Text('没有匹配的版块')
+          .fontSize(13)
+          // text_tertiary 在亮色下对页面底只有 2.54:1，正文级文字必须过 AA(4.5:1)。
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .padding({ top: 16, bottom: 16 })
       }
     }
     .width('100%')
@@ -518,9 +723,9 @@ export struct CategoryDrawer {
       .margin({ right: 10 })
 
       Text(p.label)
-        .fontSize(14)
+        .fontSize(13)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor($r('app.color.text_secondary'))
         .layoutWeight(1)
 
       if (p.count > 0) {
@@ -530,7 +735,7 @@ export struct CategoryDrawer {
       }
     }
     .width('100%')
-    .height(ROW_HEIGHT)
+    .height(GROUP_HEADER_HEIGHT)
     .padding({ left: 12, right: 16 })
     .alignItems(VerticalAlign.Center)
     .onClick(() => {
@@ -567,7 +772,7 @@ export struct CategoryDrawer {
     .width('100%')
     .height(ROW_HEIGHT)
     .padding({ left: 12, right: 16 })
-    .backgroundColor(this.draft.category === undefined ? $r('app.color.surface_muted') : Color.Transparent)
+    .backgroundColor(this.draft.category === undefined ? $r('app.color.info_soft_bg') : Color.Transparent)
     .onClick(() => {
       this.setCategory(undefined);
     })
@@ -600,13 +805,28 @@ export struct CategoryDrawer {
       .justifyContent(FlexAlign.Center)
       .margin({ right: 10 })
 
-      Text(p.category.name)
-        .fontSize(p.isChild ? 14 : 15)
-        .fontWeight(this.isCategorySelected(p.category.id) ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(this.isCategorySelected(p.category.id) ? $r('app.color.brand') : $r('app.color.text_primary'))
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Row({ space: 6 }) {
+        Text(p.category.name)
+          .fontSize(p.isChild ? 14 : 15)
+          .fontWeight(this.isCategorySelected(p.category.id) ? FontWeight.Medium : FontWeight.Regular)
+          .fontColor(this.isCategorySelected(p.category.id) ? $r('app.color.brand') : $r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          // 名字让位给面包屑:超长时优先把父路径挤掉,当前条目名保持可读。
+          .layoutWeight(1)
+
+        // 搜索结果的面包屑:同名子版块(多个分类下都有「其他」)只能靠它分辨。
+        // 常规浏览树里层级由缩进表达,不需要这段。
+        if (p.breadcrumb !== undefined && p.breadcrumb.length > 0) {
+          Text(p.breadcrumb)
+            .fontSize(11)
+            .fontColor($r('app.color.text_tertiary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(VerticalAlign.Center)
 
       if (this.isRestricted(p.category)) {
         FaIconView({ icon: this.iconOf('lock'), color: $r('app.color.text_faint'), iconSize: 12 })
@@ -616,7 +836,7 @@ export struct CategoryDrawer {
           .margin({ left: 6 })
       }
 
-      if (!p.isChild && this.hasChildren(p.category.id)) {
+      if (!p.isChild && p.hideExpandArrow !== true && this.hasChildren(p.category.id)) {
         // 箭头单独热区:点它只折叠/展开子版块,不选中该版块(行其余部分才是「选它」)。
         // 热区做宽(整行高 × 56)且右移贴边,减少与「选中版块」的误触。
         Row() {
@@ -639,7 +859,7 @@ export struct CategoryDrawer {
     .height(ROW_HEIGHT)
     .padding({ left: p.isChild ? 28 : 12, right: 16 })
     .opacity(this.isRestricted(p.category) ? 0.45 : 1)
-    .backgroundColor(this.isCategorySelected(p.category.id) ? $r('app.color.surface_muted') : Color.Transparent)
+    .backgroundColor(this.isCategorySelected(p.category.id) ? $r('app.color.info_soft_bg') : Color.Transparent)
     .onClick(() => {
       this.handleCategoryTap(p.category);
     })
@@ -774,7 +994,7 @@ export struct CategoryDrawer {
     .width('100%')
     .height(ROW_HEIGHT)
     .padding({ left: 12, right: 16 })
-    .backgroundColor(this.draft.tag === undefined ? $r('app.color.surface_muted') : Color.Transparent)
+    .backgroundColor(this.draft.tag === undefined ? $r('app.color.info_soft_bg') : Color.Transparent)
     .onClick(() => {
       this.setTag(undefined);
     })
@@ -817,7 +1037,7 @@ export struct CategoryDrawer {
     .width('100%')
     .height(ROW_HEIGHT)
     .padding({ left: 12, right: 16 })
-    .backgroundColor(this.isTagSelected(p.name) ? $r('app.color.surface_muted') : Color.Transparent)
+    .backgroundColor(this.isTagSelected(p.name) ? $r('app.color.info_soft_bg') : Color.Transparent)
     .onClick(() => {
       // 与点版块同款语义:点即选中(单选,替换掉原来那个),不做「再点一次取消」——
       // 取消统一交给上面的「不限标签」,两页的退出方式因此也一致。
@@ -916,23 +1136,74 @@ export struct CategoryDrawer {
 
   @Builder
   private ConfirmBar() {
-    Column({ space: 8 }) {
-      Text(describeTopicListQuery(this.draft))
-        .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
-        .width('100%')
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    // 单行:左边「当前条件」,右边一颗胶囊按钮。
+    //
+    // 原先上下两行(12 号灰字 + 全宽 42 高按钮),在这个已经排满条件的面板里显得笨重,
+    // 而且那行字与按钮宽度不一致,视觉重心偏。收成一行后底部只占 56,列表多出一截。
+    //
+    // 左边在「有条件」时渲染成可单独移除的胶囊 —— 但**高度恒定**(26 高胶囊与 12 号单行文字同高),
+    // 所以选中第一个条件时下面的列表不会被顶下去。这一点是刻意的:把已选条件放到顶上会让
+    // 整块内容在第一次筛选时跳 30 多 vp,那种「页面自己抖一下」比看不到条件更难受。
+    Row({ space: 12 }) {
+      Scroll() {
+        Row() {
+          if (this.hasActiveConditions()) {
+            if (this.draft.filter !== FeedKey.LATEST) {
+              this.ConditionPill({
+                label: this.filterLabelOf(this.draft.filter),
+                onRemove: (): void => {
+                  this.setFilter(FeedKey.LATEST);
+                }
+              })
+            }
+            if (this.draft.category !== undefined) {
+              this.ConditionPill({
+                label: this.draft.category.name,
+                onRemove: (): void => {
+                  this.setCategory(undefined);
+                }
+              })
+            }
+            if (this.draft.tag !== undefined) {
+              this.ConditionPill({
+                label: `#${this.draft.tag.name}`,
+                onRemove: (): void => {
+                  this.setTag(undefined);
+                }
+              })
+            }
+          } else {
+            Text(describeTopicListQuery(this.draft))
+              .fontSize(12)
+              // 不用 text_tertiary:亮色下对页面底只有 2.54:1，12 号正文级文字掉了 AA。
+              .fontColor($r('app.color.text_secondary'))
+              .maxLines(1)
+          }
+        }
+        .height(26)
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Fade)
+      // 必须给高度:横向 Scroll 在 Row 里不给高度会按内容撑,而内容在切换时有/无胶囊,
+      // 高度一变按钮就跟着上下动。钉死 26 = 胶囊高度。
+      .height(26)
+      .layoutWeight(1)
+      .align(Alignment.Start)
 
       // 草稿与生效中的一致时没有请求可发,按钮改成「关闭」——比置灰一个死按钮更有用。
       Button(this.isDirty() ? '查看结果' : '关闭')
-        .width('100%')
-        .height(42)
+        .height(40)
+        .padding({ left: 20, right: 20 })
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.isDirty() ? Color.White : $r('app.color.text_secondary'))
         .backgroundColor(this.isDirty() ? $r('app.color.brand') : $r('app.color.surface_muted'))
-        .borderRadius(12)
+        .borderRadius(20)
+        // 主按钮抬一点:面板底色与按钮同为浅色时,没有投影时按钮边界会糊在背景里。
+        .shadow(this.isDirty()
+          ? { radius: 10, color: '#332563EB', offsetY: 2 }
+          : { radius: 0, color: Color.Transparent, offsetY: 0 })
         .onClick(() => {
           if (this.isDirty()) {
             this.onApply();
@@ -943,7 +1214,7 @@ export struct CategoryDrawer {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 10, bottom: 12 + this.sysBottomInset })
-    .alignItems(HorizontalAlign.Start)
+    .alignItems(VerticalAlign.Center)
     .backgroundColor($r('app.color.page_bg'))
     .border({ width: { top: 0.5 }, color: $r('app.color.border') })
   }
@@ -1125,8 +1396,9 @@ export struct CategoryDrawer {
     return [FeedPrefs.latestFeed()].concat(FeedPrefs.optionalFeeds());
   }
 
-  // 目前唯一的禁用理由是未登录。置灰而非隐藏,再配上点击时的这句提示,用户才分得清
-  // 「没有这个功能」和「没登录」。
+  // 置灰而非隐藏,再配上点击时的这句提示,用户才分得清「没有这个功能」和「没登录」。
+  // 唯一的禁用理由是未登录:未读 / 未读新帖 / 已读都需要会话
+  // (对应 Discourse.anonymous_filters 不含它们)。版块/标签与 filter 正交,不构成禁用理由。
   private isFilterBlocked(key: string): boolean {
     return filterRequiresLogin(key) && !this.isLoggedIn;
   }
@@ -1138,6 +1410,7 @@ export struct CategoryDrawer {
   private topLevelCategories(): TopicCategory[] {
     return CategoryIndex.topLevelCategories(this.categories);
   }
+
 
   private childrenOf(parentId: number): TopicCategory[] {
     return CategoryIndex.childrenOf(this.categories, parentId);

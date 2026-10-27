@@ -50,6 +50,9 @@ export struct MessageInboxPage {
   private service?: MessageService = undefined;
   private loading: boolean = false;
   private scroller: Scroller = new Scroller();
+  // 当前按下的会话行(topicId,0 = 无)。ThreadRow 是 @Builder,不能自带 @State,
+  // 所以按下态由页面持有:按下时记 id、抬起/取消时清空。
+  @State private pressedThreadId: number = 0;
 
   aboutToAppear(): void {
     if (this.bridge) {
@@ -114,7 +117,10 @@ export struct MessageInboxPage {
               ListItem() {
                 this.ThreadRow(item, index)
               }
-            }, (item: MessageThread, index: number) => `msg_${item.topicId}_${index}`)
+            // key 必须并入这一行实际渲染到的一切(本仓 ForumsPage/DohSettingsPage 都踩过):
+            // 按下态由页面级 @State 驱动,key 里不带它时 ForEach 复用旧行、opacity 不会刷新。
+            }, (item: MessageThread, index: number) =>
+              `msg_${item.topicId}_${index}_${this.pressedThreadId === item.topicId ? 'p' : 'n'}`)
 
             ListItem() {
               ListFooter({ isLoading: this.isLoadingMore, hasMore: this.hasMore })
@@ -195,7 +201,18 @@ export struct MessageInboxPage {
     .backgroundColor($r('app.color.card_bg'))
     .borderRadius(CARD_RADIUS)
     .margin({ top: 6, bottom: 6 })
+    // 按下反馈:与帖子/通知列表同一套(opacity 0.7,不做动画)。
+    .opacity(this.pressedThreadId === item.topicId ? 0.7 : 1)
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.pressedThreadId = item.topicId;
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.pressedThreadId = 0;
+      }
+    })
     .onClick(() => {
+      // 兜底清按下态(见 TopicListItem 同处注释):滚动抢走手势时 Cancel 不一定到。
+      this.pressedThreadId = 0;
       // 聊天会话(chat 源)走原生聊天页;传统私信主题走原生详情页。
       if (item.chatUrl !== undefined) {
         this.onOpenChat(item.topicId, item.title);

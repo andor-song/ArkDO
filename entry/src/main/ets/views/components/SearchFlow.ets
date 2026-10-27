@@ -67,6 +67,10 @@ export struct SearchFlow {
         onOpenTopic: (topic: Topic) => {
           this.openTopic(topic);
         },
+        // 未读徽标:在搜索自己的栈里 push 带楼号的详情页,与首页的未读跳转语义一致。
+        onOpenTopicAtPost: (topic: Topic, postNumber: number) => {
+          this.openTopicAtPost(topic, postNumber);
+        },
         // 「用户」类型的搜索结果:在搜索自己的栈里 push 个人主页,不关搜索页。
         onOpenUser: (user: User) => {
           this.openUserProfile(user.username, user.displayName ?? '', user.avatarTemplate ?? '', user.id);
@@ -241,6 +245,16 @@ export struct SearchFlow {
     this.navPathStack.pushPath(new NavPathInfo(
       SEARCH_FLOW_TOPIC_DETAIL,
       buildTopicDetailRouteParam(topic.id, topic.slug, topic.title)
+    ));
+  }
+
+  // 带楼号打开:targetPostNumber 由详情页解释为「定位到该楼」。
+  // highlightTarget 不传(=false):未读徽标入口只画「上次访问」红线,不闪烁高亮 ——
+  // 高亮是给通知跳转用的,未读入口闪一下反而像出了错。
+  private openTopicAtPost(topic: Topic, postNumber: number): void {
+    this.navPathStack.pushPath(new NavPathInfo(
+      SEARCH_FLOW_TOPIC_DETAIL,
+      buildTopicDetailRouteParam(topic.id, topic.slug, topic.title, postNumber)
     ));
   }
 

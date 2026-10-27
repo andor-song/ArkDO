@@ -85,6 +85,11 @@ export struct ChoiceChip {
         this.pressed = true;
       } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
         this.pressed = false;
+      } else if (event.type === TouchType.Move) {
+        // 手指按下后改为横向滑动(首页筛选 chips 现在是可横滑的 List)时,
+        // ArkUI 不保证一定送 Cancel。收到 Move 就当作"不再是点击",立刻撤掉按下态 ——
+        // 否则这一枚会一直停在 0.7 透明度上,看起来像坏了。
+        this.pressed = false;
       }
     })
     .onClick(() => {

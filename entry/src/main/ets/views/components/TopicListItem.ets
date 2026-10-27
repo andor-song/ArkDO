@@ -85,6 +85,10 @@ export struct TopicListItem {
   @StorageProp(TOPIC_LIST_AVATAR_SIZE_KEY) private avatarSize: number = AVATAR_SIZE_DEFAULT;
   @State private incomingHighlightActive: boolean = false;
   private incomingHighlightTimerId: number = -1;
+  // 按下反馈。列表行是最高频的点击目标,没有按下态时手感发虚 ——
+  // 手指落下到页面转场之间有几十毫秒的空窗,什么都不变会让人以为没点上而重复点。
+  // 沿用 ChoiceChip 的既有范式(opacity 0.7,不做动画:瞬时反馈比渐变更跟手)。
+  @State private pressed: boolean = false;
 
   aboutToAppear(): void {
     this.playIncomingHighlight();
@@ -262,6 +266,16 @@ export struct TopicListItem {
           : incomingTopicHighlightBackground(this.incomingHighlightActive, this.appIsDark))
         .borderRadius(this.cardMode ? CARD_RADIUS_COMPACT : 0)
         .animation({ duration: INCOMING_HIGHLIGHT_FADE_MS, curve: Curve.EaseOut })
+        // 按下态压在 backgroundColor 之后、onClick 之前:它只改透明度,不参与布局,
+        // 与上面的置顶高亮底色渐变互不干扰(那个是 .animation 驱动的 backgroundColor)。
+        .opacity(this.pressed ? 0.7 : 1)
+        .onTouch((event: TouchEvent) => {
+          if (event.type === TouchType.Down) {
+            this.pressed = true;
+          } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+            this.pressed = false;
+          }
+        })
         .alignItems(VerticalAlign.Top)
 
         // 卡片模式:去掉行间分割线(卡与卡靠留缝区分,飞书式);平面模式保留原分割线。
@@ -274,6 +288,9 @@ export struct TopicListItem {
       }
       .width('100%')
       .onClick(() => {
+        // 兜底清按下态:手指按下后转为滚动时,ArkUI 不保证一定送 Cancel,
+        // 漏一次就会让这一行永久停在 0.7 透明度上。
+        this.pressed = false;
         // 有未读徽标 → 整行点击直跳第一条未读楼;否则从第 1 层打开。
         if (this.hasUnreadBadge()) {
           this.onUnreadBadgeClick(this.topic);

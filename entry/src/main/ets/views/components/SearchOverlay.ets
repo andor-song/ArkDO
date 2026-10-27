@@ -62,6 +62,9 @@ export struct SearchOverlay {
   isArkWebReady: boolean = false;
   onClose: () => void = () => {};
   onOpenTopic: (topic: Topic) => void = () => {};
+  // 从「未读徽标」进入时带楼号:与首页一致,直跳第一条未读楼(不闪烁高亮,只画「上次访问」红线)。
+  // 搜索结果此前把两个回调都接到同一条普通打开上,点了未读徽标却从头开始 —— 用户得自己再滚。
+  onOpenTopicAtPost: (topic: Topic, postNumber: number) => void = () => {};
   // 「用户」类型的结果点进去 → 交给 SearchFlow 走它已有的 onOpenUser(SearchFlow 对外接口不变)。
   onOpenUser: (user: User) => void = () => {};
 
@@ -450,7 +453,7 @@ export struct SearchOverlay {
                 this.handleResultClick(selected);
               },
               onUnreadBadgeClick: (selected: Topic) => {
-                this.handleResultClick(selected);
+                this.handleResultUnreadClick(selected);
               }
             })
           }, (topic: Topic) => `${topic.id}`)
@@ -699,6 +702,30 @@ export struct SearchOverlay {
     this.saveHistory(this.trimmedQuery());
     this.hideKeyboard();
     this.onOpenTopic(topic);
+  }
+
+  /**
+   * 点未读徽标:与首页同一条规则 —— 目标楼 = 已读水位 + 1，以最高楼封顶；
+   * 水位缺失(匿名/异常数据)退化为普通打开。
+   *
+   * 这里仍要清 `unseen` 并记历史:前者让列表上的蓝点立刻消失(与首页一致)，
+   * 后者维持「点结果 = 一次有效搜索」的既有语义。
+   */
+  private handleResultUnreadClick(topic: Topic): void {
+    topic.unseen = false;
+    const lastRead: number = topic.lastReadPostNumber ?? 0;
+    if (lastRead <= 0) {
+      this.handleResultClick(topic);
+      return;
+    }
+    let target: number = lastRead + 1;
+    const highest: number = topic.highestPostNumber ?? 0;
+    if (highest > 0 && target > highest) {
+      target = highest;
+    }
+    this.saveHistory(this.trimmedQuery());
+    this.hideKeyboard();
+    this.onOpenTopicAtPost(topic, target);
   }
 
   private applyHistoryTerm(term: string): void {

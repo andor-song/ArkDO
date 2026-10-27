@@ -5,6 +5,7 @@ import {
   buildTopicListPath,
   createDefaultTopicListQuery,
   describeTopicListQuery,
+  emptyStateForFeed,
   filterRequiresLogin,
   isDefaultTopicListQuery,
   sameTopicListQuery,
@@ -199,6 +200,65 @@ export default function topicListQueryTest() {
         .assertEqual('最新 · linux');
       expect(describeTopicListQuery(queryOf(FeedKey.LATEST, DEV, TAG_NAME_ONLY)))
         .assertEqual('最新 · 开发调优 · linux');
+    });
+
+    // ===== 已读：与其它 filter 同类，可组合 =====
+    //
+    // `read` 在 Discourse core 的 `Discourse.filters` 列表里（lib/discourse.rb），
+    // routes.rb 用 `Discourse.filters.each` 同时生成 `/read.json`、`/c/.../l/read.json`、
+    // `/tag/.../l/read.json`，`create_list(:read)` 也走 `default_results`（含版块/标签过滤）。
+    // 早先误判成「用户活动端点、不可组合」并加过置灰，核对上游后已纠正。
+
+    it('已读走全站路径，分页规则与其它 feed 一致', 0, () => {
+      expect(buildTopicListPath(queryOf(FeedKey.READ), 0)).assertEqual('/read.json');
+      expect(buildTopicListPath(queryOf(FeedKey.READ), 2)).assertEqual('/read.json?page=2');
+    });
+
+    // 版块/标签下必须拼 /l/read.json —— 与 unread/hot 等完全同形。
+    // 这几条同时守住「有人再把 read 当特例」：一旦回退全站，立刻红。
+    it('已读与版块/标签组合时照常拼 /l/read.json', 0, () => {
+      expect(buildTopicListPath(queryOf(FeedKey.READ, DEV), 0))
+        .assertEqual('/c/domestic/98/l/read.json');
+      expect(buildTopicListPath(queryOf(FeedKey.READ, undefined, TAG_WITH_ID), 0))
+        .assertEqual('/tag/1461-tag/1461/l/read.json');
+      expect(buildTopicListPath(queryOf(FeedKey.READ, DEV, TAG_WITH_ID), 0))
+        .assertEqual('/tags/c/domestic/98/1461-tag/1461/l/read.json');
+    });
+
+    // 交叉点：带 scope 且分页 >0。丢弃 scope 与拼 query 串两段逻辑在这里共同作用。
+    it('已读 + 版块 + 分页：scope 与 page 同时生效', 0, () => {
+      expect(buildTopicListPath(queryOf(FeedKey.READ, DEV), 2))
+        .assertEqual('/c/domestic/98/l/read.json?page=2');
+    });
+
+    it('已读需要登录，与未读/未读新帖一致', 0, () => {
+      expect(filterRequiresLogin(FeedKey.READ)).assertTrue();
+      expect(filterRequiresLogin(FeedKey.UNREAD)).assertTrue();
+      expect(filterRequiresLogin(FeedKey.NEW)).assertTrue();
+      // 其余三类匿名可看。
+      expect(filterRequiresLogin(FeedKey.LATEST)).assertFalse();
+      expect(filterRequiresLogin(FeedKey.HOT)).assertFalse();
+      expect(filterRequiresLogin(FeedKey.TOP)).assertFalse();
+      expect(filterRequiresLogin(FeedKey.CREATED)).assertFalse();
+    });
+
+    // ===== 空态文案 =====
+
+    // 原先所有 feed 共用「暂无帖子数据」：在未读筛选下这句等于没说 ——
+    // 用户要知道的是「读完了」还是「一条未读都没有」。
+    it('未读与已读各有专属空态，其余保持通用文案', 0, () => {
+      expect(emptyStateForFeed(FeedKey.UNREAD).title).assertEqual('没有未读帖子了');
+      expect(emptyStateForFeed(FeedKey.NEW).title).assertEqual('没有未读新帖了');
+      expect(emptyStateForFeed(FeedKey.READ).title).assertEqual('还没有读过的帖子');
+      expect(emptyStateForFeed(FeedKey.LATEST).title).assertEqual('暂无帖子数据');
+      // 通用档不编副标题（「最新为空」本身是异常态，多说一句反而像在解释）。
+      expect(emptyStateForFeed(FeedKey.LATEST).subtitle).assertEqual('');
+    });
+
+    it('特化档都带副标题，说明这个列表什么时候会有内容', 0, () => {
+      expect(emptyStateForFeed(FeedKey.UNREAD).subtitle.length > 0).assertTrue();
+      expect(emptyStateForFeed(FeedKey.NEW).subtitle.length > 0).assertTrue();
+      expect(emptyStateForFeed(FeedKey.READ).subtitle.length > 0).assertTrue();
     });
   });
 }

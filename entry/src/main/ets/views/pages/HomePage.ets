@@ -31,6 +31,7 @@ import { FeedKey } from '../../services/site/FeedPrefs';
 import {
   cloneTopicListQuery,
   createDefaultTopicListQuery,
+  emptyStateForFeed,
   sameTopicListQuery,
   topicListPrimaryTitle,
   TopicListQuery
@@ -771,6 +772,10 @@ export struct HomePage {
               message: this.listMessage,
               requiresChallenge: this.requiresChallenge,
               showRetry: this.loadFailed && !this.isInitialLoading,
+              // 空态标题与副标题:副标题只在「列表为空且不是加载/失败/挑战」时才有意义 ——
+              // 那三态下 LoadStateView 走的是各自的分支,不读这两个字段。
+              emptyTitle: this.listMessage,
+              emptySubtitle: this.emptySubtitleForFeed(),
               onRetry: () => {
                 this.refreshLatestTopics();
               }
@@ -1293,6 +1298,15 @@ export struct HomePage {
     return title.length > 0 ? title : AppConstants.APP_NAME;
   }
 
+  // 空态副标题:只有「列表真的空着」时才该出现,加载中/失败/挑战态一律不给
+  // (那几态下说「新回复出现时会回到这里」会显得像在替失败找理由)。
+  private emptySubtitleForFeed(): string {
+    if (this.loadFailed || this.requiresChallenge || this.isInitialLoading) {
+      return '';
+    }
+    return emptyStateForFeed(this.listQuery.filter).subtitle;
+  }
+
 
   private showToast(message: string): void {
     promptToast(this.getUIContext(), message);
@@ -1337,7 +1351,9 @@ export struct HomePage {
       this.topicListVersion++;
       this.currentPage = 0;
       this.hasMore = result.data.hasMore;
-      this.listMessage = result.data.topics.length > 0 ? '' : '暂无帖子数据';
+      // 空态文案按 filter 分流:在「未读」筛选下说「暂无帖子数据」等于什么都没说 ——
+      // 用户要知道的是「读完了」还是「一条未读都没有」。见 emptyStateForFeed。
+      this.listMessage = result.data.topics.length > 0 ? '' : emptyStateForFeed(this.listQuery.filter).title;
       this.footerMessage = this.hasMore ? '上拉加载更多' : '没有更多了';
       this.runPendingSessionRefresh();
       this.runPendingIncomingRefresh();

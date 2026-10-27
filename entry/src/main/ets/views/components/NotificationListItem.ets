@@ -24,6 +24,8 @@ export struct NotificationListItem {
   onItemClick: (item: NotificationItem) => void = () => {};
   // 卡片模式(飞书/微信式浅灰底+白卡):开圆角、白卡底、卡间留缝;关闭则保持原平面行+分割线。
   cardMode: boolean = false;
+  // 按下反馈:与 TopicListItem 同一套(opacity 0.7,不做动画)。通知行也是高频点击目标。
+  @State private pressed: boolean = false;
 
   build() {
     Row({ space: 12 }) {
@@ -81,7 +83,17 @@ export struct NotificationListItem {
     .borderRadius(this.cardMode ? CARD_RADIUS : 0)
     // 卡缝取中间档:上下各 3vp(两卡拼出 6vp 整缝),比首页帖卡缝松一些、比原 6/12 紧凑。
     .margin({ top: this.cardMode ? 3 : 0, bottom: this.cardMode ? 3 : 0 })
+    .opacity(this.pressed ? 0.7 : 1)
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.pressed = true;
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.pressed = false;
+      }
+    })
     .onClick(() => {
+      // 兜底清按下态(见 TopicListItem 同处注释):滚动抢走手势时 Cancel 不一定到。
+      this.pressed = false;
       this.onItemClick(this.item);
     })
   }

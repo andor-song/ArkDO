@@ -65,7 +65,7 @@ export function sameTopicListQuery(a: TopicListQuery, b: TopicListQuery): boolea
  * created 走的是 latest 路由(纯服务端排序,不看个人已读状态),匿名同样能拉。
  */
 export function filterRequiresLogin(filter: string): boolean {
-  return filter === FeedKey.UNREAD || filter === FeedKey.NEW;
+  return filter === FeedKey.UNREAD || filter === FeedKey.NEW || filter === FeedKey.READ;
 }
 
 // `category_slug_path_with_id` 是 glob 段:末段是数字 id 时服务端直接按 id 认,
@@ -137,6 +137,34 @@ export function buildTopicListPath(query: TopicListQuery, page: number): string 
 function filterLabel(filter: string): string {
   const def: FeedDef | undefined = FeedPrefs.feedDef(filter);
   return def !== undefined ? def.label : '';
+}
+
+/** 列表为空时该说什么。标题 + 副标题，副标题可为空。 */
+export interface FeedEmptyState {
+  title: string;
+  subtitle: string;
+}
+
+/**
+ * 空态文案按 filter 分流。
+ *
+ * 原先所有 feed 共用一句「暂无帖子数据」—— 在「未读」筛选下看到这句等于什么都没说：
+ * 用户需要知道的是「你已经读完啦」还是「一条未读都没有」，而不是「没有数据」。
+ *
+ * 只给真正需要区分的两档做特化（未读、已读），其余保持原来的通用文案：
+ * 给每个 feed 都编一句会让文案变成猜谜，而且「最新为空」本身就是异常态，说「暂无帖子数据」反而诚实。
+ */
+export function emptyStateForFeed(filter: string): FeedEmptyState {
+  if (filter === FeedKey.UNREAD) {
+    return { title: '没有未读帖子了', subtitle: '新回复出现时会回到这里' };
+  }
+  if (filter === FeedKey.NEW) {
+    return { title: '没有未读新帖了', subtitle: '你还没打开过的新主题会出现在这里' };
+  }
+  if (filter === FeedKey.READ) {
+    return { title: '还没有读过的帖子', subtitle: '读过的帖子会按最近阅读排在这里' };
+  }
+  return { title: '暂无帖子数据', subtitle: '' };
 }
 
 /**
