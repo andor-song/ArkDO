@@ -189,7 +189,8 @@ export struct TopicDetailPage {
   private dataSource: PostDataSource = new PostDataSource();
   @State private postCount: number = 0;
   @State private isLoading: boolean = false;
-  @State private message: string = '正在准备 ArkWeb 请求环境';
+  // 「ArkWeb」是内部实现词，不上屏（与其余列表页的『正在准备请求环境』统一）。
+  @State private message: string = '正在准备请求环境';
   @State private requiresChallenge: boolean = false;
   @State private categories: TopicCategory[] = [];
   // 当前用户在本主题下的待审核回复。detail 是 interface 的 @State,改其字段不触发重渲染,
@@ -2504,7 +2505,7 @@ export struct TopicDetailPage {
 
   private async loadTopicDetail(): Promise<void> {
     if (!this.isArkWebReady) {
-      this.message = '正在准备 ArkWeb 请求环境';
+      this.message = '正在准备请求环境';
       return;
     }
 

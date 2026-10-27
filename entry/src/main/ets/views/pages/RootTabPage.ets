@@ -1675,7 +1675,8 @@ export struct RootTabPage {
     if (started) {
       this.showToast('开始下载…');
     } else {
-      this.showToast('无法下载：宿主未就绪');
+      // 「宿主」指常驻的隐藏 WebView，同样是内部词。用户需要的只是「再等一下就能下载」。
+      this.showToast('无法下载：请求环境尚未就绪');
     }
   }
 

@@ -155,7 +155,9 @@ export struct HomePage {
   @State private isLoadingMore: boolean = false;
   @State private hasMore: boolean = true;
   @State private currentPage: number = 0;
-  @State private listMessage: string = '正在准备 ArkWeb 请求环境';
+  // 不带「ArkWeb」:那是内部实现词，不该出现在界面上。其余 10 个列表页早就是
+  // 『正在准备请求环境』，这两处（known-issues「已修复」里透传问题的固定文案部分）本次一并对齐。
+  @State private listMessage: string = '正在准备请求环境';
   @State private footerMessage: string = '上拉加载更多';
   @State private requiresChallenge: boolean = false;
   @State private loadFailed: boolean = false;
@@ -1364,7 +1366,7 @@ export struct HomePage {
     // 门卫与 refreshLatestTopics 保持一致:看 bridge.canFetch()(executor 已挂)而非 UI 解锁标志
     // isArkWebReady。看门狗/失败路径会把 isArkWebReady 置真但 executor 仍为空,此时照发请求必被跳过。
     if (!this.bridge.canFetch()) {
-      this.footerMessage = '正在准备 ArkWeb 请求环境';
+      this.footerMessage = '正在准备请求环境';
       return;
     }
 
