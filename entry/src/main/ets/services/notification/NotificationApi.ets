@@ -3,6 +3,8 @@ import { AppConstants } from '../../common/constants/AppConstants';
 import { NotificationItem, RawNotification, RawNotificationData, RawNotificationsResponse } from '../../models/Notification';
 import { JsonNetworkClient, NetworkErrorCode, NetworkResult } from '../network/NetworkTypes';
 import { AMBER, SUCCESS_GREEN } from '../../common/theme/Palette';
+import { buildNotificationsPath } from './NotificationFilter';
+import { chatChannelIdFromUrl } from './NotificationRouting';
 
 const LOG_TAG: string = '[ArkDO][NotificationApi]';
 const MARK_READ_PATH: string = '/notifications/mark-read';
@@ -77,10 +79,13 @@ export class NotificationApi {
 
   // 拉取通知列表。首次进页用 recent=true(服务端顺带 bump seen 清红点);
   // 加载更多用 offset 且不带 recent(避免重复 bump)。
-  async load(limit: number, offset: number, recent: boolean): Promise<NetworkResult<NotificationItem[]>> {
-    let path: string = `/notifications.json?limit=${limit}&offset=${offset}`;
-    if (recent) {
-      path += '&recent=true&bump_last_seen_reviewable=true';
+  // filterTypeNames:通知类型名(replied/mentioned…),由通知页顶部的筛选 chips 给出;
+  // 不传或空数组都不发 filter_by_types——「全部」必须等价于不带该参数。
+  async load(limit: number, offset: number, recent: boolean,
+    filterTypeNames?: string[]): Promise<NetworkResult<NotificationItem[]>> {
+    const path: string = buildNotificationsPath(limit, offset, recent, filterTypeNames);
+    if (filterTypeNames !== undefined && filterTypeNames.length > 0) {
+      Log.i(`${LOG_TAG} filtering by types=${filterTypeNames.join(',')}`);
     }
 
     const response: NetworkResult<string> = await this.bridge.getJson(path);
@@ -218,6 +223,9 @@ export class NotificationApi {
       id: raw.id,
       type: raw.notification_type,
       read: raw.read === true,
+      // 服务端标的「高优先级」原样透传(私信那类)。单条标记已读时靠它决定减哪个桶,
+      // 免得在本仓再抄一份 HIGH_PRIORITY 类型编号表——那份已经有 NotificationService 一处了。
+      highPriority: raw.high_priority === true,
       createdAt: raw.created_at ? raw.created_at : '',
       actorName: actorName,
       actorUsername: actor,
@@ -227,9 +235,23 @@ export class NotificationApi {
       topicId: typeof raw.topic_id === 'number' ? raw.topic_id : undefined,
       postNumber: typeof raw.post_number === 'number' ? raw.post_number : undefined,
       slug: raw.slug,
+      // 频道 id 只认正整数:0 / 缺字段 / 站点没装 Chat 都留 undefined,交给点击分流兜底。
+      chatChannelId: this.resolveChannelId(raw, data),
+      url: raw.url && raw.url.length > 0 ? raw.url : undefined,
       iconId: visual.iconId,
       iconColor: visual.iconColor
     };
+  }
+
+  // 聊天频道 id:先看 data.chat_channel_id,再看 url 里的 /chat/c/{slug}/{id}。
+  // 两条证据是不同版本上游给的不同口径(移动端序列化器一度只带 url),取到任一即可。
+  private resolveChannelId(raw: RawNotification, data: RawNotificationData): number | undefined {
+    const fromData: number = typeof data.chat_channel_id === 'number' ? data.chat_channel_id : 0;
+    if (fromData > 0) {
+      return fromData;
+    }
+    const fromUrl: number = chatChannelIdFromUrl(raw.url);
+    return fromUrl > 0 ? fromUrl : undefined;
   }
 
   private resolveActor(raw: RawNotification, data: RawNotificationData): string {

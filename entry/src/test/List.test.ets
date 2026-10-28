@@ -12,6 +12,8 @@ import versionAnnouncementTest from './VersionAnnouncement.test';
 import categorySearchTest from './CategorySearch.test';
 import topicMetadataTest from './TopicMetadata.test';
 import topicLinkTest from './TopicLink.test';
+import notificationFilterTest from './NotificationFilter.test';
+import notificationRoutingTest from './NotificationRouting.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
 import topicServiceTest from './TopicService.test';
 import authServiceTest from './AuthService.test';
@@ -128,4 +130,7 @@ export default function testsuite() {
   categorySearchTest();
   topicMetadataTest();
   topicLinkTest();
+  // 通知按类型筛选与点击分流:两个纯函数模块,DevEco 里只有在这里注册才会跑。
+  notificationFilterTest();
+  notificationRoutingTest();
 }

@@ -791,6 +791,14 @@ export struct RootTabPage {
           },
           onOpenTopic: (topicId: number, slug: string | undefined, title: string, postNumber?: number) => {
             this.openTopicDetailById(topicId, slug, title, postNumber, postNumber !== undefined);
+          },
+          // 通知的两条额外分流:聊天通知进原生聊天页(与私信收件箱同一入口),
+          // 「有人关注了你」这类没帖子的通知进发起人主页。判据在 NotificationRouting。
+          onOpenChat: (channelId: number, title: string) => {
+            this.openChat(channelId, title);
+          },
+          onOpenUser: (username: string) => {
+            this.openUserProfile(username, '', '', 0);
           }
         })
       }
