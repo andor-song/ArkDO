@@ -2,7 +2,7 @@ import { Log } from '../../services/logging/Log';
 import { AppConstants, LinuxDoConstants } from '../../common/constants/AppConstants';
 import { APP_IS_WIDE_STORAGE_KEY, APP_SPLIT_NAV_BAR_WIDTH_STORAGE_KEY, BreakpointManager,
   SPLIT_NAV_BAR_MAX_WIDTH } from '../../common/utils/BreakpointManager';
-import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildReadingFontSizeSettingsRouteParam,
+import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildMuteSettingsRouteParam, isMuteSettingsRouteParam, MuteSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildReadingFontSizeSettingsRouteParam,
   buildTopicListStyleSettingsRouteParam, buildLevelProgressRouteParam, buildNotificationsRouteParam, buildProfileEditRouteParam, buildProfileRouteParam, buildReadTopicsRouteParam, buildSettingsRouteParam, buildForumsRouteParam, buildSitesRouteParam, buildSolvedRouteParam, buildTopicDetailRouteParam, buildTopicDetailDraftRouteParam, buildTopicDetailEditDraftRouteParam, buildUserHistoryRouteParam, buildUserProfileRouteParam, buildWebRouteParam, isActivityRouteParam, isBadgesRouteParam, isBookmarksRouteParam, isDraftsRouteParam, DraftsRouteParam, isProfileEditRouteParam, isSolvedRouteParam, isTopicDetailRouteParam, isUserHistoryRouteParam, isUserProfileRouteParam, isWebRouteParam, LevelProgressRouteParam, ProfileEditRouteParam, SolvedRouteParam, TopicDetailRouteParam, UserHistoryRouteParam, UserProfileRouteParam, WebRouteParam, FollowListRouteParam, buildFollowListRouteParam, isFollowListRouteParam, MessagesRouteParam, buildMessagesRouteParam, isMessagesRouteParam, ChatRouteParam, buildChatRouteParam, isChatRouteParam } from '../../navigation/AppRoutes';
 import { LinkRouter, LinkTarget, LinkTargetKind } from '../../services/content/LinkRouter';
 import { DownloadService } from '../../services/content/DownloadService';
@@ -60,6 +60,7 @@ import { NotificationPage } from './NotificationPage';
 import { ProfilePage } from './ProfilePage';
 import { SettingsPage } from './SettingsPage';
 import { DohSettingsPage } from './DohSettingsPage';
+import { MuteSettingsPage } from './MuteSettingsPage';
 import { PushSettingsPage } from './PushSettingsPage';
 import { NetworkSettingsPage } from './NetworkSettingsPage';
 import { TopicListStyleSettingsPage } from './TopicListStyleSettingsPage';
@@ -938,6 +939,13 @@ export struct RootTabPage {
           onOpenPush: () => {
             this.navPathStack.pushPath(new NavPathInfo(AppRouteName.PUSH_SETTINGS, buildPushSettingsRouteParam('settings')));
           },
+          onOpenMutes: () => {
+            // 静音态按用户存(/u/{username}.json):把当前用户名带过去。未登录时传空串,
+            // 页面会给出「登录后才能查看静音设置」而不是打一个必然 403 的请求。
+            const username: string = this.currentUser !== undefined ? this.currentUser.username : '';
+            this.navPathStack.pushPath(new NavPathInfo(AppRouteName.MUTE_SETTINGS,
+              buildMuteSettingsRouteParam(username)));
+          },
           onOpenNetwork: () => {
             this.navPathStack.pushPath(new NavPathInfo(AppRouteName.NETWORK_SETTINGS, buildNetworkSettingsRouteParam('settings')));
           },
@@ -1053,6 +1061,18 @@ export struct RootTabPage {
       .hideTitleBar(true)
       // NavDestination 自身背景默认铺满含状态栏区域;统一为 page_bg,让各二级页顶部状态栏
       // 与页内头部/导航栏同色(否则暗色下露出默认浅底,与内容不一致)。
+      .backgroundColor($r('app.color.page_bg'))
+    } else if (name === AppRouteName.MUTE_SETTINGS && isMuteSettingsRouteParam(param)) {
+      NavDestination() {
+        MuteSettingsPage({
+          bridge: this.bridge,
+          username: (param as MuteSettingsRouteParam).username,
+          onBack: () => {
+            this.popNavigation();
+          }
+        })
+      }
+      .hideTitleBar(true)
       .backgroundColor($r('app.color.page_bg'))
     } else if (name === AppRouteName.SITES) {
       NavDestination() {

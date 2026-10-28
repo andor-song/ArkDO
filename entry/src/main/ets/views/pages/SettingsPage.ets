@@ -57,6 +57,8 @@ export struct SettingsPage {
   onOpenFeedback: () => void = () => {};
   // 四个分类子页入口:本页不持有 navPathStack,push 均由 RootTabPage 注入。
   onOpenPush: () => void = () => {};
+  // 静音的版块与标签:与「通知」同组,但改的是版块/标签维度的通知档位。
+  onOpenMutes: () => void = () => {};
   onOpenNetwork: () => void = () => {};
   // 帖子列表样式子页(字号/字重/行高/行间距/头像)。与外观同组:都是纯观感设置。
   onOpenTopicListStyle: () => void = () => {};
@@ -438,6 +440,10 @@ export struct SettingsPage {
         this.HairlineInset()
         this.SettingCell($r('sys.symbol.bell'), '通知', '', () => {
           this.onOpenPush();
+        })
+        this.HairlineInset()
+        this.SettingCell($r('sys.symbol.eye_slash'), '静音的版块与标签', '', () => {
+          this.onOpenMutes();
         })
         this.HairlineInset()
         this.SettingCell($r('sys.symbol.wifi'), '网络与连接', '', () => {
