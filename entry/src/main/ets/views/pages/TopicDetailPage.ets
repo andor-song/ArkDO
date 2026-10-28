@@ -25,6 +25,7 @@ import { TopicReadController } from '../../services/reading/TopicReadController'
 import { CreateReplyOutcome, TopicPostHit, TopicService } from '../../services/topic/TopicService';
 import { collectPostImageUrls } from '../../services/content/PostImageUrls';
 import { UserCardOverlay } from '../components/UserCardOverlay';
+import { UserProfileService } from '../../services/user/UserProfileService';
 import { TopicMetadataUpdate } from '../../services/topic/TopicApiTypes';
 import { parseTagInput, sameTagNames } from '../../services/topic/TopicMetadata';
 import { TopicMetadataEventBus } from '../../services/session/TopicMetadataEventBus';
@@ -1094,6 +1095,10 @@ export struct TopicDetailPage {
     if (this.showComposer) {
       CommentInputBar({
         placeholder: this.composerPlaceholder,
+        // @提及联想:用站内用户搜索(/u/search/users),只取前 6 条。
+        searchUsers: (term: string): Promise<User[]> => {
+          return this.searchUsersForMention(term);
+        },
         // 抽奖帖:输入条上方压一行规则提醒(空串则整行不渲染)。只提示不拦截。
         hintText: this.lotteryReplyHint(),
         // boost 是「起飞」「感谢佬」这类短文本,放开最短字数下限;普通回复仍用默认 16。
@@ -3256,6 +3261,16 @@ export struct TopicDetailPage {
 
   private closeUserCard(): void {
     this.userCardVisible = false;
+  }
+
+  // @提及联想:搜不到就返回空数组(输入照常进行,不因为联想失败打断回复)。
+  private async searchUsersForMention(term: string): Promise<User[]> {
+    const result: NetworkResult<User[]> =
+      await new UserProfileService(this.bridge).searchUsers(term, 6);
+    if (!result.success || result.data === undefined) {
+      return [];
+    }
+    return result.data;
   }
 
   // 整帖配图(按楼层顺序、跨楼去重)。只收已加载楼层:未加载的楼层还没正文,

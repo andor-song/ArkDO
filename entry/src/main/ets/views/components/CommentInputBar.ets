@@ -15,6 +15,10 @@ import { showToast as promptToast } from '../../common/utils/Toast';
 import { BRAND_BLUE, ON_DARK_FG, SCRIM } from '../../common/theme/Palette';
 import { IMMERSIVE_PANEL_BLUR_RADIUS } from '../../common/ui/ImmersiveLightMaterial';
 import { EditState, insertText } from '../../utils/markdownInsert';
+import { User } from '../../models/User';
+import {
+  MentionContext, MentionReplaceResult, mentionQueryAt, replaceMention
+} from '../../services/topic/MentionQuery';
 import { BoostEditDocument, BoostEditToken, BoostTokenType } from '../../models/BoostEditDocument';
 import { COMPOSER_OVERLAY_BACK_TICK_KEY } from '../../common/constants/StorageKeys';
 import { EmojiDeleteResult, EmojiShortcodeEdit } from '../../utils/EmojiShortcodeEdit';
@@ -98,6 +102,13 @@ export struct CommentInputBar {
   // 初始正文:页面把上次未发出的内容带回来(关掉输入条再点开,内容还在)。
   initialText: string = '';
   // 文本变化时上抛给页面暂存。内联条一关就卸载、@State 随之销毁,不上抛就彻底丢了。
+  // @提及联想:传了就开(页面用 /u/search/users 实现),不传则整条链路不生效 ——
+  // 组件不认识网络,也不需要知道搜的是谁。
+  searchUsers?: (term: string) => Promise<User[]> = undefined;
+  // @提及联想结果(纯文本输入模式下生效)。
+  @State private mentionSuggestions: User[] = [];
+  private mentionTimer: number = -1;
+  private mentionSeq: number = 0;
   onTextChange: (text: string) => void = () => {};
   @State private text: string = '';
   @State private isSubmitting: boolean = false;
@@ -325,6 +336,65 @@ export struct CommentInputBar {
     }
     setTimeout(() => {
       this.textController.setTextSelection(next.selectionStart, next.selectionEnd);
+    }, 0);
+  }
+
+  // ==================== @提及联想 ====================
+
+  private clearMentionTimer(): void {
+    if (this.mentionTimer >= 0) {
+      clearTimeout(this.mentionTimer);
+      this.mentionTimer = -1;
+    }
+  }
+
+  // 打字时按「光标前是不是 @提及」决定要不要联想。防抖 250ms:边打边搜会把请求打成串。
+  private scheduleMentionQuery(text: string, caret: number): void {
+    this.clearMentionTimer();
+    if (this.searchUsers === undefined) {
+      return;
+    }
+    const context: MentionContext | undefined = mentionQueryAt(text, caret);
+    if (context === undefined) {
+      this.mentionSuggestions = [];
+      return;
+    }
+    this.mentionTimer = setTimeout(() => {
+      this.mentionTimer = -1;
+      this.loadMentionSuggestions(context.term);
+    }, 250);
+  }
+
+  private async loadMentionSuggestions(term: string): Promise<void> {
+    const search: ((term: string) => Promise<User[]>) | undefined = this.searchUsers;
+    if (search === undefined) {
+      return;
+    }
+    this.mentionSeq++;
+    const seq: number = this.mentionSeq;
+    const users: User[] = await search(term);
+    // 丢弃过期响应:后发先至会把旧结果盖上来。
+    if (seq !== this.mentionSeq) {
+      return;
+    }
+    this.mentionSuggestions = users;
+  }
+
+  private applyMention(username: string): void {
+    const context: MentionContext | undefined = mentionQueryAt(this.text, this.selectionStart);
+    if (context === undefined) {
+      this.mentionSuggestions = [];
+      return;
+    }
+    const next: MentionReplaceResult = replaceMention(this.text, context, username, this.selectionStart);
+    this.text = next.text;
+    this.selectionStart = next.caret;
+    this.selectionEnd = next.caret;
+    this.onTextChange(next.text);
+    this.mentionSuggestions = [];
+    // 光标放到替换后的位置:与表情插入同一手法(等一帧,让 TextArea 先吃到新文本)。
+    setTimeout(() => {
+      this.textController.setTextSelection(next.caret, next.caret);
     }, 0);
   }
 
@@ -676,6 +746,25 @@ export struct CommentInputBar {
           .padding({ left: 2, right: 2, bottom: 8 })
         }
 
+        // @提及候选:页面接了 searchUsers 才会出现;点一枚把光标前的 @词整段换掉。
+        if (this.mentionSuggestions.length > 0) {
+          Row({ space: 6 }) {
+            ForEach(this.mentionSuggestions, (user: User) => {
+              Text(`@${user.username}`)
+                .fontSize(12)
+                .fontColor($r('app.color.brand'))
+                .backgroundColor($r('app.color.info_soft_bg'))
+                .borderRadius(12)
+                .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                .onClick(() => {
+                  this.applyMention(user.username);
+                })
+            }, (user: User) => `mention${user.id}_${user.username}`)
+          }
+          .width('100%')
+          .padding({ left: 2, right: 2, bottom: 8 })
+        }
+
         Row({ space: 8 }) {
           // 展开按钮：仅普通回复显示（boost 短文本无需全屏编辑）。点击上抛当前文本，
           // 由页面关闭内联浮层、压入全屏 Markdown 编辑器无缝接续。
@@ -790,6 +879,8 @@ export struct CommentInputBar {
                   // 实时上抛给页面暂存:关掉输入条时组件卸载,不上抛内容就没了。
                   this.onTextChange(value);
                   this.warnIfOverMaxChars();
+                  // @提及联想(纯文本模式;富文本模式有另一套光标/文本状态,暂不接)。
+                  this.scheduleMentionQuery(value, this.selectionStart);
                 })
                 .onClick(() => {
                   if (this.showEmojiKeyboard) {
