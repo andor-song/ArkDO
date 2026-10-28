@@ -2,7 +2,7 @@ import { Log } from '../../services/logging/Log';
 import { AppConstants, LinuxDoConstants } from '../../common/constants/AppConstants';
 import { APP_IS_WIDE_STORAGE_KEY, APP_SPLIT_NAV_BAR_WIDTH_STORAGE_KEY, BreakpointManager,
   SPLIT_NAV_BAR_MAX_WIDTH } from '../../common/utils/BreakpointManager';
-import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildMuteSettingsRouteParam, isMuteSettingsRouteParam, MuteSettingsRouteParam, buildFollowingFeedRouteParam, isFollowingFeedRouteParam, FollowingFeedRouteParam, buildStorageSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildReadingFontSizeSettingsRouteParam,
+import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildMuteSettingsRouteParam, isMuteSettingsRouteParam, MuteSettingsRouteParam, buildFollowingFeedRouteParam, isFollowingFeedRouteParam, FollowingFeedRouteParam, buildStorageSettingsRouteParam, buildPmComposeRouteParam, isPmComposeRouteParam, PmComposeRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildReadingFontSizeSettingsRouteParam,
   buildTopicListStyleSettingsRouteParam, buildLevelProgressRouteParam, buildNotificationsRouteParam, buildProfileEditRouteParam, buildProfileRouteParam, buildReadTopicsRouteParam, buildSettingsRouteParam, buildForumsRouteParam, buildSitesRouteParam, buildSolvedRouteParam, buildTopicDetailRouteParam, buildTopicDetailDraftRouteParam, buildTopicDetailEditDraftRouteParam, buildUserHistoryRouteParam, buildUserProfileRouteParam, buildWebRouteParam, isActivityRouteParam, isBadgesRouteParam, isBookmarksRouteParam, isDraftsRouteParam, DraftsRouteParam, isProfileEditRouteParam, isSolvedRouteParam, isTopicDetailRouteParam, isUserHistoryRouteParam, isUserProfileRouteParam, isWebRouteParam, LevelProgressRouteParam, ProfileEditRouteParam, SolvedRouteParam, TopicDetailRouteParam, UserHistoryRouteParam, UserProfileRouteParam, WebRouteParam, FollowListRouteParam, buildFollowListRouteParam, isFollowListRouteParam, MessagesRouteParam, buildMessagesRouteParam, isMessagesRouteParam, ChatRouteParam, buildChatRouteParam, isChatRouteParam } from '../../navigation/AppRoutes';
 import { LinkRouter, LinkTarget, LinkTargetKind } from '../../services/content/LinkRouter';
 import { DownloadService } from '../../services/content/DownloadService';
@@ -63,6 +63,7 @@ import { DohSettingsPage } from './DohSettingsPage';
 import { MuteSettingsPage } from './MuteSettingsPage';
 import { FollowingFeedPage } from './FollowingFeedPage';
 import { StorageSettingsPage } from './StorageSettingsPage';
+import { PrivateMessageComposePage } from './PrivateMessageComposePage';
 import { PushSettingsPage } from './PushSettingsPage';
 import { NetworkSettingsPage } from './NetworkSettingsPage';
 import { TopicListStyleSettingsPage } from './TopicListStyleSettingsPage';
@@ -1105,6 +1106,18 @@ export struct RootTabPage {
       }
       .hideTitleBar(true)
       .backgroundColor($r('app.color.page_bg'))
+    } else if (name === AppRouteName.PM_COMPOSE && isPmComposeRouteParam(param)) {
+      NavDestination() {
+        PrivateMessageComposePage({
+          bridge: this.bridge,
+          initialRecipient: (param as PmComposeRouteParam).recipient,
+          onBack: () => {
+            this.popNavigation();
+          }
+        })
+      }
+      .hideTitleBar(true)
+      .backgroundColor($r('app.color.page_bg'))
     } else if (name === AppRouteName.SITES) {
       NavDestination() {
         SitesPage({
@@ -1381,6 +1394,10 @@ export struct RootTabPage {
           // Chat 直聊会话:原生聊天页(气泡+输入+实时,不再走 WebView)。channelId=topicId。
           onOpenChat: (channelId: number, title: string) => {
             this.openChat(channelId, title);
+          },
+          onComposePrivateMessage: () => {
+            this.navPathStack.pushPath(new NavPathInfo(AppRouteName.PM_COMPOSE,
+              buildPmComposeRouteParam('')));
           }
         })
       }

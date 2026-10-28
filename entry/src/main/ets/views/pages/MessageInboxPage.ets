@@ -39,6 +39,8 @@ export struct MessageInboxPage {
   onOpenTopic: (topicId: number, title: string) => void = () => {};
   // 打开原生聊天页(带直聊频道 id 与标题)。chat 会话走它,代替旧 WebView /chat/c/...。
   onOpenChat: (channelId: number, title: string) => void = () => {};
+  // 新建私信(可多人):push 由 RootTabPage 注入。
+  onComposePrivateMessage: () => void = () => {};
 
   @State private threads: MessageThread[] = [];
   @State private isInitialLoading: boolean = false;
@@ -79,6 +81,20 @@ export struct MessageInboxPage {
           action: () => {
             this.onBack();
           }
+        },
+        // 「＋」新建私信:收件人自己填、可多人。放在标题栏而不是列表里 ——
+        // 空收件箱时列表里没有可依附的位置,而新建恰恰是空态下最想要的动作。
+        menu: {
+          value: [{
+            content: {
+              icon: $r('sys.symbol.plus'),
+              label: '新建私信',
+              isEnabled: true,
+              action: () => {
+                this.onComposePrivateMessage();
+              }
+            }
+          }]
         }
       }
     })

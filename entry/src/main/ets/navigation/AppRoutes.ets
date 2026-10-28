@@ -13,6 +13,8 @@ export enum AppRouteName {
   FOLLOWING_FEED = 'followingFeed',
   // 存储与缓存(图片缓存 / 已下载附件),入口在设置页「网络与连接」下方。
   STORAGE_SETTINGS = 'storageSettings',
+  // 新建私信(可多人)。收件人由用户自己填,与个人主页的一对一快捷入口互补。
+  PM_COMPOSE = 'pmCompose',
   // 帖子列表样式(字号/字重/行高/行间距/头像),入口在设置页「外观」组。
   TOPIC_LIST_STYLE_SETTINGS = 'topicListStyleSettings',
   // 阅读字号(正文基准字号/行高),入口在设置页「外观」组。
@@ -137,6 +139,25 @@ export function buildStorageSettingsRouteParam(source: string): StorageSettingsR
   return {
     source: source
   };
+}
+
+export interface PmComposeRouteParam {
+  // 预填收件人(从用户主页/卡片进入时带上);空串=全新私信。
+  recipient: string;
+}
+
+export function buildPmComposeRouteParam(recipient: string): PmComposeRouteParam {
+  return {
+    recipient: recipient
+  };
+}
+
+export function isPmComposeRouteParam(param: Object | undefined): boolean {
+  if (param === undefined) {
+    return false;
+  }
+  const typed: PmComposeRouteParam = param as PmComposeRouteParam;
+  return typeof typed.recipient === 'string';
 }
 
 // 设置分类子页参数:均只留来源标记,页面数据各自从 prefs/服务读取。
