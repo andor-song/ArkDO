@@ -129,6 +129,9 @@ export struct TopicPostItem {
   // 点头像/昵称进他人主页。挂在头像与昵称各自身上而非外层 Row——
   // 本 SDK 无 stopPropagation,外层挂了会与「回复别人」指示器的 onClick 冒泡打架。
   onOpenUser: (user: User) => void = () => {};
+  // 点头像/昵称优先弹用户卡片(简介 + 关注),卡片里再进主页。
+  // 没接这条线的场景(个人主页的帖子列表等)仍直接进主页,行为不变。
+  onOpenUserCard?: (user: User) => void = undefined;
   // 投票/撤销:把整条 post 与目标 poll 上抛给页面做乐观闭环。返回服务端校正结果;null=失败。
   onVote: (post: TopicPost, poll: Poll, optionIds: string[]) => Promise<PollVoteResult | null> = () => Promise.resolve(null);
   onRemoveVote: (post: TopicPost, poll: Poll) => Promise<PollVoteResult | null> = () => Promise.resolve(null);
@@ -1600,6 +1603,11 @@ export struct TopicPostItem {
   // 点头像/昵称进他人主页。作者缺失(接口偶发不给)时静默忽略,不弹错。
   private openUser(user?: User): void {
     if (!user || user.username.length === 0) {
+      return;
+    }
+    const cardHandler: ((user: User) => void) | undefined = this.onOpenUserCard;
+    if (cardHandler !== undefined) {
+      cardHandler(user);
       return;
     }
     this.onOpenUser(user);

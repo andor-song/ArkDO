@@ -18,6 +18,7 @@ import topicOrderingTest from './TopicOrdering.test';
 import muteServiceTest from './MuteService.test';
 import followFeedServiceTest from './FollowFeedService.test';
 import postImageUrlsTest from './PostImageUrls.test';
+import userCardServiceTest from './UserCardService.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
 import topicServiceTest from './TopicService.test';
 import authServiceTest from './AuthService.test';
@@ -141,4 +142,5 @@ export default function testsuite() {
   muteServiceTest();
   followFeedServiceTest();
   postImageUrlsTest();
+  userCardServiceTest();
 }

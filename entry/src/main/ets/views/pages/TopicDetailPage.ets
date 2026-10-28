@@ -24,6 +24,7 @@ import { LoginGate } from '../../services/session/LoginGate';
 import { TopicReadController } from '../../services/reading/TopicReadController';
 import { CreateReplyOutcome, TopicPostHit, TopicService } from '../../services/topic/TopicService';
 import { collectPostImageUrls } from '../../services/content/PostImageUrls';
+import { UserCardOverlay } from '../components/UserCardOverlay';
 import { TopicMetadataUpdate } from '../../services/topic/TopicApiTypes';
 import { parseTagInput, sameTagNames } from '../../services/topic/TopicMetadata';
 import { TopicMetadataEventBus } from '../../services/session/TopicMetadataEventBus';
@@ -208,6 +209,11 @@ export struct TopicDetailPage {
   @State private searchError: string = '';
   // 是否已经搜过一次:用来区分「还没搜」与「搜了但没结果」——后者才该显示「没有匹配的楼层」。
   @State private searchPerformed: boolean = false;
+  // 用户卡片浮层:点头像弹出(简介 + 关注),再决定要不要进主页。
+  @State private userCardVisible: boolean = false;
+  @State private userCardUsername: string = '';
+  @State private userCardName: string = '';
+  @State private userCardAvatar: string = '';
   // 反应用户弹层状态由页面持有，避免 LazyForEach 的楼层项回收后丢失分页进度。
   @State private showReactionUsersSheet: boolean = false;
   @State private reactionUsersPost: TopicPost | undefined = undefined;
@@ -565,6 +571,9 @@ export struct TopicDetailPage {
           reactionOrder: this.detail?.validReactions,
           onOpenImages: (images: ViewerImage[], startIndex: number) => {
             this.onOpenImages(images, startIndex);
+          },
+          onOpenUserCard: (user: User) => {
+            this.openUserCard(user);
           },
           onOpenLink: (url: string) => {
             this.onOpenLink(url);
@@ -1512,6 +1521,26 @@ export struct TopicDetailPage {
       .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
     }
 
+    // 用户卡片浮层(点头像弹出)。放在所有面板之后 = 绘制在最上层:
+    // 它可以从任何一楼的作者头像打开,不能被其它浮层盖住。
+    if (this.userCardVisible) {
+      UserCardOverlay({
+        bridge: this.bridge,
+        username: this.userCardUsername,
+        seedName: this.userCardName,
+        seedAvatarTemplate: this.userCardAvatar,
+        onClose: () => {
+          this.closeUserCard();
+        },
+        onOpenProfile: (username: string) => {
+          this.onOpenUser({
+            id: 0, username: username, displayName: this.userCardName,
+            avatarTemplate: this.userCardAvatar
+          });
+        }
+      })
+    }
+
     }
     .width('100%')
     .height('100%')
@@ -1901,6 +1930,11 @@ export struct TopicDetailPage {
     // 帖内搜索 / 只看某人浮层同理。
     if (this.searchPanelVisible) {
       this.closeSearchPanel();
+      return;
+    }
+    // 用户卡片浮层在最上层(它可能盖在详情页上),先关它。
+    if (this.userCardVisible) {
+      this.closeUserCard();
       return;
     }
     // 主题信息面板同理:它是自绘浮层,系统返回键只 bump tick,不接就关不掉。
@@ -3207,6 +3241,21 @@ export struct TopicDetailPage {
       }
     }
     return '';
+  }
+
+  // 点头像:先把已知的昵称/头像塞进卡片(不等网络),再由卡片自己去取 /u/{username}/card.json。
+  private openUserCard(user: User): void {
+    if (user.username.length === 0) {
+      return;
+    }
+    this.userCardUsername = user.username;
+    this.userCardName = user.displayName !== undefined ? user.displayName : '';
+    this.userCardAvatar = user.avatarTemplate !== undefined ? user.avatarTemplate : '';
+    this.userCardVisible = true;
+  }
+
+  private closeUserCard(): void {
+    this.userCardVisible = false;
   }
 
   // 整帖配图(按楼层顺序、跨楼去重)。只收已加载楼层:未加载的楼层还没正文,
