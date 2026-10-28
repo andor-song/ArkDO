@@ -8,7 +8,7 @@
 
 用 ArkTS 从零编写，不是网页套壳。
 
-[![Platform](https://img.shields.io/badge/platform-HarmonyOS%206.1.0%2B-black)](https://developer.huawei.com/consumer/cn/)
+[![Platform](https://img.shields.io/badge/platform-HarmonyOS%207%2B-black)](https://developer.huawei.com/consumer/cn/)
 [![Language](https://img.shields.io/badge/language-ArkTS-blue)](https://developer.huawei.com/consumer/cn/arkts/)
 [![Community](https://img.shields.io/badge/LINUX%20DO-社区-ffb003)](https://linux.do)
 
@@ -50,41 +50,52 @@ ArkDO 是 LINUX DO 社区的**非官方**第三方客户端，由社区成员 [@
 ## 功能
 
 **浏览**
-- 最新 / 最新发布 / 热门 / 排行榜 / 未读 / 未读新帖多入口，可与版块、标签任意叠加
+- 最新 / 最新发布 / 热门 / 排行榜 / 未读 / 未读新帖 / 已读多入口，可与版块、标签任意叠加
 - 两级版块树抽屉，按分类看帖
 - 话题详情窗口式分页加载，楼层 scrubber 拖动跳楼，按楼号直达
 - 引用卡与被引用楼层按需展开、跨帖跳转
 - 采纳答案面板、话题摘要卡、按帖子 ID 直跳
+- 站内搜索：话题 / 用户两类结果，配分类、标签、@用户、时间、范围、排序等高级筛选
+- 多论坛与换站：站点全部由用户添加（首启引导给了几个候选，含 LINUX DO），可随时切换；属于某个论坛的数据（搜索历史、推送订阅等）按 host 分键，不跨站串味
+- `arkdo://` 深链：`arkdo://t/<主题 id>`、`arkdo://u/<用户名>`、`arkdo://browse?url=…`，也能直接打开站内网页链接
+- 草稿箱：正文与新建主题写到一半自动存草稿，回来可续写、编辑、删除
+- 抽奖帖回复提醒：命中抽奖标签的帖子里，回复框上方直接给出规则提示与贴合场景的占位文字（只提示不拦截，可在设置里关掉；高级推广帖、已关闭/归档帖与楼主本人都不打扰）
 
 **互动**
 - 回复评论（输入浮层贴合键盘上沿）
 - 表情回应、Boost 助力、投票、"俺也一样"
-- 书签增删与置顶，列表 / 详情 / 导航栏三处标记即时联动
+- 书签增删（详情页内三处联动：楼层按钮 / 顶栏标题 / 摘要卡）；置顶与备注在书签页管理
+- 话题内「正在回复」在线条（Discourse presence 频道），谁在写回复一眼可见
 - 帖子级通知档位：关注 / 跟踪 / 正常 / 静默，详情页顶栏铃铛一键切换
+- 长按帖子列表项：复制链接 / 分享 / 标为已读
 
 **账号**
 - ArkWeb 网页登录，会话持久化，未登录写操作自动引导登录
 - 个人主页、用户动态（我的话题 / 回复 / 点赞）、徽章墙
 - 静音 / 忽略用户（忽略可选时长，到期自动恢复；入口按服务端权限位显示）
 - 等级进度（读取 connect.linux.do 的升级要求）
-- 通知中心与铃铛角标，覆盖 30+ 种通知类型（含 Boost、Follow）
+- 通知中心，覆盖 30+ 种通知类型（含 Boost、Follow），可按类型筛选（回复 / 提及 / 私信 / 点赞）
+- 未读数在头像挖孔胶囊上显数、底栏「通知」红点提示（不是铃铛角标）
+- LINUX DO Credit：积分、每日统计与 Credit 明细
 
 **阅读体验**
 - ArkTS 版 Discourse 阅读进度跟踪，蓝点淡出、"上次访问"红线
 - cooked HTML 自研解析器 → 原生 ArkUI 渲染
-- LaTeX 数学公式渲染（MathJax 出图）
+- LaTeX 数学公式渲染（MathJax 出 SVG → PNG → PixelMap，行内 `ImageSpan` 直贴）
 - 图片预览（双击缩放、下拉关闭）、音视频播放、附件下载
 - 站内 Emoji、FontAwesome 徽章图标、标签图标完整还原
+- 实时新帖 / 新回复提示：列表顶部提示条，点按增量插入并高亮新行
 
 **系统推送**（需自建中继，见 [`server/`](server/)）
 - App 关闭时也能收到回复 / @ / 私信的系统通知，点击直达对应楼层
-- 点推送即标记该条通知已读，铃铛未读数同步递减
+- 点推送即标记该条通知已读，未读数同步递减
 
 **适配**
 - 三态深色模式：跟随系统 / 强制浅色 / 强制深色
-- 平板横屏双栏、竖屏单栏自适应
-- DoH 自定义 DNS（内置优选服务器，支持增删、切换、测速）
+- 平板横屏与折叠屏展开态双栏，竖屏 / 折叠态单栏自适应
+- DoH 自定义 DNS（内置优选服务器可切换与逐条测速，自定义服务器可增删；内置项不可删）
 - 长按应用图标的快捷入口：发帖 / 搜索 / 通知
+- 「设置 → 诊断日志」网络快照：DoH 与直连实测 + 登录态 + 最近关键日志，一键给排查材料
 
 ## 技术实现
 
@@ -104,16 +115,19 @@ LINUX DO 有 Cloudflare 防护，原生 HTTP 栈发的请求会被拦。ArkDO �
 
 ### DoH
 应对 DNS 污染。通过 `webview.setHttpDns` 把 DoH 下发给 ArkWeb 引擎，内置优选服务器，也可自己加。设置页能测速对比。
+内置项只可切换与测速（它们是可复用的公共解析服务，删掉只会让列表变空），自定义项可增删；删掉当前生效项会自动回退到内置默认并重新下发。
 
 > 核心文件：`services/network/DohManager.ets`
 
 ### 头像与静态图
-原生 `Image` 走系统网络栈会在 TLS 握手阶段被按 SNI 阻断，所以头像也统一经宿主 WebView 取字节再解码成 PixelMap，带并发限流和 LRU 缓存。
+原生 `Image` 走系统网络栈会在 TLS 握手阶段被按 SNI 阻断，所以头像也统一经宿主 WebView 取字节再解码成 PixelMap，带并发限流和内存缓存。
+缓存按**插入序淘汰（FIFO，不是 LRU）**：命中缓存时不重新插入。列表是单向滚动的，头像不会回头再看，把「最近用过」提到队首只会让真正要淘汰的旧图留在内存里。
+另有字节预算做意外兜底（站点把头像配成大图时先按字节收口），淘汰只移除引用不主动 release——仍绑定在某个 `Image` 上的 PixelMap 被销毁会崩。
 
 > 核心文件：`services/network/AvatarImageCache.ets`
 
 ### 数学公式
-`discourse-math` 的裸 LaTeX 交给一个 1×1 的离屏 WebView 跑 MathJax 出 SVG，转成 PixelMap 供行内 `ImageSpan` 使用。按需挂载、空闲销毁，没有公式的帖子零开销。
+`discourse-math` 的裸 LaTeX 交给一个 1×1 的离屏 WebView 跑 MathJax：先在页面里出**自包含矢量 SVG**（`fontCache:'none'` 让每个 SVG 内联自己的字形 path，脱离文档也能光栅化），再用 canvas 转成 **PNG(base64)**，ArkTS 侧解码成 PixelMap 供行内 `ImageSpan` 使用。按需挂载、空闲销毁，没有公式的帖子零开销。
 
 > 核心文件：`services/content/MathRenderService.ets`
 
@@ -128,9 +142,9 @@ LINUX DO ──Web Push（加密）──▶ 自建中继 ──解密──▶ 
 
 > 核心文件：`services/push/`、`server/relay.py`
 
-### HarmonyOS 6.1 沉浸光感
+### 沉浸光感
 
-ArkDO 在 HarmonyOS 6.1.0 及以上使用系统/HDS 可编译的沉浸光感能力增强导航、固定操作、输入浮层和登录面板。
+ArkDO 使用系统 / HDS 的沉浸光感能力增强导航、固定操作、输入浮层和登录面板。
 内容阅读区域保持克制，不使用图片叠层模拟光感。
 
 ## 项目结构
@@ -158,13 +172,15 @@ server/              推送中继（Python，部署在自己的服务器上）
 └── README.md        部署文档
 ```
 
-约 6.9 万行 ArkTS，唯一的第三方运行时依赖是 `@rv/image-preview`。
+约 7.1 万行 ArkTS，唯一的第三方运行时依赖是 `@rv/image-preview`。
 
 ## 构建
 
 **环境要求**
-- DevEco Studio（HarmonyOS SDK API 23+）
-- 设备：HarmonyOS 6.1.0 及以上，手机 / 平板
+- DevEco Studio（HarmonyOS SDK 26.0.0 / API 26+）
+- 设备：HarmonyOS 7（26.0.0）及以上，手机 / 平板
+
+工程按 `targetSdkVersion` / `compatibleSdkVersion` = `26.0.0` 构建（见 `build-profile.json5`）。自 1.0.0 起就是鸿蒙 7 / API 26 版本体系下的正式版本。
 
 **步骤**
 1. 克隆仓库后用 DevEco Studio 打开
