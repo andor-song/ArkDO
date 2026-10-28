@@ -27,20 +27,66 @@ export interface TopicListQuery {
   category?: TopicCategory;
   // undefined = 不限标签。
   tag?: TopicTag;
+  // 排行榜(/top.json)的时间范围:TopTopic.periods 的取值(daily/weekly/monthly/quarterly/yearly/all)。
+  // 只对 filter === TOP 有意义;undefined = 不发该参数(服务端默认)。
+  // 为什么放进 query 而不是页面本地态:抽屉草稿、顶栏副行、已选条件摘要都要读它,
+  // 放本地态就会出现「chips 选了本周、顶栏写着排行榜、请求却没带 period」这种三处不一致。
+  topPeriod?: string;
+}
+
+/** 排行榜时间范围的一项。 */
+export interface TopPeriodOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * 排行榜的时间范围。取值即 Discourse `TopTopic.periods`(daily/weekly/monthly/quarterly/yearly/all),
+ * 顺序按「由近及远」排 —— 用户点开排行榜多半想看最近的。
+ *
+ * 不含「默认」项:抽屉里宁可显式选中一个,也不要让「没选」和「站点默认」两种状态在界面上长得一样。
+ * 首次切到排行榜时由 CategoryDrawer.setFilter 落到 DEFAULT_TOP_PERIOD。
+ */
+export const TOP_PERIOD_OPTIONS: TopPeriodOption[] = [
+  { value: 'daily', label: '今日' },
+  { value: 'weekly', label: '本周' },
+  { value: 'monthly', label: '本月' },
+  { value: 'quarterly', label: '本季' },
+  { value: 'yearly', label: '今年' },
+  { value: 'all', label: '全部' }
+];
+
+/** 首次选中排行榜时落到的时间范围。与网页版 /top 打开时的默认档一致。 */
+export const DEFAULT_TOP_PERIOD: string = 'weekly';
+
+/** 时间范围的中文名。未知值原样返回空串(不编一个假标签上屏)。 */
+export function topPeriodLabel(value: string | undefined): string {
+  if (value === undefined) {
+    return '';
+  }
+  for (let index: number = 0; index < TOP_PERIOD_OPTIONS.length; index++) {
+    if (TOP_PERIOD_OPTIONS[index].value === value) {
+      return TOP_PERIOD_OPTIONS[index].label;
+    }
+  }
+  return '';
 }
 
 /** 全默认:全站 · 最新 · 不限标签。 */
 export function createDefaultTopicListQuery(): TopicListQuery {
-  return { filter: FeedKey.LATEST, category: undefined, tag: undefined };
+  return { filter: FeedKey.LATEST, category: undefined, tag: undefined, topPeriod: undefined };
 }
 
 /** 拷一份可独立编辑的草稿。 */
 export function cloneTopicListQuery(query: TopicListQuery): TopicListQuery {
-  return { filter: query.filter, category: query.category, tag: query.tag };
+  return {
+    filter: query.filter, category: query.category, tag: query.tag, topPeriod: query.topPeriod
+  };
 }
 
 export function isDefaultTopicListQuery(query: TopicListQuery): boolean {
-  return query.filter === FeedKey.LATEST && query.category === undefined && query.tag === undefined;
+  return query.filter === FeedKey.LATEST && query.category === undefined && query.tag === undefined &&
+    (query.topPeriod === undefined || query.topPeriod.length === 0);
 }
 
 /** 两份条件是否等价。抽屉「确认」按钮据此判断有没有真的改动,避免打一次无意义的请求。 */
@@ -56,7 +102,13 @@ export function sameTopicListQuery(a: TopicListQuery, b: TopicListQuery): boolea
   // 标签按名字比:列表接口回的标签常常只有名字,拿 id 比会把同一个标签认成两个。
   const aTagName: string = a.tag !== undefined ? a.tag.name : '';
   const bTagName: string = b.tag !== undefined ? b.tag.name : '';
-  return aTagName === bTagName;
+  if (aTagName !== bTagName) {
+    return false;
+  }
+  // 排行榜时间范围也算条件:否则「本周」切到「全部」时抽屉会认为没改动,点按钮直接关掉、列表不重拉。
+  const aPeriod: string = a.topPeriod !== undefined ? a.topPeriod : '';
+  const bPeriod: string = b.topPeriod !== undefined ? b.topPeriod : '';
+  return aPeriod === bPeriod;
 }
 
 /**
@@ -98,11 +150,16 @@ function feedFilterSegment(filter: string): string {
  * query 串。order 与 page 都可能出现,必须在一处统一拼 —— 各自带 `?` 会拼出两个问号。
  * page 从 0 起,0 即首页、不带参数。
  */
-function feedQuerySuffix(filter: string, page: number): string {
+function feedQuerySuffix(filter: string, page: number, topPeriod?: string): string {
   const params: string[] = [];
   if (filter === FeedKey.CREATED) {
     // ascending 不写:Discourse 对 order 默认降序,正是「新发的在前」。
     params.push('order=created');
+  }
+  // period 只对排行榜有意义。别的 feed 即使 query 里还留着上次选的档位也不拼进去 ——
+  // 拼了服务端会忽略,但 URL 与日志里会显得「这个参数生效了」,排查时误导人。
+  if (filter === FeedKey.TOP && topPeriod !== undefined && topPeriod.length > 0) {
+    params.push(`period=${encodeURIComponent(topPeriod)}`);
   }
   if (page > 0) {
     params.push(`page=${page}`);
@@ -117,7 +174,7 @@ function feedQuerySuffix(filter: string, page: number): string {
  */
 export function buildTopicListPath(query: TopicListQuery, page: number): string {
   const segment: string = feedFilterSegment(query.filter);
-  const suffix: string = feedQuerySuffix(query.filter, page);
+  const suffix: string = feedQuerySuffix(query.filter, page, query.topPeriod);
   const tag: TopicTag | undefined = query.tag;
   const category: TopicCategory | undefined = query.category;
 
@@ -187,7 +244,12 @@ export function topicListPrimaryTitle(query: TopicListQuery): string {
  * 副行不出现时回空串。
  */
 export function topicListSummaryLead(query: TopicListQuery): string {
-  return hasTopicListSummary(query) ? filterLabel(query.filter) : '';
+  if (!hasTopicListSummary(query)) {
+    return '';
+  }
+  const period: string = query.filter === FeedKey.TOP ? topPeriodLabel(query.topPeriod) : '';
+  const label: string = filterLabel(query.filter);
+  return period.length > 0 ? `${label} · ${period}` : label;
 }
 
 /**
@@ -233,6 +295,13 @@ export function topicListSummary(query: TopicListQuery): string {
 export function describeTopicListQuery(query: TopicListQuery): string {
   const parts: string[] = [];
   parts.push(filterLabel(query.filter));
+  // 排行榜的时间范围紧跟在榜单名后面:「排行榜 · 本周 · 全站」读起来才是一句话。
+  if (query.filter === FeedKey.TOP) {
+    const period: string = topPeriodLabel(query.topPeriod);
+    if (period.length > 0) {
+      parts.push(period);
+    }
+  }
   if (query.category !== undefined) {
     parts.push(query.category.name);
   } else if (query.tag === undefined) {

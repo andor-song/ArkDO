@@ -10,10 +10,13 @@ import { TagSuggestion, TopicService } from '../../services/topic/TopicService';
 import {
   cloneTopicListQuery,
   createDefaultTopicListQuery,
+  DEFAULT_TOP_PERIOD,
   describeTopicListQuery,
   filterRequiresLogin,
   isDefaultTopicListQuery,
   sameTopicListQuery,
+  TOP_PERIOD_OPTIONS,
+  TopPeriodOption,
   TopicListQuery
 } from '../../services/topic/TopicListQuery';
 import { FaIconDefinition, FaIconView, getFaIcon } from './FaIcon';
@@ -375,10 +378,41 @@ export struct CategoryDrawer {
       .onAreaChange(() => {
         this.scrollSelectedChipIntoView();
       })
+
+      // 排行榜的时间范围。只在这一档出现:其余入口没有这个维度,常驻只会让人以为它也对「最新」生效。
+      // 单独一行横向滚动,而不是塞进上面那排:两排各管一个维度(看什么 / 看多久),混排会读成七个互斥选项。
+      if (this.draft.filter === FeedKey.TOP) {
+        this.TopPeriodChips()
+      }
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 2 })
     .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private TopPeriodChips() {
+    List() {
+      ForEach(TOP_PERIOD_OPTIONS, (option: TopPeriodOption) => {
+        ListItem() {
+          ChoiceChip({
+            label: option.label,
+            selected: this.effectiveTopPeriod() === option.value,
+            compact: true,
+            onTap: () => {
+              this.setTopPeriod(option.value);
+            }
+          })
+        }
+      }, (option: TopPeriodOption) => `tp${option.value}`)
+    }
+    .listDirection(Axis.Horizontal)
+    .edgeEffect(EdgeEffect.Fade)
+    .scrollBar(BarState.Off)
+    .width('100%')
+    // 与上面那排同高:紧凑胶囊 30 + 下外边距 8。横向 List 在 Column 里量不出自身高度,不给就塌成 0。
+    .height(FEED_CHIP_STRIP_HEIGHT)
+    .margin({ top: 2 })
   }
 
   // ==================== ①.5 已选条件 ====================
@@ -1224,6 +1258,33 @@ export struct CategoryDrawer {
   private setFilter(key: string): void {
     const next: TopicListQuery = cloneTopicListQuery(this.draft);
     next.filter = key;
+    if (key === FeedKey.TOP) {
+      // 第一次切到排行榜时把时间范围落成默认档:界面上永远有一枚被选中,
+      // 不会出现「六枚都没亮、请求也没带 period」那种谁也说不清当前看的是哪一档的状态。
+      if (next.topPeriod === undefined || next.topPeriod.length === 0) {
+        next.topPeriod = DEFAULT_TOP_PERIOD;
+      }
+    } else {
+      // 离开排行榜就清掉:period 只属于 TOP,留着会让「回到最新」看起来像还没重置。
+      next.topPeriod = undefined;
+    }
+    this.onDraftChange(next);
+  }
+
+  // 抽屉里高亮哪一枚:草稿没写时用默认档(与 setFilter 的落点一致),保证高亮与请求永远对得上。
+  private effectiveTopPeriod(): string {
+    const period: string | undefined = this.draft.topPeriod;
+    return period !== undefined && period.length > 0 ? period : DEFAULT_TOP_PERIOD;
+  }
+
+  private setTopPeriod(value: string): void {
+    // 比的是草稿里的真实值,不是高亮用的 effectiveTopPeriod:
+    // 草稿还没写(undefined)时点默认档也要落值,否则高亮与请求对不上。
+    if (this.draft.topPeriod === value) {
+      return;
+    }
+    const next: TopicListQuery = cloneTopicListQuery(this.draft);
+    next.topPeriod = value;
     this.onDraftChange(next);
   }
 

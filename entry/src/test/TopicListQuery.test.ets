@@ -29,6 +29,10 @@ function queryOf(filter: string, category?: TopicCategory, tag?: TopicTag): Topi
   return { filter: filter, category: category, tag: tag };
 }
 
+function topQuery(period?: string, category?: TopicCategory, tag?: TopicTag): TopicListQuery {
+  return { filter: FeedKey.TOP, category: category, tag: tag, topPeriod: period };
+}
+
 export default function topicListQueryTest() {
   describe('TopicListQuery', () => {
 
@@ -138,6 +142,60 @@ export default function topicListQueryTest() {
       expect(filterRequiresLogin(FeedKey.TOP)).assertFalse();
       // created 是纯服务端排序,不看个人已读状态,匿名同样能拉。
       expect(filterRequiresLogin(FeedKey.CREATED)).assertFalse();
+    });
+
+    // ===== 排行榜时间范围(period) =====
+    //
+    // 上游 TopTopic.periods = daily/weekly/monthly/quarterly/yearly/all;不传 period 时用站点默认。
+    // 这里钉住三件事:四种 scope 都带上、翻页时与 page 共存(不能拼出两个问号)、
+    // 以及**别的 filter 绝不能带 period**(拼了服务端会忽略,但 URL 会显得它生效了)。
+    it('排行榜带 period,且与四种 scope 组合', 0, () => {
+      expect(buildTopicListPath(topQuery('weekly'), 0)).assertEqual('/top.json?period=weekly');
+      expect(buildTopicListPath(topQuery('daily', DEV), 0))
+        .assertEqual('/c/domestic/98/l/top.json?period=daily');
+      expect(buildTopicListPath(topQuery('monthly', undefined, TAG_WITH_ID), 0))
+        .assertEqual('/tag/1461-tag/1461/l/top.json?period=monthly');
+      expect(buildTopicListPath(topQuery('all', DEV, TAG_WITH_ID), 0))
+        .assertEqual('/tags/c/domestic/98/1461-tag/1461/l/top.json?period=all');
+    });
+
+    it('排行榜 period 与 page 共存,不重复问号', 0, () => {
+      expect(buildTopicListPath(topQuery('yearly'), 2)).assertEqual('/top.json?period=yearly&page=2');
+      // 没选档位时保持改动前的形态(服务端默认),别偷偷替用户做决定。
+      expect(buildTopicListPath(topQuery(undefined), 0)).assertEqual('/top.json');
+    });
+
+    it('非排行榜 filter 忽略残留的 topPeriod', 0, () => {
+      const stale: TopicListQuery = { filter: FeedKey.LATEST, topPeriod: 'weekly' };
+      expect(buildTopicListPath(stale, 0)).assertEqual('/latest.json');
+      expect(buildTopicListPath({ filter: FeedKey.CREATED, topPeriod: 'all' }, 0))
+        .assertEqual('/latest.json?order=created');
+    });
+
+    // 时间范围也算「条件」:否则在抽屉里把本周切成全部时,isDirty 判 false,
+    // 「查看结果」按钮会变成「关闭」,点了直接关面板、列表不重拉。
+    it('时间范围参与等价判断与已选条件摘要', 0, () => {
+      expect(sameTopicListQuery(topQuery('weekly'), topQuery('weekly'))).assertTrue();
+      expect(sameTopicListQuery(topQuery('weekly'), topQuery('all'))).assertFalse();
+      expect(sameTopicListQuery(topQuery(undefined), topQuery('weekly'))).assertFalse();
+      expect(describeTopicListQuery(topQuery('weekly'))).assertEqual('排行榜 · 本周 · 全站');
+      expect(describeTopicListQuery(topQuery('all', DEV))).assertEqual('排行榜 · 全部 · 开发调优');
+      // 顶栏副行:换过排序且带 scope 时出现,时间范围跟在同一行里。
+      // 版块不进副行——它是主标题(见 topicListPrimaryTitle),副行只有排序 + 标签。
+      expect(topicListSummary(topQuery('daily', DEV))).assertEqual('排行榜 · 今日');
+      // 标签只有在版块也选中时才进副行(否则它自己就是主标题)。
+      expect(topicListSummary(topQuery('daily', undefined, TAG_WITH_ID))).assertEqual('排行榜 · 今日');
+      expect(topicListSummary(topQuery('daily', DEV, TAG_WITH_ID)))
+        .assertEqual('排行榜 · 今日 · 三方客户端');
+      // 只选了排行榜(无 scope)时,排序名本身就是主标题,副行不重复写。
+      expect(hasTopicListSummary(topQuery('daily'))).assertFalse();
+    });
+
+    // 只有残留 period、没有别的条件时,不能算「默认」——抽屉会因此显示「重置」。
+    // (CategoryDrawer.setFilter 离开排行榜时会清掉它,这里是防御性断言。)
+    it('残留 period 不算默认条件', 0, () => {
+      expect(isDefaultTopicListQuery({ filter: FeedKey.LATEST, topPeriod: 'weekly' })).assertFalse();
+      expect(isDefaultTopicListQuery(createDefaultTopicListQuery())).assertTrue();
     });
 
     // ===== 顶栏文案 =====
