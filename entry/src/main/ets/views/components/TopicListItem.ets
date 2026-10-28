@@ -37,6 +37,9 @@ const CARD_RADIUS_COMPACT: number = 12;
 
 const INCOMING_HIGHLIGHT_FADE_MS: number = 600;
 
+// 长按菜单出现后,给整行 click 兜闸的窗口(见 onClick 里的注释)。
+const ROW_MENU_CLICK_GUARD_MS: number = 600;
+
 // 摘要高亮分段:hit 为命中词(染品牌色),否则普通文本。
 interface BlurbSegment {
   text: string;
@@ -58,6 +61,12 @@ export struct TopicListItem {
   onCategoryClick?: (category: TopicCategory) => void = undefined;
   // 有未读回复时整行点击走这里:直跳详情页第一条未读楼(无未读则走 onTopicClick 从头打开)。
   onUnreadBadgeClick: (topic: Topic) => void = () => {};
+  // 长按整行的菜单项。三项都由父组件按需注入:没注入的那项不进菜单,三项都没注入
+  // (样式设置页的预览行)时长按什么都不弹 —— 「哪些列表能长按」这件事留在列表页决定,
+  // 本组件不知道也不该知道站点、剪贴板与网络。动作本体在 services/topic/TopicRowActions。
+  onCopyLink?: (topic: Topic) => void = undefined;
+  onShareTopic?: (topic: Topic) => void = undefined;
+  onMarkRead?: (topic: Topic) => void = undefined;
   // 搜索场景高亮词(空格拆分的普通关键词):在 searchBlurb 摘要里把命中词染色。普通 feed 传空。
   searchHighlights: string[] = [];
   // 首页取消 List 外层留白后由内容层补回；其他列表仍沿用各自的外层 padding。
@@ -89,6 +98,9 @@ export struct TopicListItem {
   // 手指落下到页面转场之间有几十毫秒的空窗,什么都不变会让人以为没点上而重复点。
   // 沿用 ChoiceChip 的既有范式(opacity 0.7,不做动画:瞬时反馈比渐变更跟手)。
   @State private pressed: boolean = false;
+  // 长按菜单出现的那一刻。用于给整行 click 兜闸:菜单弹出后手指在原处抬起时,
+  // ArkUI 不保证把这一下点击吃掉,不拦就会「弹了菜单顺手把帖子开到菜单背后」。
+  private rowMenuAppearedAt: number = 0;
 
   aboutToAppear(): void {
     this.playIncomingHighlight();
@@ -291,6 +303,11 @@ export struct TopicListItem {
         // 兜底清按下态:手指按下后转为滚动时,ArkUI 不保证一定送 Cancel,
         // 漏一次就会让这一行永久停在 0.7 透明度上。
         this.pressed = false;
+        // 长按弹菜单紧接着抬手 → 这里可能同时收到一次 click。菜单刚出现过的短窗口内
+        // 直接忽略,否则还没点菜单项就已经跳进详情页了。
+        if (Date.now() - this.rowMenuAppearedAt < ROW_MENU_CLICK_GUARD_MS) {
+          return;
+        }
         // 有未读徽标 → 整行点击直跳第一条未读楼;否则从第 1 层打开。
         if (this.hasUnreadBadge()) {
           this.onUnreadBadgeClick(this.topic);
@@ -299,6 +316,14 @@ export struct TopicListItem {
         }
       })
     }
+    // 长按整行 → 系统上下文菜单(不像楼层侧长按表情面板那样自绘气泡:这里只是三个纯文字
+    // 动作,系统 Menu/MenuItem 与列表更搭,也免掉自己算锚点与避让)。
+    // 没有任何回调注入时 builder 不渲染 Menu —— 预览行长按因此弹不出空气泡。
+    .bindContextMenu(this.RowMenu(), ResponseType.LongPress, {
+      onAppear: (): void => {
+        this.rowMenuAppearedAt = Date.now();
+      }
+    })
     // 卡片模式:卡与卡之间上下各留半缝隙(两个相邻行拼出整缝),让浅灰底透出来(飞书式)。
     // 3→1:卡缝再压到合计 2vp(0.9.x 级密排),配合卡内 rowPadding 默认降到 5,整屏信息量显著提升。
     .margin({ top: this.cardMode ? 1 : 0, bottom: this.cardMode ? 1 : 0 })
@@ -326,6 +351,68 @@ export struct TopicListItem {
 
   private hasUnreadBadge(): boolean {
     return this.topic.unreadPosts !== undefined && this.topic.unreadPosts > 0;
+  }
+
+  // 本行会不会真的渲染出至少一个菜单项。三项回调都由父组件按需注入,一个都没注入、
+  // 或者只剩一个「已读完的帖子的标为已读」时(样式设置页的预览行走前者),长按什么都不弹。
+  // 判据必须与上面 builder 里的三个 if 一致,否则会出现「弹了个空气泡」。
+  private hasRowMenu(): boolean {
+    return this.onCopyLink !== undefined || this.onShareTopic !== undefined || this.canMarkRead();
+  }
+
+  // 「标为已读」只对还没读完的帖子有意义:已经读到顶的帖子摆这一项,点了什么都不变,
+  // 那是噪音。判据与标题后的蓝点/未读药丸完全同一套字段。
+  private canMarkRead(): boolean {
+    return this.onMarkRead !== undefined && (this.topic.unseen === true || this.hasUnreadBadge());
+  }
+
+  // 菜单项交给父组件注入的回调。回调是可选属性,ArkTS 里不能边判空边调用,
+  // 所以每条先收成局部常量再触发;顺手把本行 topic 交给页面,菜单本身不带业务。
+  private fireCopyLink(): void {
+    const handler: ((topic: Topic) => void) | undefined = this.onCopyLink;
+    if (handler !== undefined) {
+      handler(this.topic);
+    }
+  }
+
+  private fireShareTopic(): void {
+    const handler: ((topic: Topic) => void) | undefined = this.onShareTopic;
+    if (handler !== undefined) {
+      handler(this.topic);
+    }
+  }
+
+  private fireMarkRead(): void {
+    const handler: ((topic: Topic) => void) | undefined = this.onMarkRead;
+    if (handler !== undefined) {
+      handler(this.topic);
+    }
+  }
+
+  @Builder
+  private RowMenu() {
+    if (this.hasRowMenu()) {
+      Menu() {
+        if (this.onCopyLink !== undefined) {
+          MenuItem({ content: '复制链接' })
+            .onClick(() => {
+              this.fireCopyLink();
+            })
+        }
+        if (this.onShareTopic !== undefined) {
+          MenuItem({ content: '分享' })
+            .onClick(() => {
+              this.fireShareTopic();
+            })
+        }
+        if (this.canMarkRead()) {
+          MenuItem({ content: '标为已读' })
+            .onClick(() => {
+              this.fireMarkRead();
+            })
+        }
+      }
+    }
   }
 
   private blurbSegments(): BlurbSegment[] {

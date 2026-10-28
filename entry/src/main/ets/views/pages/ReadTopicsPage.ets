@@ -3,9 +3,11 @@ import { HdsNavigation, HdsNavigationTitleMode } from '@kit.UIDesignKit';
 import { Topic, TopicCategory } from '../../models/Topic';
 import { JsonNetworkClient, NetworkResult } from '../../services/network/NetworkTypes';
 import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
+import { showToast as promptToast } from '../../common/utils/Toast';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { TopicPage, TopicService } from '../../services/topic/TopicService';
 import { emptyStateForFeed } from '../../services/topic/TopicListQuery';
+import { TopicRowActions } from '../../services/topic/TopicRowActions';
 import { FeedKey } from '../../services/site/FeedPrefs';
 import { TopicListItem } from '../components/TopicListItem';
 import { LoadStateView } from '../components/LoadStateView';
@@ -49,6 +51,12 @@ export struct ReadTopicsPage {
   private currentPage: number = 0;
   private loading: boolean = false;
   private scroller: Scroller = new Scroller();
+  // 列表行长按菜单的动作。本页 bridge 是可空的(宿主还没就绪时就是 undefined),
+  // 所以桥走闭包交给 TopicRowActions 自己判空;toast 挂本页 UI 实例(多窗口下不会弹到另一半屏)。
+  private rowActions: TopicRowActions = new TopicRowActions(
+    () => this.bridge,
+    (message: string, duration: number) => promptToast(this.getUIContext(), message, duration),
+    () => this.getUIContext());
   // 已读状态回传的订阅句柄(详情页离开时结算一次)。与首页同一条链路,
   // 否则在详情页读完后返回这里,未读徽标还停在旧值 —— 用户会以为没读进去。
   private unsubscribeReadState: (() => void) | undefined = undefined;
@@ -199,6 +207,15 @@ export struct ReadTopicsPage {
               },
               onUnreadBadgeClick: (selectedTopic: Topic) => {
                 this.handleUnreadBadgeClick(selectedTopic);
+              },
+              onCopyLink: (selectedTopic: Topic) => {
+                this.rowActions.copyLink(selectedTopic);
+              },
+              onShareTopic: (selectedTopic: Topic) => {
+                this.rowActions.share(selectedTopic);
+              },
+              onMarkRead: (selectedTopic: Topic) => {
+                this.rowActions.markRead(selectedTopic);
               }
             })
             // key 纳入 bookmarked:与首页同理,收藏态变化时强制重建该行绑新实例。

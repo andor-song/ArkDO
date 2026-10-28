@@ -11,6 +11,7 @@ import userFacingErrorTest from './UserFacingError.test';
 import versionAnnouncementTest from './VersionAnnouncement.test';
 import categorySearchTest from './CategorySearch.test';
 import topicMetadataTest from './TopicMetadata.test';
+import topicLinkTest from './TopicLink.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
 import topicServiceTest from './TopicService.test';
 import authServiceTest from './AuthService.test';
@@ -126,4 +127,5 @@ export default function testsuite() {
   versionAnnouncementTest();
   categorySearchTest();
   topicMetadataTest();
+  topicLinkTest();
 }

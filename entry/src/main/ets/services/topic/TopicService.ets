@@ -925,6 +925,36 @@ export class TopicService {
   }
 
   /**
+   * 把主题标为已读（列表长按菜单用）。`PUT /topics/bulk` + `operation[type]=dismiss_posts`。
+   *
+   * 走 bulk 而不是 `/topics/timings`：timings 是把「读了多少毫秒」记成 PostTiming，
+   * 而 `dismiss_posts` 是直接 `UPDATE topic_users SET last_read_post_number = 最高楼` ——
+   * 纯数据库更新、**不产生 PostTiming**，因此不会像 timings 那样喂 CF 的速率盾
+   * （本仓注释反复强调 timings 不能猛打的正是这个原因）。
+   */
+  async markTopicRead(topicId: number): Promise<NetworkResult<boolean>> {
+    if (topicId <= 0) {
+      return unexpectedResponse<boolean>(0, ChallengeState.NONE, '主题 id 非法。',
+        '没有可标记的内容', NetworkFailureKind.LOCAL_ABORT);
+    }
+    const body: string = `topic_ids%5B%5D=${topicId}&operation%5Btype%5D=dismiss_posts`;
+    const referrer: string = `${AppConstants.BASE_URL}/t/topic/${topicId}`;
+    const response: NetworkResult<string> = await this.bridge.putForm('/topics/bulk', body, {
+      notifyChallenge: true,
+      referrer: referrer
+    });
+    if (!response.success) {
+      return forwardFailure<boolean>(response);
+    }
+    return {
+      success: true,
+      statusCode: response.statusCode,
+      challengeState: response.challengeState,
+      data: true
+    };
+  }
+
+  /**
    * 编辑某楼。PUT /posts/{id},form body(对齐抓包):
    *   post[raw] / post[original_text] / post[topic_id] / post[edit_reason] / post[locale]
    * 可选 topic 参数(改已发主题的分类/标签,仅楼主编辑首楼时有意义):

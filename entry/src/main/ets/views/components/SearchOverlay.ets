@@ -9,6 +9,7 @@ import { ArkWebNetworkBridge } from '../../services/network/ArkWebNetworkBridge'
 import { NetworkResult } from '../../services/network/NetworkTypes';
 import { friendlyFailure, rawFailure } from '../../services/network/UserFacingError';
 import { SearchResult, TopicService } from '../../services/topic/TopicService';
+import { TopicRowActions } from '../../services/topic/TopicRowActions';
 import { SearchHistoryStore } from '../../services/search/SearchHistoryStore';
 import { SearchFilters } from '../../services/search/SearchFilters';
 import {
@@ -27,6 +28,7 @@ import { FaIconDefinition, FaIconView, getFaIcon } from './FaIcon';
 import { SearchFilterPanel } from './SearchFilterPanel';
 import { TopicListItem } from './TopicListItem';
 import { SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
+import { showToast as promptToast } from '../../common/utils/Toast';
 import { IMMERSIVE_PANEL_BLUR_RADIUS } from '../../common/ui/ImmersiveLightMaterial';
 
 const LOG_TAG: string = '[ArkDO][Search]';
@@ -84,6 +86,12 @@ export struct SearchOverlay {
   // 当前搜索词拆出的普通高亮词(去掉 in:/#/@ 等高级语法),用于摘要命中染色。
   @State private highlights: string[] = [];
   private categoryIndex: CategoryIndex = new CategoryIndex();
+  // 长按结果行的动作。搜索结果**不给「标为已读」**:结果集里的 unseen/unreadPosts 不是列表口径的
+  // 已读水位(搜索接口返回的字段本就残缺),标完到底读没读用户自己看不出来 —— 宁缺毋滥。
+  private rowActions: TopicRowActions = new TopicRowActions(
+    () => this.bridge,
+    (message: string, duration: number) => promptToast(this.getUIContext(), message, duration),
+    () => this.getUIContext());
   @State private isSearching: boolean = false;
   @State private isLoadingMore: boolean = false;
   @State private hasMore: boolean = false;
@@ -454,6 +462,12 @@ export struct SearchOverlay {
               },
               onUnreadBadgeClick: (selected: Topic) => {
                 this.handleResultUnreadClick(selected);
+              },
+              onCopyLink: (selected: Topic) => {
+                this.rowActions.copyLink(selected);
+              },
+              onShareTopic: (selected: Topic) => {
+                this.rowActions.share(selected);
               }
             })
           }, (topic: Topic) => `${topic.id}`)

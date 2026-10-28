@@ -2,7 +2,9 @@ import { describe, it, expect } from '@ohos/hypium';
 import { TopicPage, TopicService } from '../main/ets/services/topic/TopicService';
 import { Topic } from '../main/ets/models/Topic';
 import { TopicDetail } from '../main/ets/models/TopicDetail';
-import { ChallengeState, JsonNetworkClient, NetworkErrorCode, NetworkResult } from '../main/ets/services/network/NetworkTypes';
+import {
+  ChallengeState, JsonNetworkClient, NetworkErrorCode, NetworkFailureKind, NetworkResult
+} from '../main/ets/services/network/NetworkTypes';
 
 class FakeBridge implements JsonNetworkClient {
   private result: NetworkResult<string>;
@@ -543,6 +545,41 @@ export default function topicServiceTest() {
       expect(result.success).assertFalse();
       expect(bridge.postedPath).assertEqual('');
       expect(result.error?.code).assertEqual(NetworkErrorCode.UNEXPECTED_RESPONSE);
+    });
+
+    // ===== 列表行「标为已读」(topics/bulk + dismiss_posts) =====
+    //
+    // 刻意不走 /topics/timings:那条会写 PostTiming(喂 CF 速率盾,本仓反复强调不能猛打),
+    // 而 dismiss_posts 是纯 SQL 更新 topic_users.last_read_post_number。
+    // body 是**手工预编码**的 %5B%5D(数组下标形态),不是 encodeURIComponent 的产物,
+    // 所以这里逐字钉死:写成 topic_ids[]= 时服务端会把参数丢掉并静默什么都不改。
+    it('marksTopicReadViaBulkDismissPosts', 0, async () => {
+      const ok: NetworkResult<string> = {
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: '{}'
+      };
+      const bridge: FakeBridge = new FakeBridge(ok);
+
+      const result: NetworkResult<boolean> = await new TopicService(bridge).markTopicRead(1234);
+
+      expect(result.success).assertTrue();
+      expect(result.data).assertTrue();
+      expect(bridge.postedPath).assertEqual('/topics/bulk');
+      expect(bridge.postedBody).assertEqual('topic_ids%5B%5D=1234&operation%5Btype%5D=dismiss_posts');
+    });
+
+    // 没有主题 id 就没有可标记的东西:本地拒发(不发请求),按 LOCAL_ABORT 归类而非「网络问题」。
+    it('refusesBulkDismissWithoutTopicId', 0, async () => {
+      const ok: NetworkResult<string> = {
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: '{}'
+      };
+      const bridge: FakeBridge = new FakeBridge(ok);
+
+      const result: NetworkResult<boolean> = await new TopicService(bridge).markTopicRead(0);
+
+      expect(result.success).assertFalse();
+      expect(bridge.postedPath).assertEqual('');
+      expect(result.error?.code).assertEqual(NetworkErrorCode.UNEXPECTED_RESPONSE);
+      expect(result.error?.failureKind).assertEqual(NetworkFailureKind.LOCAL_ABORT);
     });
   });
 }

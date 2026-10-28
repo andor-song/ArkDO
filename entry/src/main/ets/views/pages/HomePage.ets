@@ -27,6 +27,7 @@ import {
 } from '../../services/message/MessageBusEventBus';
 import { TopicPage, TopicService } from '../../services/topic/TopicService';
 import { TopicDataSource } from '../../services/topic/TopicDataSource';
+import { TopicRowActions } from '../../services/topic/TopicRowActions';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { FeedKey } from '../../services/site/FeedPrefs';
 import {
@@ -283,6 +284,12 @@ export struct HomePage {
   // 面板站点行:打开该站点(走通用 WebView 页)。siteId 用于缓存该站 favicon。
   onOpenSite: (url: string, title: string, siteId: string) => void = () => {};
   private handledSessionVersion: number = SessionEventBus.getCurrentVersion();
+  // 列表行长按菜单的三个动作(复制链接 / 分享 / 标为已读)。动作本体是三个列表共用的一个类,
+  // 这里只把本页的依赖接进去。全部走闭包惰性取:this.bridge 与 UIContext 在字段初始化时还不可用。
+  private rowActions: TopicRowActions = new TopicRowActions(
+    () => this.bridge,
+    (message: string, duration: number) => promptToast(this.getUIContext(), message, duration),
+    () => this.getUIContext());
   private unsubscribeSessionChanged?: () => void = undefined;
   private unsubscribeTopicReadState?: () => void = undefined;
   private unsubscribeTopicMetadata?: () => void = undefined;
@@ -705,6 +712,15 @@ export struct HomePage {
               },
               onUnreadBadgeClick: (selectedTopic: Topic) => {
                 this.handleUnreadBadgeClick(selectedTopic);
+              },
+              onCopyLink: (selectedTopic: Topic) => {
+                this.rowActions.copyLink(selectedTopic);
+              },
+              onShareTopic: (selectedTopic: Topic) => {
+                this.rowActions.share(selectedTopic);
+              },
+              onMarkRead: (selectedTopic: Topic) => {
+                this.rowActions.markRead(selectedTopic);
               }
             })
             // 完整刷新会 new 一批 Topic，版本入 key 后强制重绑 @ObjectLink；同实例上的收藏变化仍靠
