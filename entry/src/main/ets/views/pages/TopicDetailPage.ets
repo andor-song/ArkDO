@@ -22,7 +22,7 @@ import { AppStateEventBus } from '../../services/session/AppStateEventBus';
 import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { LoginGate } from '../../services/session/LoginGate';
 import { TopicReadController } from '../../services/reading/TopicReadController';
-import { CreateReplyOutcome, TopicService } from '../../services/topic/TopicService';
+import { CreateReplyOutcome, TopicPostHit, TopicService } from '../../services/topic/TopicService';
 import { TopicMetadataUpdate } from '../../services/topic/TopicApiTypes';
 import { parseTagInput, sameTagNames } from '../../services/topic/TopicMetadata';
 import { TopicMetadataEventBus } from '../../services/session/TopicMetadataEventBus';
@@ -98,6 +98,11 @@ import {
 } from '../../common/ui/SmartReachLayout';
 
 const LOG_TAG: string = '[ArkDO][TopicDetail]';
+
+// 帖内搜索 / 只看某人:同一块自绘浮层的两种模式。字符串而不是 enum,是因为它只在本文件里流转
+// (不进路由、不进存储),枚举反而多一层 import。
+const SEARCH_MODE_KEYWORD: string = 'keyword';
+const SEARCH_MODE_USER: string = 'user';
 const POSTS_PAGE_SIZE: number = 20;
 // 楼层预创建数(视口外上下各 N 条)，平衡快滑白块与内存占用。
 const POSTS_CACHED_COUNT: number = 4;
@@ -191,6 +196,17 @@ export struct TopicDetailPage {
   @State private metaTagsInput: string = '';
   // 分类选择器里展开着的顶级版块 id(两层级联)。
   @State private metaExpandedCategoryIds: number[] = [];
+  // 帖内搜索 / 只看某人。自绘浮层,理由同 notificationPanelVisible(本页唯一 bindSheet 已给反应用户弹层)。
+  // 两种模式共用一块面板:输入框与结果列表长得一样,分成两个浮层只会多一套开关与返回键接线。
+  @State private searchPanelVisible: boolean = false;
+  @State private searchMode: string = SEARCH_MODE_KEYWORD;
+  @State private searchTerm: string = '';
+  @State private searchUsername: string = '';
+  @State private searchHits: TopicPostHit[] = [];
+  @State private searchLoading: boolean = false;
+  @State private searchError: string = '';
+  // 是否已经搜过一次:用来区分「还没搜」与「搜了但没结果」——后者才该显示「没有匹配的楼层」。
+  @State private searchPerformed: boolean = false;
   // 反应用户弹层状态由页面持有，避免 LazyForEach 的楼层项回收后丢失分页进度。
   @State private showReactionUsersSheet: boolean = false;
   @State private reactionUsersPost: TopicPost | undefined = undefined;
@@ -1340,6 +1356,159 @@ export struct TopicDetailPage {
       .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
     }
 
+    // 帖内搜索 / 只看某人。自绘浮层(理由见字段声明处),两种模式共用输入框 + 结果列表的骨架。
+    if (this.searchPanelVisible) {
+      Stack({ alignContent: Alignment.Bottom }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(SCRIM_STRONG)
+          .onClick(() => {
+            this.closeSearchPanel();
+          })
+
+        Column() {
+          Row() {
+            Text(this.searchMode === SEARCH_MODE_USER ? '只看某人的回复' : '帖内搜索')
+              .fontSize(17)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            if (this.searchLoading) {
+              LoadingProgress()
+                .width(18)
+                .height(18)
+                .color($r('app.color.ld_accent'))
+            }
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 18, bottom: 6 })
+
+          // 两种模式各自一个输入框:$$ 双向绑定只能绑一个 @State,用三元共用一个输入框会让绑定失效。
+          if (this.searchMode === SEARCH_MODE_USER) {
+            Row() {
+              TextInput({ text: $$this.searchUsername, placeholder: '用户名（不含 @）' })
+                .fontSize(15)
+                .fontColor($r('app.color.text_primary'))
+                .backgroundColor($r('app.color.surface_muted'))
+                .borderRadius(10)
+                .layoutWeight(1)
+                .onSubmit(() => {
+                  this.runUserFilter();
+                })
+              Button('筛选')
+                .height(36)
+                .fontSize(14)
+                .fontColor(Color.White)
+                .backgroundColor($r('app.color.brand'))
+                .borderRadius(18)
+                .margin({ left: 8 })
+                .onClick(() => {
+                  this.runUserFilter();
+                })
+            }
+            .width('100%')
+            .padding({ left: 20, right: 20, top: 4 })
+          } else {
+            Row() {
+              TextInput({ text: $$this.searchTerm, placeholder: '搜索这个帖子里的内容' })
+                .fontSize(15)
+                .fontColor($r('app.color.text_primary'))
+                .backgroundColor($r('app.color.surface_muted'))
+                .borderRadius(10)
+                .layoutWeight(1)
+                .onSubmit(() => {
+                  this.runSearch();
+                })
+              Button('搜索')
+                .height(36)
+                .fontSize(14)
+                .fontColor(Color.White)
+                .backgroundColor($r('app.color.brand'))
+                .borderRadius(18)
+                .margin({ left: 8 })
+                .onClick(() => {
+                  this.runSearch();
+                })
+            }
+            .width('100%')
+            .padding({ left: 20, right: 20, top: 4 })
+          }
+
+          if (this.searchError.length > 0) {
+            Text(this.searchError)
+              .fontSize(13)
+              .fontColor($r('app.color.warning'))
+              .width('100%')
+              .padding({ left: 20, right: 20, top: 10 })
+          } else if (this.searchPerformed && !this.searchLoading && this.searchHits.length === 0) {
+            Text(this.searchMode === SEARCH_MODE_USER ? '这个人在这帖里没有可显示的楼层' : '没有匹配的楼层')
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+              .padding({ left: 20, right: 20, top: 10 })
+          }
+
+          if (this.searchHits.length > 0) {
+            // 高度按条数算而不是给 List 一个 layoutWeight:浮层里没有确定的可分配高度,
+            // 自适应高度会塌成 0(横向/纵向 List 都量不出自身内容高度,与 chips 那条同一个坑)。
+            List() {
+              ForEach(this.searchHits, (hit: TopicPostHit) => {
+                ListItem() {
+                  Column() {
+                    Row() {
+                      Text(`#${hit.postNumber}`)
+                        .fontSize(12)
+                        .fontColor($r('app.color.brand'))
+                      if (hit.username.length > 0) {
+                        Text(` @${hit.username}`)
+                          .fontSize(12)
+                          .fontColor($r('app.color.text_faint'))
+                          .margin({ left: 4 })
+                      }
+                    }
+                    .width('100%')
+
+                    Text(hit.excerpt.length > 0 ? hit.excerpt : '（这一楼没有正文）')
+                      .fontSize(13)
+                      .fontColor($r('app.color.text_body'))
+                      .maxLines(2)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .width('100%')
+                      .margin({ top: 2 })
+                  }
+                  .width('100%')
+                  .alignItems(HorizontalAlign.Start)
+                  .padding({ top: 8, bottom: 8 })
+                  .onClick(() => {
+                    this.openSearchHit(hit);
+                  })
+                }
+              }, (hit: TopicPostHit) => `${hit.postNumber}_${hit.username}`)
+            }
+            .width('100%')
+            .height(this.searchHits.length > 4 ? 320 : 56 * this.searchHits.length)
+            .scrollBar(BarState.Off)
+            .padding({ left: 20, right: 20, top: 4 })
+          }
+
+          Row()
+            .width('100%')
+            .height(8)
+        }
+        .width('100%')
+        .backgroundColor($r('app.color.page_bg'))
+        .borderRadius({ topLeft: 20, topRight: 20 })
+        .padding({ bottom: this.sysBottomInset + 8 })
+        .clip(true)
+        .transition(TransitionEffect.move(TransitionEdge.BOTTOM).combine(TransitionEffect.OPACITY)
+          .animation({ duration: 240, curve: Curve.EaseOut }))
+      }
+      .width('100%')
+      .height('100%')
+      .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
+    }
+
     }
     .width('100%')
     .height('100%')
@@ -1724,6 +1893,11 @@ export struct TopicDetailPage {
     // Index 拦截返回后只会 bump 这个 tick,不主动接就关不掉(表现为"按返回没反应")。
     if (this.notificationPanelVisible) {
       this.closeNotificationPanel();
+      return;
+    }
+    // 帖内搜索 / 只看某人浮层同理。
+    if (this.searchPanelVisible) {
+      this.closeSearchPanel();
       return;
     }
     // 主题信息面板同理:它是自绘浮层,系统返回键只 bump tick,不接就关不掉。
@@ -2919,6 +3093,28 @@ export struct TopicDetailPage {
         }
       });
     }
+    // 帖内搜索与只看某人:长帖里找自己记得的那句话 / 只想看某个人的发言。
+    // 两个入口常驻(不依赖登录):搜索接口对匿名也开放,过滤只是把 post_stream 换个参数。
+    items.push({
+      content: {
+        icon: $r('sys.symbol.magnifyingglass'),
+        label: '帖内搜索',
+        isEnabled: true,
+        action: () => {
+          this.openSearchPanel(SEARCH_MODE_KEYWORD);
+        }
+      }
+    });
+    items.push({
+      content: {
+        icon: $r('sys.symbol.person'),
+        label: '只看某人的回复',
+        isEnabled: true,
+        action: () => {
+          this.openSearchPanel(SEARCH_MODE_USER);
+        }
+      }
+    });
     if (this.shouldShowChallengeShortcut()) {
       items.push({
         content: {
@@ -2955,6 +3151,95 @@ export struct TopicDetailPage {
 
   private closeNotificationPanel(): void {
     this.notificationPanelVisible = false;
+  }
+
+  // ==================== 帖内搜索 / 只看某人 ====================
+
+  private currentTopicId(): number {
+    return this.detail ? this.detail.id : this.param.topicId;
+  }
+
+  private openSearchPanel(mode: string): void {
+    if (this.currentTopicId() <= 0) {
+      return;
+    }
+    this.searchMode = mode;
+    this.searchHits = [];
+    this.searchError = '';
+    this.searchPerformed = false;
+    this.searchPanelVisible = true;
+    if (mode === SEARCH_MODE_USER) {
+      // 默认填楼主:「只看楼主」是长帖里最常见的用法,省一次输入。
+      // 拿不到作者(匿名/接口没给)就留空,让用户自己填,不瞎猜。
+      const author: string = this.topicAuthorUsername();
+      if (author.length > 0) {
+        this.searchUsername = author;
+        this.runUserFilter();
+      }
+    }
+  }
+
+  private closeSearchPanel(): void {
+    this.searchPanelVisible = false;
+  }
+
+  private topicAuthorUsername(): string {
+    if (this.detail && this.detail.posts.length > 0) {
+      const author: User | undefined = this.detail.posts[0].author;
+      if (author !== undefined && author.username.length > 0) {
+        return author.username;
+      }
+    }
+    return '';
+  }
+
+  // 点结果行:收起面板并跳到那一楼。跳楼走既有的 jumpToPostNumber(已加载就滚动+高亮,
+  // 未加载就按楼号重新拉一窗),不另造一套定位逻辑。
+  private openSearchHit(hit: TopicPostHit): void {
+    this.closeSearchPanel();
+    this.jumpToPostNumber(hit.postNumber);
+  }
+
+  private async runSearch(): Promise<void> {
+    const topicId: number = this.currentTopicId();
+    const term: string = this.searchTerm.trim();
+    if (topicId <= 0 || term.length === 0) {
+      this.searchError = '请输入要搜索的内容';
+      return;
+    }
+    this.searchLoading = true;
+    this.searchError = '';
+    this.searchPerformed = true;
+    const result: NetworkResult<TopicPostHit[]> =
+      await new TopicService(this.bridge).searchPostsInTopic(topicId, term);
+    this.searchLoading = false;
+    if (!result.success || result.data === undefined) {
+      this.searchError = friendlyFailure(result, { subject: '帖内搜索', action: '执行' });
+      Log.i(`${LOG_TAG} in-topic search failed ${rawFailure(result)}`);
+      return;
+    }
+    this.searchHits = result.data;
+  }
+
+  private async runUserFilter(): Promise<void> {
+    const topicId: number = this.currentTopicId();
+    const username: string = this.searchUsername.trim();
+    if (topicId <= 0 || username.length === 0) {
+      this.searchError = '请输入用户名';
+      return;
+    }
+    this.searchLoading = true;
+    this.searchError = '';
+    this.searchPerformed = true;
+    const result: NetworkResult<TopicPostHit[]> =
+      await new TopicService(this.bridge).loadPostsByUser(topicId, username);
+    this.searchLoading = false;
+    if (!result.success || result.data === undefined) {
+      this.searchError = friendlyFailure(result, { subject: '只看此人', action: '筛选' });
+      Log.i(`${LOG_TAG} filter posts by user failed ${rawFailure(result)}`);
+      return;
+    }
+    this.searchHits = result.data;
   }
 
   // ==================== 主题信息编辑(标题 / 分类 / 标签) ====================

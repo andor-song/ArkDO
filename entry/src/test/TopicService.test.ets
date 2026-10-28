@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@ohos/hypium';
-import { TopicPage, TopicService } from '../main/ets/services/topic/TopicService';
+import { TopicPage, TopicPostHit, TopicService } from '../main/ets/services/topic/TopicService';
 import { Topic } from '../main/ets/models/Topic';
 import { TopicDetail } from '../main/ets/models/TopicDetail';
 import {
@@ -580,6 +580,82 @@ export default function topicServiceTest() {
       expect(bridge.postedPath).assertEqual('');
       expect(result.error?.code).assertEqual(NetworkErrorCode.UNEXPECTED_RESPONSE);
       expect(result.error?.failureKind).assertEqual(NetworkFailureKind.LOCAL_ABORT);
+    });
+
+    // ===== 帖内搜索 / 只看某人 =====
+    //
+    // 帖内搜索用高级搜索语法 `topic:<id>` 限定范围,返回的 posts 自带 post_number(直接跳楼)。
+    // 两条要钉住:q 的拼法(空格编码成 %20)、以及「别把邻近主题的命中带进来」——
+    // 带进来点一下会跳到别的帖子的同名楼号,看起来像跳错楼。
+    it('searchesWithinTopicAndDropsForeignHits', 0, async () => {
+      const payload: string = JSON.stringify({
+        posts: [
+          {
+            id: 11, topic_id: 123, post_number: 5, username: 'alice',
+            blurb: '<span class="search-highlight">鸿蒙</span> 应用\n  分享'
+          },
+          { id: 12, topic_id: 999, post_number: 2, username: 'bob', blurb: '别的帖子' },
+          { id: 13, topic_id: 123, post_number: 0, username: 'carol', blurb: '没有楼号' }
+        ]
+      });
+      const bridge: FakeBridge = new FakeBridge({
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: payload
+      });
+
+      const result: NetworkResult<TopicPostHit[]> =
+        await new TopicService(bridge).searchPostsInTopic(123, ' 鸿蒙 ');
+
+      expect(result.success).assertTrue();
+      expect(bridge.requestedPath).assertEqual(`/search.json?q=${encodeURIComponent('鸿蒙 topic:123')}`);
+      expect(result.data?.length).assertEqual(1);
+      expect(result.data?.[0].postNumber).assertEqual(5);
+      expect(result.data?.[0].username).assertEqual('alice');
+      // 摘要必须去标签、压平空白:结果行是单行两行截断,原样贴 HTML 会把 <span> 当正文显示。
+      expect(result.data?.[0].excerpt.indexOf('<') < 0).assertTrue();
+      expect(result.data?.[0].excerpt).assertContain('鸿蒙');
+      expect(result.data?.[0].excerpt.indexOf('\n') < 0).assertTrue();
+    });
+
+    it('refusesEmptyTopicSearchWithoutSending', 0, async () => {
+      const bridge: FakeBridge = new FakeBridge({
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: '{}'
+      });
+
+      const result: NetworkResult<TopicPostHit[]> =
+        await new TopicService(bridge).searchPostsInTopic(123, '   ');
+
+      expect(result.success).assertFalse();
+      expect(bridge.requestedPath).assertEqual('');
+      expect(result.error?.failureKind).assertEqual(NetworkFailureKind.LOCAL_ABORT);
+    });
+
+    // 只看某人复用「版本公告取楼层」那套 username_filters(该站认这个参数),
+    // 返回的 post_stream 已只剩此人的楼层,楼号仍是原始楼号,所以结果能直接跳楼。
+    it('loadsPostsByUserViaUsernameFilters', 0, async () => {
+      const payload: string = JSON.stringify({
+        id: 123,
+        title: '主题',
+        post_stream: {
+          posts: [
+            { id: 1, post_number: 1, username: 'alice', cooked: '<p>楼主的话</p>' },
+            { id: 9, post_number: 9, username: 'alice', cooked: '<p>再补一句</p>' }
+          ]
+        }
+      });
+      const bridge: FakeBridge = new FakeBridge({
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: payload
+      });
+
+      const result: NetworkResult<TopicPostHit[]> =
+        await new TopicService(bridge).loadPostsByUser(123, ' alice ');
+
+      expect(result.success).assertTrue();
+      expect(bridge.requestedPath)
+        .assertEqual('/t/123.json?username_filters=alice&include_suggested=false');
+      expect(result.data?.length).assertEqual(2);
+      expect(result.data?.[0].postNumber).assertEqual(1);
+      expect(result.data?.[0].username).assertEqual('alice');
+      expect(result.data?.[1].postNumber).assertEqual(9);
     });
   });
 }

@@ -71,6 +71,19 @@ export interface SearchResult {
 }
 
 /**
+ * 帖内搜索 / 只看某人的一条命中。
+ *
+ * 只保留跳楼需要的东西:楼号(跳转锚点)、作者(结果行里显示是谁说的)、摘要(命中上下文)。
+ * 刻意不回 TopicPost:结果列表是只读的,不需要 cooked HTML / 回应 / 投票这些重字段,
+ * 也避免把详情页的模型和「另一个视图」混在一起。
+ */
+export interface TopicPostHit {
+  postNumber: number;
+  username: string;
+  excerpt: string;
+}
+
+/**
  * 标签联想的返回条数上限。
  *
  * 不能随便填:新版 Discourse 给 /tags/filter/search 加了契约校验 —— `limit` 大于站点设置
@@ -297,6 +310,120 @@ export class TopicService {
     } catch (error) {
       return unexpectedResponse<TopicPost[]>(response.statusCode, response.challengeState, '站点加载更多楼层响应不是有效 JSON。');
     }
+  }
+
+  /**
+   * 帖内搜索:GET /search.json?q=<词> topic:<id>。
+   *
+   * 用 Discourse 高级搜索语法里的 `topic:<id>` 限定范围(而不是网页 UI 的 search_context 参数):
+   * 前者是写进 q 的通用语法,API 调用更稳;返回的 `posts` 自带 post_number,
+   * 正好可以直接跳到那一楼,不必再拿 stream 反查楼号。
+   */
+  async searchPostsInTopic(topicId: number, term: string): Promise<NetworkResult<TopicPostHit[]>> {
+    const trimmed: string = term.trim();
+    if (topicId <= 0 || trimmed.length === 0) {
+      return unexpectedResponse<TopicPostHit[]>(0, ChallengeState.NONE, '缺少帖内搜索条件。',
+        trimmed.length === 0 ? '请输入要搜索的内容' : '没有可搜索的帖子', NetworkFailureKind.LOCAL_ABORT);
+    }
+    const query: string = `${trimmed} topic:${topicId}`;
+    const path: string = `/search.json?q=${encodeURIComponent(query)}`;
+    const response: NetworkResult<string> = await this.bridge.getJson(path);
+    if (!response.success) {
+      return forwardFailure<TopicPostHit[]>(response);
+    }
+    if (response.data === undefined) {
+      return unexpectedResponse<TopicPostHit[]>(response.statusCode, response.challengeState, '站点搜索响应为空。');
+    }
+    try {
+      const payload: DiscourseSearchResponse = JSON.parse(response.data) as DiscourseSearchResponse;
+      const posts: DiscourseSearchPost[] = payload.posts ? payload.posts : [];
+      const hits: TopicPostHit[] = [];
+      for (let index: number = 0; index < posts.length; index++) {
+        const post: DiscourseSearchPost = posts[index];
+        if (typeof post.post_number !== 'number' || post.post_number <= 0) {
+          continue;
+        }
+        // q 里已经限定了 topic,这里再按 topic_id 兜一次:服务端在个别版本会把相关主题的命中一起回,
+        // 那种楼层点了会跳到别的帖子的楼号上(看起来像"跳错楼")。
+        if (typeof post.topic_id === 'number' && post.topic_id !== topicId) {
+          continue;
+        }
+        hits.push({
+          postNumber: post.post_number,
+          username: typeof post.username === 'string' ? post.username : '',
+          excerpt: this.hitExcerpt(this.htmlToPlainText(typeof post.blurb === 'string' ? post.blurb : ''))
+        });
+      }
+      return {
+        success: true,
+        statusCode: response.statusCode,
+        challengeState: response.challengeState,
+        data: hits
+      };
+    } catch (error) {
+      return unexpectedResponse<TopicPostHit[]>(response.statusCode, response.challengeState,
+        '站点搜索响应不是有效 JSON。');
+    }
+  }
+
+  /**
+   * 只看某人的回复:GET /t/{id}.json?username_filters=<username>。
+   *
+   * 与版本公告取公告楼层用的是同一个参数(VersionAnnouncement 的 username_filters),
+   * 说明该站点认这套过滤;返回的 post_stream 已经只剩这个用户的楼层,楼号仍是原始楼号,
+   * 所以点结果可以照常跳楼。
+   */
+  async loadPostsByUser(topicId: number, username: string): Promise<NetworkResult<TopicPostHit[]>> {
+    const trimmed: string = username.trim();
+    if (topicId <= 0 || trimmed.length === 0) {
+      return unexpectedResponse<TopicPostHit[]>(0, ChallengeState.NONE, '缺少用户条件。',
+        trimmed.length === 0 ? '请输入用户名' : '没有可筛选的帖子', NetworkFailureKind.LOCAL_ABORT);
+    }
+    const path: string =
+      `/t/${topicId}.json?username_filters=${encodeURIComponent(trimmed)}&include_suggested=false`;
+    const response: NetworkResult<string> = await this.bridge.getJson(path);
+    if (!response.success) {
+      return forwardFailure<TopicPostHit[]>(response);
+    }
+    if (response.data === undefined) {
+      return unexpectedResponse<TopicPostHit[]>(response.statusCode, response.challengeState, '站点帖子详情响应为空。');
+    }
+    try {
+      const payload: DiscourseTopicDetail = JSON.parse(response.data) as DiscourseTopicDetail;
+      const posts: TopicPost[] = this.mapPosts(
+        payload.post_stream ? payload.post_stream.posts : undefined,
+        this.buildBadgeIconMap(payload.user_badges));
+      const hits: TopicPostHit[] = [];
+      for (let index: number = 0; index < posts.length; index++) {
+        const post: TopicPost = posts[index];
+        if (post.postNumber <= 0) {
+          continue;
+        }
+        hits.push({
+          postNumber: post.postNumber,
+          username: post.author !== undefined && post.author.username.length > 0
+            ? post.author.username : trimmed,
+          excerpt: this.hitExcerpt(post.plainText)
+        });
+      }
+      return {
+        success: true,
+        statusCode: response.statusCode,
+        challengeState: response.challengeState,
+        data: hits
+      };
+    } catch (error) {
+      return unexpectedResponse<TopicPostHit[]>(response.statusCode, response.challengeState,
+        '站点帖子详情响应不是有效 JSON。');
+    }
+  }
+
+  // 结果行摘要:压平空白(楼层正文里的换行/缩进在单行里会变成一串空洞)+ 截断。
+  // 截断按字符而不是按字节:中文一个字算一个,按字节截会切出半个字。
+  private hitExcerpt(text: string): string {
+    const flattened: string = text.replace(/\s+/g, ' ').trim();
+    const limit: number = 140;
+    return flattened.length > limit ? `${flattened.substring(0, limit)}…` : flattened;
   }
 
   // 加载某楼的「被回复」列表:GET /posts/{postId}/replies?after=1。
