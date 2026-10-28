@@ -158,6 +158,9 @@ export interface TopicDetail {
   // 主题作者(楼主)的用户 id:topic.json 的 details.created_by.id(回退顶层 user_id)。
   // 楼层作者 id 等于此值时,该楼是楼主发的,右下角渲染「TOPIC OWNER」标记。
   createdById?: number;
+  // 该主题允许的回应 id(站点驱动)。undefined = 服务端没给(没装/没开 reactions 插件),
+  // 由表情面板退回内置顺序。
+  validReactions?: string[];
   lastReadPostNumber?: number;
   highestPostNumber?: number;
   unreadPosts?: number;

@@ -342,6 +342,38 @@ export default function topicServiceTest() {
       expect(result.data?.posts[2].read === undefined).assertTrue();
     });
 
+    // 站点允许的回应集合来自 topic_view 的 valid_reactions(discourse-reactions 插件)。
+    // 站点可以在设置里关掉某些表情,写死面板就会摆出点不动的按钮。
+    it('mapsValidReactionsFromTopicDetail', 0, async () => {
+      const payload: string = '{"id":7,"title":"表情","valid_reactions":["heart","joy",""],"post_stream":{"posts":[{"id":1,"topic_id":7,"post_number":1,"username":"a","cooked":"<p>1</p>"}]}}';
+      const bridge: FakeBridge = new FakeBridge({
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: payload
+      });
+
+      const result: NetworkResult<TopicDetail> = await new TopicService(bridge).getTopicDetail(7);
+
+      expect(result.success).assertTrue();
+      // 空串被滤掉,否则面板里会多一个点了发不出去的空白格。
+      expect(result.data?.validReactions?.join(',')).assertEqual('heart,joy');
+    });
+
+    it('leavesValidReactionsUndefinedWhenAbsentOrEmpty', 0, async () => {
+      const absent: string = '{"id":7,"title":"表情","post_stream":{"posts":[{"id":1,"topic_id":7,"post_number":1,"username":"a","cooked":"<p>1</p>"}]}}';
+      const absentResult: NetworkResult<TopicDetail> =
+        await new TopicService(new FakeBridge({
+          success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: absent
+        })).getTopicDetail(7);
+      expect(absentResult.data?.validReactions === undefined).assertTrue();
+
+      const empty: string = '{"id":7,"title":"表情","valid_reactions":["",""],"post_stream":{"posts":[{"id":1,"topic_id":7,"post_number":1,"username":"a","cooked":"<p>1</p>"}]}}';
+      const emptyResult: NetworkResult<TopicDetail> =
+        await new TopicService(new FakeBridge({
+          success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: empty
+        })).getTopicDetail(7);
+      // 全被过滤掉时同样 undefined:组件据此退回内置顺序,而不是渲染一个空面板。
+      expect(emptyResult.data?.validReactions === undefined).assertTrue();
+    });
+
     it('encodesTimingsReportAsFormBody', 0, async () => {
       const bridge: FakeBridge = new FakeBridge({
         success: true,

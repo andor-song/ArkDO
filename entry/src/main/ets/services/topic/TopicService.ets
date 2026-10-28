@@ -1469,8 +1469,26 @@ export class TopicService {
       // normalize 成 1 就永久丢了 —— 上层要靠它决定要不要显示当前档位勾选。
       notificationLevel: typeof sourceTopic.details?.notification_level === 'number'
         ? sourceTopic.details?.notification_level
-        : undefined
+        : undefined,
+      // 站点允许的回应集合(discourse-reactions 的 valid_reactions)。只留非空字符串:
+      // 空串会变成表情面板里的一个空格子,点了也发不出去。
+      validReactions: this.mapValidReactions(sourceTopic.valid_reactions)
     };
+  }
+
+  // undefined = 服务端没给这个字段(站点没装/没开 reactions),交给面板退回内置顺序;
+  // 给了但全被过滤掉时同样退回内置顺序,免得面板变成空的。
+  private mapValidReactions(source?: string[]): string[] | undefined {
+    if (!Array.isArray(source)) {
+      return undefined;
+    }
+    const reactions: string[] = [];
+    for (let index: number = 0; index < source.length; index++) {
+      if (typeof source[index] === 'string' && source[index].length > 0) {
+        reactions.push(source[index]);
+      }
+    }
+    return reactions.length > 0 ? reactions : undefined;
   }
 
   /**

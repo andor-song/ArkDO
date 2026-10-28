@@ -560,6 +560,8 @@ export struct TopicDetailPage {
           flashTargetPostId: this.flashTargetPostId,
           // 采纳答案面板只挂一楼:非一楼下发空数组,免得每个 item 都持有整份数据。
           acceptedAnswers: post.postNumber === 1 ? (this.detail?.acceptedAnswers ?? []) : [],
+          // 站点允许的回应集合(valid_reactions);没给时组件自己退回内置顺序。
+          reactionOrder: this.detail?.validReactions,
           onOpenImages: (images: ViewerImage[], startIndex: number) => {
             this.onOpenImages(images, startIndex);
           },

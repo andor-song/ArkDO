@@ -55,6 +55,9 @@ export interface DiscourseTopicDetail {
   id?: number;
   title?: string;
   slug?: string;
+  // discourse-reactions:该主题允许的回应 id(插件在 topic_view 序列化器里加的 valid_reactions)。
+  // 站点可以在设置里关掉某些表情,甚至只留 heart —— 写死的表情面板会摆出点不动的按钮。
+  valid_reactions?: string[];
   category_id?: number;
   tags?: Object[];
   posts_count?: number;

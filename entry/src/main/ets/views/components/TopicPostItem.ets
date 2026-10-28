@@ -107,6 +107,9 @@ export struct TopicPostItem {
   onToggleReaction: (post: TopicPost, reaction: string) => Promise<boolean> = () => Promise.resolve(false);
   // 点击整块表情汇总区域:由页面打开反应用户底部弹层并管理分页请求。
   onOpenReactionUsers: (post: TopicPost) => void = () => {};
+  // 该主题允许的回应 id(站点驱动,来自详情响应的 valid_reactions)。
+  // undefined/空 = 服务端没给,表情面板退回内置 REACTION_ORDER。
+  reactionOrder?: string[] = undefined;
   // 点该楼回复按钮:把整条 post 上抛给页面,由页面按 postNumber+作者昵称打开定向回复输入框。
   onReply: (post: TopicPost) => void = () => {};
   // 引用回复:把该楼正文按 blockquote 前缀拼进回复输入框再定向回复。页面未接(默认空)时不渲染入口。
@@ -1460,8 +1463,25 @@ export struct TopicPostItem {
     return $r('app.media.emoji_heart');
   }
 
+  // 表情面板的可用集合:优先用站点给的 valid_reactions(只留我们画得出来的),
+  // 没给就退回内置顺序。过滤未知 id 很重要——站点可能开了自定义表情,我们没有对应 PNG,
+  // 摆出来就是一个个点了没反应的空白格。
+  private effectiveReactionOrder(): string[] {
+    const siteOrder: string[] | undefined = this.reactionOrder;
+    if (siteOrder === undefined || siteOrder.length === 0) {
+      return REACTION_ORDER;
+    }
+    const known: string[] = [];
+    for (let index: number = 0; index < siteOrder.length; index++) {
+      if (getReactionEmoji(siteOrder[index]) !== undefined) {
+        known.push(siteOrder[index]);
+      }
+    }
+    return known.length > 0 ? known : REACTION_ORDER;
+  }
+
   private pickerRow(rowIndex: number): string[] {
-    return REACTION_ORDER.slice(rowIndex * 5, rowIndex * 5 + 5);
+    return this.effectiveReactionOrder().slice(rowIndex * 5, rowIndex * 5 + 5);
   }
 
   private pickerEmoji(name: string): Resource {
