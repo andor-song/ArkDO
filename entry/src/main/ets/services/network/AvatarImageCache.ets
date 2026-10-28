@@ -1,4 +1,4 @@
-import { BridgeImageLoader } from './BridgeImageLoader';
+import { BridgeImageLoader, ImageCacheStats } from './BridgeImageLoader';
 
 const LOG_TAG: string = '[ArkDO][Avatar]';
 // 并发取图上限:头像一次可能几十张,限流避免瞬间灌爆 host webview 的 runJavaScript 通道。
@@ -27,5 +27,14 @@ export class AvatarImageCache extends BridgeImageLoader {
 
   static getInstance(): AvatarImageCache {
     return AvatarImageCache.instance;
+  }
+
+  // 存储设置页用:清空头像缓存并返回释放字节数。
+  static clearAll(): number {
+    return AvatarImageCache.instance.clear();
+  }
+
+  static statsOf(): ImageCacheStats {
+    return AvatarImageCache.instance.stats();
   }
 }

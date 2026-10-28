@@ -60,6 +60,8 @@ export struct SettingsPage {
   // 静音的版块与标签:与「通知」同组,但改的是版块/标签维度的通知档位。
   onOpenMutes: () => void = () => {};
   onOpenNetwork: () => void = () => {};
+  // 存储与缓存:图片缓存与已下载附件的清理。与「网络与连接」同组(都是设备侧资源)。
+  onOpenStorage: () => void = () => {};
   // 帖子列表样式子页(字号/字重/行高/行间距/头像)。与外观同组:都是纯观感设置。
   onOpenTopicListStyle: () => void = () => {};
   // 阅读字号子页(正文基准字号/行高)。与外观同组:都是纯观感设置。
@@ -448,6 +450,10 @@ export struct SettingsPage {
         this.HairlineInset()
         this.SettingCell($r('sys.symbol.wifi'), '网络与连接', '', () => {
           this.onOpenNetwork();
+        })
+        this.HairlineInset()
+        this.SettingCell($r('sys.symbol.doc_text'), '存储与缓存', '', () => {
+          this.onOpenStorage();
         })
         this.HairlineInset()
         // 站点管理的「正门」。抽屉里那行「我的站点」只是快捷方式,而它自己可以被开关藏起来——

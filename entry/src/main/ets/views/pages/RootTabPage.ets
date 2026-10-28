@@ -2,7 +2,7 @@ import { Log } from '../../services/logging/Log';
 import { AppConstants, LinuxDoConstants } from '../../common/constants/AppConstants';
 import { APP_IS_WIDE_STORAGE_KEY, APP_SPLIT_NAV_BAR_WIDTH_STORAGE_KEY, BreakpointManager,
   SPLIT_NAV_BAR_MAX_WIDTH } from '../../common/utils/BreakpointManager';
-import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildMuteSettingsRouteParam, isMuteSettingsRouteParam, MuteSettingsRouteParam, buildFollowingFeedRouteParam, isFollowingFeedRouteParam, FollowingFeedRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildReadingFontSizeSettingsRouteParam,
+import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildMuteSettingsRouteParam, isMuteSettingsRouteParam, MuteSettingsRouteParam, buildFollowingFeedRouteParam, isFollowingFeedRouteParam, FollowingFeedRouteParam, buildStorageSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildReadingFontSizeSettingsRouteParam,
   buildTopicListStyleSettingsRouteParam, buildLevelProgressRouteParam, buildNotificationsRouteParam, buildProfileEditRouteParam, buildProfileRouteParam, buildReadTopicsRouteParam, buildSettingsRouteParam, buildForumsRouteParam, buildSitesRouteParam, buildSolvedRouteParam, buildTopicDetailRouteParam, buildTopicDetailDraftRouteParam, buildTopicDetailEditDraftRouteParam, buildUserHistoryRouteParam, buildUserProfileRouteParam, buildWebRouteParam, isActivityRouteParam, isBadgesRouteParam, isBookmarksRouteParam, isDraftsRouteParam, DraftsRouteParam, isProfileEditRouteParam, isSolvedRouteParam, isTopicDetailRouteParam, isUserHistoryRouteParam, isUserProfileRouteParam, isWebRouteParam, LevelProgressRouteParam, ProfileEditRouteParam, SolvedRouteParam, TopicDetailRouteParam, UserHistoryRouteParam, UserProfileRouteParam, WebRouteParam, FollowListRouteParam, buildFollowListRouteParam, isFollowListRouteParam, MessagesRouteParam, buildMessagesRouteParam, isMessagesRouteParam, ChatRouteParam, buildChatRouteParam, isChatRouteParam } from '../../navigation/AppRoutes';
 import { LinkRouter, LinkTarget, LinkTargetKind } from '../../services/content/LinkRouter';
 import { DownloadService } from '../../services/content/DownloadService';
@@ -62,6 +62,7 @@ import { SettingsPage } from './SettingsPage';
 import { DohSettingsPage } from './DohSettingsPage';
 import { MuteSettingsPage } from './MuteSettingsPage';
 import { FollowingFeedPage } from './FollowingFeedPage';
+import { StorageSettingsPage } from './StorageSettingsPage';
 import { PushSettingsPage } from './PushSettingsPage';
 import { NetworkSettingsPage } from './NetworkSettingsPage';
 import { TopicListStyleSettingsPage } from './TopicListStyleSettingsPage';
@@ -950,6 +951,10 @@ export struct RootTabPage {
           onOpenNetwork: () => {
             this.navPathStack.pushPath(new NavPathInfo(AppRouteName.NETWORK_SETTINGS, buildNetworkSettingsRouteParam('settings')));
           },
+          onOpenStorage: () => {
+            this.navPathStack.pushPath(new NavPathInfo(AppRouteName.STORAGE_SETTINGS,
+              buildStorageSettingsRouteParam('settings')));
+          },
           onOpenTopicListStyle: () => {
             this.navPathStack.pushPath(new NavPathInfo(AppRouteName.TOPIC_LIST_STYLE_SETTINGS,
               buildTopicListStyleSettingsRouteParam('settings')));
@@ -1085,6 +1090,16 @@ export struct RootTabPage {
           },
           onOpenTopic: (topicId: number, slug: string | undefined, title: string, postNumber: number) => {
             this.openTopicDetailById(topicId, slug, title, postNumber, true);
+          }
+        })
+      }
+      .hideTitleBar(true)
+      .backgroundColor($r('app.color.page_bg'))
+    } else if (name === AppRouteName.STORAGE_SETTINGS) {
+      NavDestination() {
+        StorageSettingsPage({
+          onBack: () => {
+            this.popNavigation();
           }
         })
       }

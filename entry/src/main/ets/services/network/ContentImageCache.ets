@@ -1,4 +1,4 @@
-import { BridgeImageLoader } from './BridgeImageLoader';
+import { BridgeImageLoader, ImageCacheStats } from './BridgeImageLoader';
 
 const LOG_TAG: string = '[ArkDO][ContentImage]';
 // 并发取图上限:正文图单张体积远大于头像(base64 过 runJavaScript 通道会再放大 1/3),
@@ -27,5 +27,14 @@ export class ContentImageCache extends BridgeImageLoader {
 
   static getInstance(): ContentImageCache {
     return ContentImageCache.instance;
+  }
+
+  // 存储设置页用:清空正文图缓存并返回释放字节数。
+  static clearAll(): number {
+    return ContentImageCache.instance.clear();
+  }
+
+  static statsOf(): ImageCacheStats {
+    return ContentImageCache.instance.stats();
   }
 }

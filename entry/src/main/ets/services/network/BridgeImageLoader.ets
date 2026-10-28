@@ -3,6 +3,14 @@ import { image } from '@kit.ImageKit';
 import { util } from '@kit.ArkTS';
 import { ArkWebNetworkBridge, ImageFetchResult } from './ArkWebNetworkBridge';
 
+/** 图片缓存规模快照(存储设置页展示用)。 */
+export interface ImageCacheStats {
+  entries: number;
+  bytes: number;
+  maxBytes: number;
+  maxEntries: number;
+}
+
 /**
  * 经 host webview 取图字节并解码成 PixelMap 的通用引擎(头像与正文图共用)。
  *
@@ -79,6 +87,31 @@ export class BridgeImageLoader {
     const capMb: string = (this.maxCacheBytes / (1024 * 1024)).toFixed(0);
     return `cache=${this.cache.size}/${this.maxCacheEntries} bytes=${usedMb}/${capMb}MB ` +
       `inflight=${this.inflight.size} active=${this.active} queue=${this.queue.length}`;
+  }
+
+  /** 缓存规模快照。存储设置页展示用,不暴露内部 Map。 */
+  stats(): ImageCacheStats {
+    return {
+      entries: this.cache.size,
+      bytes: this.totalCacheBytes,
+      maxBytes: this.maxCacheBytes,
+      maxEntries: this.maxCacheEntries
+    };
+  }
+
+  /**
+   * 清空已解码缓存,返回释放的字节数。
+   *
+   * 只丢引用、不 release:可能仍有 Image 绑着这些 PixelMap(与淘汰同一个理由,
+   * 主动 release 会让正在显示的图崩)。内存回收交给 GC。
+   * 在途请求不清:它们落地后仍会写回缓存,清了也白清。
+   */
+  clear(): number {
+    const freed: number = this.totalCacheBytes;
+    this.cache.clear();
+    this.cacheBytes.clear();
+    this.totalCacheBytes = 0;
+    return freed;
   }
 
   /** 取图 PixelMap:命中缓存直接返回;否则经 host webview 取字节并解码。失败返回 undefined。 */

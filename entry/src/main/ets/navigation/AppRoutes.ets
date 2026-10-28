@@ -11,6 +11,8 @@ export enum AppRouteName {
   MUTE_SETTINGS = 'muteSettings',
   // 关注动态(关注的人最近发的楼层,discourse-follow 的 /follow/posts/{username})。
   FOLLOWING_FEED = 'followingFeed',
+  // 存储与缓存(图片缓存 / 已下载附件),入口在设置页「网络与连接」下方。
+  STORAGE_SETTINGS = 'storageSettings',
   // 帖子列表样式(字号/字重/行高/行间距/头像),入口在设置页「外观」组。
   TOPIC_LIST_STYLE_SETTINGS = 'topicListStyleSettings',
   // 阅读字号(正文基准字号/行高),入口在设置页「外观」组。
@@ -125,6 +127,16 @@ export function isFollowingFeedRouteParam(param: Object | undefined): boolean {
   }
   const typed: FollowingFeedRouteParam = param as FollowingFeedRouteParam;
   return typeof typed.username === 'string';
+}
+
+export interface StorageSettingsRouteParam {
+  source: string;
+}
+
+export function buildStorageSettingsRouteParam(source: string): StorageSettingsRouteParam {
+  return {
+    source: source
+  };
 }
 
 // 设置分类子页参数:均只留来源标记,页面数据各自从 prefs/服务读取。
