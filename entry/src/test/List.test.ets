@@ -16,6 +16,7 @@ import notificationFilterTest from './NotificationFilter.test';
 import notificationRoutingTest from './NotificationRouting.test';
 import topicOrderingTest from './TopicOrdering.test';
 import muteServiceTest from './MuteService.test';
+import followFeedServiceTest from './FollowFeedService.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
 import topicServiceTest from './TopicService.test';
 import authServiceTest from './AuthService.test';
@@ -137,4 +138,5 @@ export default function testsuite() {
   notificationRoutingTest();
   topicOrderingTest();
   muteServiceTest();
+  followFeedServiceTest();
 }

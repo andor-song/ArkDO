@@ -9,6 +9,8 @@ export enum AppRouteName {
   DIAGNOSTICS_SETTINGS = 'diagnosticsSettings',
   // 静音的版块与标签(设置 → 通知组)。只读写当前用户的通知档位,不改列表可见性。
   MUTE_SETTINGS = 'muteSettings',
+  // 关注动态(关注的人最近发的楼层,discourse-follow 的 /follow/posts/{username})。
+  FOLLOWING_FEED = 'followingFeed',
   // 帖子列表样式(字号/字重/行高/行间距/头像),入口在设置页「外观」组。
   TOPIC_LIST_STYLE_SETTINGS = 'topicListStyleSettings',
   // 阅读字号(正文基准字号/行高),入口在设置页「外观」组。
@@ -104,6 +106,24 @@ export function isMuteSettingsRouteParam(param: Object | undefined): boolean {
     return false;
   }
   const typed: MuteSettingsRouteParam = param as MuteSettingsRouteParam;
+  return typeof typed.username === 'string';
+}
+
+export interface FollowingFeedRouteParam {
+  username: string;
+}
+
+export function buildFollowingFeedRouteParam(username: string): FollowingFeedRouteParam {
+  return {
+    username: username
+  };
+}
+
+export function isFollowingFeedRouteParam(param: Object | undefined): boolean {
+  if (param === undefined) {
+    return false;
+  }
+  const typed: FollowingFeedRouteParam = param as FollowingFeedRouteParam;
   return typeof typed.username === 'string';
 }
 

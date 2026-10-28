@@ -162,6 +162,8 @@ export struct CategoryDrawer {
   onOpenSites: () => void = () => {};
   // 打开某个站点(走通用 WebView 页,与帖子外链同一条链路)。siteId 用于缓存该站 favicon。
   onOpenSite: (url: string, title: string, siteId: string) => void = () => {};
+  // 关注动态(关注的人最近发的楼层)。它不是 feed 也不是 scope,是另一套数据流,故单独一个入口。
+  onOpenFollowingFeed: () => void = () => {};
   // 已展开的顶级版块 id。受控,理由同 draft。
   @Prop expandedIds: number[] = [];
   // 点展开箭头:只上报,由宿主增删。
@@ -245,6 +247,31 @@ export struct CategoryDrawer {
 
       this.DrawerHeader()
       this.FilterSection()
+
+      // 「关注动态」入口:不混进上面的 feed chips —— 那排是「主题列表的排序/范围」,
+      // 而关注动态是楼层流(同一个人连发两条就是两条),点开是另一个页面。
+      // 未登录时不显示:该接口 requires_login,摆出来只会点出一屏「请先登录」。
+      if (this.isLoggedIn) {
+        Row() {
+          SymbolGlyph($r('sys.symbol.person'))
+            .fontSize(16)
+            .fontColor([$r('app.color.text_secondary')])
+          Text('关注动态')
+            .fontSize(14)
+            .fontColor($r('app.color.text_primary'))
+            .margin({ left: 8 })
+          Blank()
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(14)
+            .fontColor([$r('app.color.text_faint')])
+        }
+        .width('100%')
+        .height(40)
+        .padding({ left: 16, right: 16 })
+        .onClick(() => {
+          this.onOpenFollowingFeed();
+        })
+      }
 
       Divider()
         .strokeWidth(0.5)

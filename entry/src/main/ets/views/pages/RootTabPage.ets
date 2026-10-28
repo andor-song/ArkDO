@@ -2,7 +2,7 @@ import { Log } from '../../services/logging/Log';
 import { AppConstants, LinuxDoConstants } from '../../common/constants/AppConstants';
 import { APP_IS_WIDE_STORAGE_KEY, APP_SPLIT_NAV_BAR_WIDTH_STORAGE_KEY, BreakpointManager,
   SPLIT_NAV_BAR_MAX_WIDTH } from '../../common/utils/BreakpointManager';
-import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildMuteSettingsRouteParam, isMuteSettingsRouteParam, MuteSettingsRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildReadingFontSizeSettingsRouteParam,
+import { ActivityRouteParam, AppRouteName, BadgesRouteParam, BookmarksRouteParam, buildActivityRouteParam, buildBadgesRouteParam, buildBookmarksRouteParam, buildDraftsRouteParam, buildDohSettingsRouteParam, buildMuteSettingsRouteParam, isMuteSettingsRouteParam, MuteSettingsRouteParam, buildFollowingFeedRouteParam, isFollowingFeedRouteParam, FollowingFeedRouteParam, buildPushSettingsRouteParam, buildNetworkSettingsRouteParam, buildDiagnosticsSettingsRouteParam, buildReadingFontSizeSettingsRouteParam,
   buildTopicListStyleSettingsRouteParam, buildLevelProgressRouteParam, buildNotificationsRouteParam, buildProfileEditRouteParam, buildProfileRouteParam, buildReadTopicsRouteParam, buildSettingsRouteParam, buildForumsRouteParam, buildSitesRouteParam, buildSolvedRouteParam, buildTopicDetailRouteParam, buildTopicDetailDraftRouteParam, buildTopicDetailEditDraftRouteParam, buildUserHistoryRouteParam, buildUserProfileRouteParam, buildWebRouteParam, isActivityRouteParam, isBadgesRouteParam, isBookmarksRouteParam, isDraftsRouteParam, DraftsRouteParam, isProfileEditRouteParam, isSolvedRouteParam, isTopicDetailRouteParam, isUserHistoryRouteParam, isUserProfileRouteParam, isWebRouteParam, LevelProgressRouteParam, ProfileEditRouteParam, SolvedRouteParam, TopicDetailRouteParam, UserHistoryRouteParam, UserProfileRouteParam, WebRouteParam, FollowListRouteParam, buildFollowListRouteParam, isFollowListRouteParam, MessagesRouteParam, buildMessagesRouteParam, isMessagesRouteParam, ChatRouteParam, buildChatRouteParam, isChatRouteParam } from '../../navigation/AppRoutes';
 import { LinkRouter, LinkTarget, LinkTargetKind } from '../../services/content/LinkRouter';
 import { DownloadService } from '../../services/content/DownloadService';
@@ -61,6 +61,7 @@ import { ProfilePage } from './ProfilePage';
 import { SettingsPage } from './SettingsPage';
 import { DohSettingsPage } from './DohSettingsPage';
 import { MuteSettingsPage } from './MuteSettingsPage';
+import { FollowingFeedPage } from './FollowingFeedPage';
 import { PushSettingsPage } from './PushSettingsPage';
 import { NetworkSettingsPage } from './NetworkSettingsPage';
 import { TopicListStyleSettingsPage } from './TopicListStyleSettingsPage';
@@ -1074,6 +1075,21 @@ export struct RootTabPage {
       }
       .hideTitleBar(true)
       .backgroundColor($r('app.color.page_bg'))
+    } else if (name === AppRouteName.FOLLOWING_FEED && isFollowingFeedRouteParam(param)) {
+      NavDestination() {
+        FollowingFeedPage({
+          bridge: this.bridge,
+          username: (param as FollowingFeedRouteParam).username,
+          onBack: () => {
+            this.popNavigation();
+          },
+          onOpenTopic: (topicId: number, slug: string | undefined, title: string, postNumber: number) => {
+            this.openTopicDetailById(topicId, slug, title, postNumber, true);
+          }
+        })
+      }
+      .hideTitleBar(true)
+      .backgroundColor($r('app.color.page_bg'))
     } else if (name === AppRouteName.SITES) {
       NavDestination() {
         SitesPage({
@@ -1491,6 +1507,9 @@ export struct RootTabPage {
       },
       onOpenSearch: () => {
         this.openSearch();
+      },
+      onOpenFollowingFeed: () => {
+        this.openFollowingFeed();
       },
       onTopicClick: (topic: Topic) => {
         this.selectTopicFromMaster(topic.id, topic.slug, topic.title);
@@ -2032,6 +2051,14 @@ export struct RootTabPage {
       this.searchFlowMounted = true;
       this.showSearchFlow = true;
     });
+  }
+
+  // 关注动态:楼层流,按当前登录用户名取(/follow/posts/{username} 只允许看自己)。
+  // 未登录时直接把空用户名带过去,页面会显示「登录后即可查看」而不是打一个必然 401 的请求。
+  private openFollowingFeed(): void {
+    const username: string = this.currentUser !== undefined ? this.currentUser.username : '';
+    this.navPathStack.pushPath(new NavPathInfo(AppRouteName.FOLLOWING_FEED,
+      buildFollowingFeedRouteParam(username)));
   }
 
   private closeSearch(): void {

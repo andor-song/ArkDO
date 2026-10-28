@@ -265,6 +265,8 @@ export struct HomePage {
   onSessionRecheck: () => void = () => {};
   onOpenNotifications: () => void = () => {};
   onOpenSearch: () => void = () => {};
+  // 分类抽屉里的「关注动态」入口:楼层流是另一套数据,页面由宿主 push。
+  onOpenFollowingFeed: () => void = () => {};
   // 搜索 Flow 可见态镜像:一镜到底期间隐藏顶栏源图标,把几何交给搜索页里的目标图标(geometryTransition)。
   @StorageProp(SEARCH_OVERLAY_VISIBLE_KEY) private searchOverlayVisible: boolean = false;
   // 窗口常驻全屏布局:主体内容自行避让状态栏(padding 加在带背景的主体列,背景填满状态栏条);
@@ -597,6 +599,9 @@ export struct HomePage {
               },
               onRequireLogin: () => {
                 this.handleDrawerRequireLogin();
+              },
+              onOpenFollowingFeed: () => {
+                this.onOpenFollowingFeed();
               },
               onOpenSites: () => {
                 this.closeCategorySheet();
