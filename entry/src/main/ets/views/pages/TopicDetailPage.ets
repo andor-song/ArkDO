@@ -23,6 +23,7 @@ import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { LoginGate } from '../../services/session/LoginGate';
 import { TopicReadController } from '../../services/reading/TopicReadController';
 import { CreateReplyOutcome, TopicPostHit, TopicService } from '../../services/topic/TopicService';
+import { collectPostImageUrls } from '../../services/content/PostImageUrls';
 import { TopicMetadataUpdate } from '../../services/topic/TopicApiTypes';
 import { parseTagInput, sameTagNames } from '../../services/topic/TopicMetadata';
 import { TopicMetadataEventBus } from '../../services/session/TopicMetadataEventBus';
@@ -3117,6 +3118,19 @@ export struct TopicDetailPage {
         }
       }
     });
+    // 图片墙:整帖配图一次看全(按楼层顺序)。没有图就不摆这个入口 —— 点开一片空白比没有入口更差。
+    if (this.topicImageUrls().length > 0) {
+      items.push({
+        content: {
+          icon: $r('sys.symbol.square_grid_2x2'),
+          label: '图片墙',
+          isEnabled: true,
+          action: () => {
+            this.openImageWall();
+          }
+        }
+      });
+    }
     if (this.shouldShowChallengeShortcut()) {
       items.push({
         content: {
@@ -3193,6 +3207,38 @@ export struct TopicDetailPage {
       }
     }
     return '';
+  }
+
+  // 整帖配图(按楼层顺序、跨楼去重)。只收已加载楼层:未加载的楼层还没正文,
+  // 强行拉全文只为凑图片墙不划算;滚动到哪看到哪,是这类聚合功能的合理边界。
+  private topicImageUrls(): string[] {
+    if (!this.detail) {
+      return [];
+    }
+    const urls: string[] = [];
+    for (let postIndex: number = 0; postIndex < this.detail.posts.length; postIndex++) {
+      const found: string[] = collectPostImageUrls(this.detail.posts[postIndex].cookedHtml);
+      for (let index: number = 0; index < found.length; index++) {
+        if (urls.indexOf(found[index]) < 0) {
+          urls.push(found[index]);
+        }
+      }
+    }
+    return urls;
+  }
+
+  // 打开图片墙:复用详情页既有的全屏查看器(上抛给宿主,与点单张图同一条链路)。
+  // url 与 fallbackUrl 同值:图片墙没有「缩略图/原图」之分,拿到的就是正文里那张。
+  private openImageWall(): void {
+    const urls: string[] = this.topicImageUrls();
+    if (urls.length === 0) {
+      return;
+    }
+    const images: ViewerImage[] = [];
+    for (let index: number = 0; index < urls.length; index++) {
+      images.push({ url: urls[index], fallbackUrl: urls[index] });
+    }
+    this.onOpenImages(images, 0);
   }
 
   // 点结果行:收起面板并跳到那一楼。跳楼走既有的 jumpToPostNumber(已加载就滚动+高亮,
