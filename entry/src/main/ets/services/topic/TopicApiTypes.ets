@@ -356,6 +356,18 @@ export interface UpdateTopicOptions {
   tags?: string[];
 }
 
+/**
+ * `PUT /t/{id}.json`(topics#update)的主题元数据。参数是**扁平**的,不是 `topic[...]` ——
+ * 上游 `topics_controller.rb#update` 直接读 `params[:category_id]` / `params[:tags]`。
+ *
+ * `tags: undefined` = 不动标签；`tags: []` = 清空标签。两者语义不同,别合并。
+ */
+export interface TopicMetadataUpdate {
+  title?: string;
+  categoryId?: number;
+  tags?: string[];
+}
+
 // /tags/filter/search 的响应外壳。
 export interface DiscourseTagFilterResponse {
   results?: DiscourseTagResult[];

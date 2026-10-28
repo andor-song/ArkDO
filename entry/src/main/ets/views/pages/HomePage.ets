@@ -15,6 +15,7 @@ import { friendlyFailure, rawFailure } from '../../services/network/UserFacingEr
 import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { LoadStateView } from '../components/LoadStateView';
 import { TopicReadState, TopicReadStateEventBus } from '../../services/session/TopicReadStateEventBus';
+import { TopicMetadataChanged, TopicMetadataEventBus } from '../../services/session/TopicMetadataEventBus';
 import {
   extractMessageBusCategoryId,
   extractMessageBusCreatedAt,
@@ -284,6 +285,7 @@ export struct HomePage {
   private handledSessionVersion: number = SessionEventBus.getCurrentVersion();
   private unsubscribeSessionChanged?: () => void = undefined;
   private unsubscribeTopicReadState?: () => void = undefined;
+  private unsubscribeTopicMetadata?: () => void = undefined;
   // 会话变化撞上在途列表请求时先记账，请求结束后再按最新 Cookie 补拉首页。
   private pendingSessionRefresh: boolean = false;
   // 用户点 incoming 提示时若列表请求在途，等当前请求结束再做增量加载；成功前不丢 topic ID。
@@ -313,6 +315,12 @@ export struct HomePage {
       // 从详情页返回时同步该主题的已读状态(消蓝点、更新未读徽标)。
       this.unsubscribeTopicReadState = TopicReadStateEventBus.subscribe((state: TopicReadState) => {
         this.handleTopicReadStateChanged(state);
+      });
+    }
+    if (!this.unsubscribeTopicMetadata) {
+      // 详情页改了标题/分类/标签后,把列表那一行就地更新 —— 否则返回后还是旧标题,像没保存成功。
+      this.unsubscribeTopicMetadata = TopicMetadataEventBus.subscribe((event: TopicMetadataChanged) => {
+        this.handleTopicMetadataChanged(event);
       });
     }
     if (!this.unsubscribeMessageBus) {
@@ -351,6 +359,10 @@ export struct HomePage {
     if (this.unsubscribeTopicReadState) {
       this.unsubscribeTopicReadState();
       this.unsubscribeTopicReadState = undefined;
+    }
+    if (this.unsubscribeTopicMetadata) {
+      this.unsubscribeTopicMetadata();
+      this.unsubscribeTopicMetadata = undefined;
     }
     if (this.unsubscribeMessageBus) {
       this.unsubscribeMessageBus();
@@ -530,7 +542,7 @@ export struct HomePage {
       // 底部筛选面板。容量整层铺满只为定位(justifyContent 靠底),面板本体在外层做 translate:
       //  · 容量 Column 常驻、满屏透明,只管把面板钉到屏幕底部(本仓底部悬浮物统一手法,见
       //    RootTabPage 底部 tab 栏 / TopicDetailPage 底部浮条)。面板在它内部靠 FlexAlign.End 贴底。
-      //  · 面板(内层 Column)承载 78% 高度与上下位移:进度 0 时 translate y=100% 整体沉到屏下沿
+      //  · 面板(内层 Column)承载 92% 高度与上下位移:进度 0 时 translate y=100% 整体沉到屏下沿
       //    之外,1 时回贴自然位(屏底)。translate 百分比相对面板自身高度,故屏幕底部位置天然成立,
       //    无需 position 或改根 Stack 对齐方式。
       //  · 面板常驻、内容按需挂载:滑入滑出动画作用在面板身上,animateTo 永远拿得到动画起点——
@@ -590,7 +602,9 @@ export struct HomePage {
           }
         }
         .width('100%')
-        .height('78%')
+        // 92% 而不是 100%:上方留一条可见的遮罩缝隙,读起来仍是「面板」而不是新页面;
+        // 而 78% 时下沿露出的其实是**面板之外**的首页列表 —— 那看起来像布局错位,不像层次。
+        .height('92%')
         // 进度 0 时整体在屏幕下沿外,1 时贴底归位;中间值即跟手位置。
         // 百分比相对面板自身高度:关闭态自然沉出屏底,不需要手算 vp。
         .translate({ y: `${(1 - this.drawerProgress) * 100}%` })
@@ -1626,6 +1640,27 @@ export struct HomePage {
         Log.i(`${LOG_TAG} topic read state synced topicId=${state.topicId} unreadPosts=${state.unreadPosts}`);
         return;
       }
+    }
+  }
+
+  // 详情页改完主题元数据后,把列表那一行就地更新(标题 / 分类徽章 / 标签)。
+  // 只改命中的那一条,@Observed 实例赋值 → 对应 TopicListItem(@ObjectLink)精准重渲染。
+  private handleTopicMetadataChanged(event: TopicMetadataChanged): void {
+    for (let index: number = 0; index < this.topics.length; index++) {
+      const topic: Topic = this.topics[index];
+      if (topic.id !== event.topicId) {
+        continue;
+      }
+      topic.title = event.title;
+      // undefined = 本次没改这一项,保持原值(别把「没改」当成「清空」)。
+      if (event.categoryId !== undefined) {
+        topic.categoryId = event.categoryId;
+      }
+      if (event.tags !== undefined) {
+        topic.tags = event.tags;
+      }
+      Log.i(`${LOG_TAG} topic metadata synced topicId=${event.topicId}`);
+      return;
     }
   }
 

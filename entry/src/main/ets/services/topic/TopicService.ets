@@ -2,7 +2,7 @@ import { Topic, TopicTag } from '../../models/Topic';
 import { AcceptedAnswer, PendingPost, Poll, PollOption, PollVoteResult, PostBoost, PostReaction, ReactionUser, ReactionUsersPage, SharedIssueResult, TopicDetail, TopicPost } from '../../models/TopicDetail';
 import { User } from '../../models/User';
 import { CookedHtmlParser } from '../content/CookedHtmlParser';
-import { ChallengeState, JsonNetworkClient, NetworkResult } from '../network/NetworkTypes';
+import { ChallengeState, JsonNetworkClient, NetworkFailureKind, NetworkResult } from '../network/NetworkTypes';
 import { AppConstants } from '../../common/constants/AppConstants';
 import { FeedKey } from '../site/FeedPrefs';
 import { buildTopicListPath, TopicListQuery } from './TopicListQuery';
@@ -10,7 +10,7 @@ import { buildNotificationLevelBody, notificationLevelPath } from './TopicNotifi
 import { buildLinkClicks } from './LinkClicks';
 import { forwardFailure, unexpectedResponse } from '../network/NetworkResults';
 import { discourseErrorMessage } from '../network/DiscourseErrors';
-import { CreatePostResponse, CreatePrivateMessagePayload, CreateReplyPayload, CreateTopicPayload, UpdateTopicOptions,
+import { CreatePostResponse, CreatePrivateMessagePayload, CreateReplyPayload, CreateTopicPayload, TopicMetadataUpdate, UpdateTopicOptions,
   DiscourseAcceptedAnswer,
   DiscourseBadgeDef, DiscourseBookmarkDeleteResponse, DiscourseBookmarkResponse, DiscourseBoost,
   DiscourseBoostUser, DiscourseGroupedSearchResult, DiscourseLatestResponse, DiscoursePendingPost,
@@ -878,6 +878,50 @@ export class TopicService {
     } catch (error) {
       return unexpectedResponse<string>(response.statusCode, response.challengeState, '站点读取楼层原文响应不是有效 JSON。');
     }
+  }
+
+  /**
+   * 改主题元数据(标题 / 分类 / 标签)。PUT /t/{topicId}.json。
+   *
+   * 为什么不复用 updatePost 的 topicOptions:那条路走 `PUT /posts/{id}` 且**必须连带正文**
+   * (`post[raw]` 是必填),只改分类却要把整楼原文再提交一遍 —— 既多一次全文往返,也把
+   * 「编辑正文」的 409 乐观并发闸门牵扯进来。Discourse 对主题元数据另有 `topics#update`,
+   * 参数是**扁平**的 `title` / `category_id` / `tags`(不是 `topic[...]`,见 topics_controller.rb
+   * 的 `params[:category_id]` 读法)。
+   *
+   * `tags` 传逗号分隔字符串;空数组表示**清空标签**,与「不传该字段」是两件事 ——
+   * 前者会让服务端把标签清掉,后者保持原样。这里用 undefined / [] 区分。
+   */
+  async updateTopicMetadata(topicId: number, meta: TopicMetadataUpdate): Promise<NetworkResult<boolean>> {
+    const parts: string[] = [];
+    if (meta.title !== undefined && meta.title.trim().length > 0) {
+      parts.push(`title=${encodeURIComponent(meta.title.trim())}`);
+    }
+    if (meta.categoryId !== undefined && meta.categoryId > 0) {
+      parts.push(`category_id=${meta.categoryId}`);
+    }
+    if (meta.tags !== undefined) {
+      parts.push(`tags=${encodeURIComponent(meta.tags.join(','))}`);
+    }
+    if (parts.length === 0) {
+      // 一个字段都没有 = 调用方的编程错误。本地拒发,别让服务端回一个语义不明的 400。
+      return unexpectedResponse<boolean>(0, ChallengeState.NONE, '没有需要修改的主题字段。',
+        '没有需要修改的内容', NetworkFailureKind.LOCAL_ABORT);
+    }
+    const referrer: string = `${AppConstants.BASE_URL}/t/topic/${topicId}`;
+    const response: NetworkResult<string> = await this.bridge.putForm(`/t/${topicId}.json`, parts.join('&'), {
+      notifyChallenge: true,
+      referrer: referrer
+    });
+    if (!response.success) {
+      return forwardFailure<boolean>(response);
+    }
+    return {
+      success: true,
+      statusCode: response.statusCode,
+      challengeState: response.challengeState,
+      data: true
+    };
   }
 
   /**

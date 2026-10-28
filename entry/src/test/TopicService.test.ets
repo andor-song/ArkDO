@@ -493,5 +493,56 @@ export default function topicServiceTest() {
       expect(absent.success).assertTrue();
       expect(absent.data?.notificationLevel).assertUndefined();
     });
+
+    // ===== 主题元数据(topics#update) =====
+    //
+    // PUT /t/{id}.json 的参数是**扁平**的 title / category_id / tags,不是 topic[...]——
+    // 上游 topics_controller.rb#update 直接读 params[:category_id]。
+    // 这条钉住拼装形态:写错嵌套层级时服务端会静默忽略字段(200 但什么都没改)。
+
+    it('updatesTopicMetadataWithFlatParams', 0, async () => {
+      const ok: NetworkResult<string> = {
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: '{}'
+      };
+      const bridge: FakeBridge = new FakeBridge(ok);
+
+      const result: NetworkResult<boolean> = await new TopicService(bridge)
+        .updateTopicMetadata(123, { title: '新标题', categoryId: 4, tags: ['求助', 'linux'] });
+
+      expect(result.success).assertTrue();
+      expect(bridge.postedPath).assertEqual('/t/123.json');
+      expect(bridge.postedBody).assertContain(`title=${encodeURIComponent('新标题')}`);
+      expect(bridge.postedBody).assertContain('category_id=4');
+      expect(bridge.postedBody).assertContain(`tags=${encodeURIComponent('求助,linux')}`);
+      // 绝不能是 topic[...] 那种嵌套形态。
+      expect(bridge.postedBody.indexOf('topic%5B') < 0).assertTrue();
+    });
+
+    // 只改分类时不能凭空带上 title / tags —— 服务端会把空 title 当成「改成空标题」。
+    it('omitsFieldsThatWereNotProvided', 0, async () => {
+      const ok: NetworkResult<string> = {
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: '{}'
+      };
+      const bridge: FakeBridge = new FakeBridge(ok);
+
+      await new TopicService(bridge).updateTopicMetadata(7, { categoryId: 12 });
+
+      expect(bridge.postedBody).assertEqual('category_id=12');
+    });
+
+    // 一个字段都没有 = 调用方编程错误,本地拒发(不发请求)。
+    it('refusesEmptyMetadataUpdateWithoutSending', 0, async () => {
+      const ok: NetworkResult<string> = {
+        success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: '{}'
+      };
+      const bridge: FakeBridge = new FakeBridge(ok);
+
+      const result: NetworkResult<boolean> = await new TopicService(bridge)
+        .updateTopicMetadata(7, {});
+
+      expect(result.success).assertFalse();
+      expect(bridge.postedPath).assertEqual('');
+      expect(result.error?.code).assertEqual(NetworkErrorCode.UNEXPECTED_RESPONSE);
+    });
   });
 }

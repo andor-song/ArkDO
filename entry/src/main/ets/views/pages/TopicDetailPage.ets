@@ -3,7 +3,7 @@ import {
   ActionBarStyle,
   HdsActionBar,
   HdsNavigation,
-  HdsNavigationTitleMode
+  HdsNavigationMenuItemOptions, HdsNavigationTitleMode
 } from '@kit.UIDesignKit';
 import { ColorMetrics, LengthMetrics } from '@ohos.arkui.node';
 import { SymbolGlyphModifier } from '@ohos.arkui.modifier';
@@ -23,6 +23,9 @@ import { SessionEventBus } from '../../services/session/SessionEventBus';
 import { LoginGate } from '../../services/session/LoginGate';
 import { TopicReadController } from '../../services/reading/TopicReadController';
 import { CreateReplyOutcome, TopicService } from '../../services/topic/TopicService';
+import { TopicMetadataUpdate } from '../../services/topic/TopicApiTypes';
+import { parseTagInput, sameTagNames } from '../../services/topic/TopicMetadata';
+import { TopicMetadataEventBus } from '../../services/session/TopicMetadataEventBus';
 import {
   NOTIFICATION_LEVEL_REGULAR,
   TOPIC_NOTIFICATION_OPTIONS,
@@ -143,6 +146,12 @@ interface NotificationRowParams {
   saving: boolean;
 }
 
+// 主题信息面板里的分类行。@Builder 一律收单对象参数(本仓多参数会踩 Argument name clash)。
+interface MetaCategoryRowParams {
+  category: TopicCategory;
+  isChild: boolean;
+}
+
 @Component({ freezeWhenInactive: true })
 export struct TopicDetailPage {
   // 窗口常驻全屏布局:主内容列自行避让状态栏(padding 在带背景的列上,背景填满状态栏条);
@@ -172,6 +181,16 @@ export struct TopicDetailPage {
   // (RootTabPage 里同样写过这条约束)。自绘那套的取舍与理由见 ComposerPage 的分类/标签浮层注释。
   @State private notificationPanelVisible: boolean = false;
   @State private notificationSaving: boolean = false;
+  // 主题信息编辑面板(标题 / 分类 / 标签)。同样自绘 —— 理由见上面 notificationPanelVisible。
+  // 入口只在 detail.canEdit 为真时出现:过了站点编辑时限后 yours 仍真、can_edit 转假,
+  // 拿「是不是我发的」当权限会摆出一个点了只会 403 的入口。
+  @State private metaPanelVisible: boolean = false;
+  @State private metaSaving: boolean = false;
+  @State private metaTitle: string = '';
+  @State private metaCategoryId: number = 0;
+  @State private metaTagsInput: string = '';
+  // 分类选择器里展开着的顶级版块 id(两层级联)。
+  @State private metaExpandedCategoryIds: number[] = [];
   // 反应用户弹层状态由页面持有，避免 LazyForEach 的楼层项回收后丢失分页进度。
   @State private showReactionUsersSheet: boolean = false;
   @State private reactionUsersPost: TopicPost | undefined = undefined;
@@ -832,16 +851,7 @@ export struct TopicDetailPage {
             }
           },
           menu: {
-            value: this.shouldShowChallengeShortcut() ? [{
-              content: {
-                icon: $r('sys.symbol.lock_shield'),
-                label: '手动验证',
-                isEnabled: true,
-                action: () => {
-                  this.onOpenChallenge();
-                }
-              }
-            }] : []
+            value: this.headerMenuItems()
           },
           stackBuilder: () => {
             this.DetailTitleBarContent();
@@ -1154,6 +1164,131 @@ export struct TopicDetailPage {
           return this.submitReply(raw, typingMs, composerMs);
         }
       })
+    }
+
+    // 主题信息编辑面板(标题 / 分类 / 标签)。同样是自绘浮层(理由见字段声明处)。
+    if (this.metaPanelVisible) {
+      Stack({ alignContent: Alignment.Bottom }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(SCRIM_STRONG)
+          .onClick(() => {
+            this.closeMetaPanel();
+          })
+
+        Column() {
+          Row() {
+            Text('编辑主题信息')
+              .fontSize(17)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            if (this.metaSaving) {
+              LoadingProgress()
+                .width(18)
+                .height(18)
+                .color($r('app.color.ld_accent'))
+            }
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 18, bottom: 4 })
+
+          Scroll() {
+            Column() {
+              Text('标题')
+                .fontSize(12)
+                .fontColor($r('app.color.text_faint'))
+                .width('100%')
+              TextInput({ text: $$this.metaTitle, placeholder: '主题标题' })
+                .fontSize(15)
+                .fontColor($r('app.color.text_primary'))
+                .backgroundColor($r('app.color.surface_muted'))
+                .borderRadius(10)
+                .margin({ top: 6 })
+
+              Text('分类')
+                .fontSize(12)
+                .fontColor($r('app.color.text_faint'))
+                .width('100%')
+                .margin({ top: 16 })
+              Column() {
+                ForEach(CategoryIndex.topLevelCategories(this.categories), (top: TopicCategory) => {
+                  this.MetaCategoryRow({ category: top, isChild: false })
+                  if (this.isMetaCategoryExpanded(top.id)) {
+                    ForEach(CategoryIndex.childrenOf(this.categories, top.id), (child: TopicCategory) => {
+                      this.MetaCategoryRow({ category: child, isChild: true })
+                    }, (child: TopicCategory) => `mc${child.id}`)
+                  }
+                }, (top: TopicCategory) => `mt${top.id}`)
+              }
+              .width('100%')
+              .margin({ top: 4 })
+
+              Text('标签')
+                .fontSize(12)
+                .fontColor($r('app.color.text_faint'))
+                .width('100%')
+                .margin({ top: 16 })
+              TextInput({ text: $$this.metaTagsInput, placeholder: '用逗号分隔，如：求助, linux' })
+                .fontSize(15)
+                .fontColor($r('app.color.text_primary'))
+                .backgroundColor($r('app.color.surface_muted'))
+                .borderRadius(10)
+                .margin({ top: 6 })
+              Text('留空表示清除全部标签')
+                .fontSize(11)
+                .fontColor($r('app.color.text_faint'))
+                .width('100%')
+                .margin({ top: 6, bottom: 12 })
+            }
+            .width('100%')
+            .padding({ left: 20, right: 20 })
+            .alignItems(HorizontalAlign.Start)
+          }
+          .width('100%')
+          .height(360)
+          .scrollBar(BarState.Off)
+          .align(Alignment.Top)
+
+          Row({ space: 12 }) {
+            Button('取消')
+              .layoutWeight(1)
+              .height(44)
+              .fontSize(15)
+              .fontColor($r('app.color.text_secondary'))
+              .backgroundColor($r('app.color.surface_muted'))
+              .borderRadius(22)
+              .enabled(!this.metaSaving)
+              .onClick(() => {
+                this.closeMetaPanel();
+              })
+            Button(this.metaSaving ? '保存中…' : '保存')
+              .layoutWeight(1)
+              .height(44)
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .backgroundColor($r('app.color.brand'))
+              .borderRadius(22)
+              .enabled(!this.metaSaving)
+              .onClick(() => {
+                this.saveMetaPanel();
+              })
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 10, bottom: this.sysBottomInset + 12 })
+        }
+        .width('100%')
+        .backgroundColor($r('app.color.page_bg'))
+        .borderRadius({ topLeft: 20, topRight: 20 })
+        .clip(true)
+        .transition(TransitionEffect.move(TransitionEdge.BOTTOM).combine(TransitionEffect.OPACITY)
+          .animation({ duration: 240, curve: Curve.EaseOut }))
+      }
+      .width('100%')
+      .height('100%')
+      .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
     }
 
     // 通知等级面板(关注 / 跟踪 / 正常 / 静默)。自绘浮层,理由见字段声明处。
@@ -1589,6 +1724,11 @@ export struct TopicDetailPage {
     // Index 拦截返回后只会 bump 这个 tick,不主动接就关不掉(表现为"按返回没反应")。
     if (this.notificationPanelVisible) {
       this.closeNotificationPanel();
+      return;
+    }
+    // 主题信息面板同理:它是自绘浮层,系统返回键只 bump tick,不接就关不掉。
+    if (this.metaPanelVisible) {
+      this.closeMetaPanel();
     }
   }
 
@@ -2749,6 +2889,51 @@ export struct TopicDetailPage {
   }
 
   // 过盾入口只在用户主动开启快捷入口且本次阅读确实命中验证时交给 HDS menu 渲染。
+  // 能否编辑主题元数据(标题/分类/标签)。
+  //
+  // 判据取**一楼(楼主帖)的 can_edit**,而不是「是不是我发的」:过了站点编辑时限后
+  // yours 仍真、can_edit 转假,拿前者当权限会摆出一个点了只会 403 的入口。
+  // 也不去自己推断信任级别 —— 那是站点可配的,猜必错。
+  private canEditTopicMeta(): boolean {
+    const detail: TopicDetail | undefined = this.detail;
+    if (detail === undefined || detail.posts.length === 0) {
+      return false;
+    }
+    const first: TopicPost = detail.posts[0];
+    return first.postNumber === 1 && first.canEdit === true;
+  }
+
+  // 顶栏菜单项。两个条件互不相关(能否编辑主题 / 是否显示过盾快捷键),用 push 逐个加,
+  // 而不是嵌套三元 —— 后者会写出四种组合。
+  private headerMenuItems(): HdsNavigationMenuItemOptions[] {
+    const items: HdsNavigationMenuItemOptions[] = [];
+    if (this.canEditTopicMeta()) {
+      items.push({
+        content: {
+          icon: $r('sys.symbol.square_and_pencil'),
+          label: '编辑主题信息',
+          isEnabled: true,
+          action: () => {
+            this.openMetaPanel();
+          }
+        }
+      });
+    }
+    if (this.shouldShowChallengeShortcut()) {
+      items.push({
+        content: {
+          icon: $r('sys.symbol.lock_shield'),
+          label: '手动验证',
+          isEnabled: true,
+          action: () => {
+            this.onOpenChallenge();
+          }
+        }
+      });
+    }
+    return items;
+  }
+
   private shouldShowChallengeShortcut(): boolean {
     return ChallengeShortcutPrefs.isEnabled() && this.challengeBlocked;
   }
@@ -2770,6 +2955,149 @@ export struct TopicDetailPage {
 
   private closeNotificationPanel(): void {
     this.notificationPanelVisible = false;
+  }
+
+  // ==================== 主题信息编辑(标题 / 分类 / 标签) ====================
+
+  private openMetaPanel(): void {
+    const detail: TopicDetail | undefined = this.detail;
+    if (detail === undefined) {
+      return;
+    }
+    this.metaTitle = detail.title;
+    this.metaCategoryId = detail.categoryId !== undefined ? detail.categoryId : 0;
+    // 预填成「a, b」形态:与输入框的解析规则同源(parseTagInput 认全角/半角逗号)。
+    this.metaTagsInput = (detail.tags ?? []).map((tag: TopicTag): string => tag.name).join(', ');
+    this.metaExpandedCategoryIds = [];
+    this.metaPanelVisible = true;
+  }
+
+  private closeMetaPanel(): void {
+    this.metaPanelVisible = false;
+  }
+
+  @Builder
+  private MetaCategoryRow(p: MetaCategoryRowParams) {
+    Row({ space: 8 }) {
+      Text(p.category.name)
+        .fontSize(p.isChild ? 14 : 15)
+        .fontColor(this.metaCategoryId === p.category.id
+          ? $r('app.color.brand') : $r('app.color.text_primary'))
+        .fontWeight(this.metaCategoryId === p.category.id ? FontWeight.Medium : FontWeight.Regular)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+
+      if (this.metaCategoryId === p.category.id) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(16)
+          .fontColor([$r('app.color.brand')])
+      }
+      // 子版块开合箭头:热区独立,点它只展开/收起、不选中该版块(与抽屉里的版块行同规则)。
+      if (!p.isChild && CategoryIndex.hasChildren(this.categories, p.category.id)) {
+        Row() {
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(15)
+            .fontColor([$r('app.color.text_faint')])
+            .rotate({ angle: this.isMetaCategoryExpanded(p.category.id) ? 90 : 0 })
+            .animation({ duration: 180, curve: Curve.EaseOut })
+        }
+        .width(32)
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => {
+          this.toggleMetaCategory(p.category.id);
+        })
+      }
+    }
+    .width('100%')
+    .height(44)
+    .padding({ left: p.isChild ? 16 : 0 })
+    .backgroundColor(this.metaCategoryId === p.category.id
+      ? $r('app.color.info_soft_bg') : Color.Transparent)
+    .borderRadius(8)
+    .onClick(() => {
+      this.metaCategoryId = p.category.id;
+    })
+  }
+
+  private isMetaCategoryExpanded(id: number): boolean {
+    return this.metaExpandedCategoryIds.indexOf(id) >= 0;
+  }
+
+  private toggleMetaCategory(id: number): void {
+    const next: number[] = this.metaExpandedCategoryIds.slice();
+    const at: number = next.indexOf(id);
+    if (at >= 0) {
+      next.splice(at, 1);
+    } else {
+      next.push(id);
+    }
+    this.metaExpandedCategoryIds = next;
+  }
+
+  // 保存:只提交**真的改了**的字段。三个都没改就直接收起,不发请求 ——
+  // 一次「什么都没改」的 PUT 会把站点侧的最后编辑时间推后,对别人是噪音。
+  private async saveMetaPanel(): Promise<void> {
+    const detail: TopicDetail | undefined = this.detail;
+    if (detail === undefined || this.metaSaving) {
+      return;
+    }
+    const title: string = this.metaTitle.trim();
+    const tags: string[] = parseTagInput(this.metaTagsInput);
+    const beforeTags: string[] = (detail.tags ?? []).map((tag: TopicTag): string => tag.name);
+    const update: TopicMetadataUpdate = {};
+    let dirty: boolean = false;
+    if (title.length > 0 && title !== detail.title) {
+      update.title = title;
+      dirty = true;
+    }
+    if (this.metaCategoryId > 0 && this.metaCategoryId !== detail.categoryId) {
+      update.categoryId = this.metaCategoryId;
+      dirty = true;
+    }
+    if (!sameTagNames(tags, beforeTags)) {
+      update.tags = tags;
+      dirty = true;
+    }
+    if (!dirty) {
+      this.closeMetaPanel();
+      return;
+    }
+
+    this.metaSaving = true;
+    const result: NetworkResult<boolean> =
+      await new TopicService(this.bridge).updateTopicMetadata(detail.id, update);
+    this.metaSaving = false;
+    if (!result.success) {
+      // 不关面板:用户刚填的内容还在,改完可以直接再存。
+      this.showComposerToast(friendlyFailure(result, { subject: '主题信息', action: '保存' }), 2500);
+      Log.i(`${LOG_TAG} updateTopicMetadata failed topicId=${detail.id} ${rawFailure(result)}`);
+      return;
+    }
+
+    // 成功才改本地(不做乐观更新):标题/分类是别人也能看到的东西,「以为改好了」的代价比等一下大。
+    if (update.title !== undefined) {
+      detail.title = update.title;
+    }
+    if (update.categoryId !== undefined) {
+      detail.categoryId = update.categoryId;
+    }
+    if (update.tags !== undefined) {
+      detail.tags = update.tags.map((name: string): TopicTag => {
+        const tag: TopicTag = { name: name };
+        return tag;
+      });
+    }
+    // 通知栈下的列表页就地更新那一行的标题/分类徽章(否则返回后还是旧标题,像没保存成功)。
+    TopicMetadataEventBus.publish({
+      topicId: detail.id,
+      title: detail.title,
+      categoryId: update.categoryId,
+      tags: update.tags !== undefined ? detail.tags : undefined
+    });
+    this.closeMetaPanel();
+    this.showComposerToast('主题信息已更新', 1600);
   }
 
   @Builder

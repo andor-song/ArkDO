@@ -19,6 +19,7 @@ import {
 } from '../../common/ui/ImmersiveLightMaterial';
 import { buildImmersiveTitleBarStyle } from '../../common/ui/ImmersiveTitleBarStyle';
 import { TopicReadState, TopicReadStateEventBus } from '../../services/session/TopicReadStateEventBus';
+import { TopicMetadataChanged, TopicMetadataEventBus } from '../../services/session/TopicMetadataEventBus';
 
 const LOG_TAG: string = '[ArkDO][ReadTopicsPage]';
 
@@ -51,6 +52,7 @@ export struct ReadTopicsPage {
   // 已读状态回传的订阅句柄(详情页离开时结算一次)。与首页同一条链路,
   // 否则在详情页读完后返回这里,未读徽标还停在旧值 —— 用户会以为没读进去。
   private unsubscribeReadState: (() => void) | undefined = undefined;
+  private unsubscribeMetadata: (() => void) | undefined = undefined;
 
   aboutToAppear(): void {
     if (this.bridge) {
@@ -64,6 +66,12 @@ export struct ReadTopicsPage {
           this.handleTopicReadStateChanged(state);
         });
     }
+    if (this.unsubscribeMetadata === undefined) {
+      this.unsubscribeMetadata = TopicMetadataEventBus.subscribe(
+        (event: TopicMetadataChanged): void => {
+          this.handleTopicMetadataChanged(event);
+        });
+    }
     this.loadCategories();
     this.loadInitial();
   }
@@ -73,9 +81,31 @@ export struct ReadTopicsPage {
       this.unsubscribeReadState();
       this.unsubscribeReadState = undefined;
     }
+    if (this.unsubscribeMetadata !== undefined) {
+      this.unsubscribeMetadata();
+      this.unsubscribeMetadata = undefined;
+    }
   }
 
   // 与 HomePage.handleTopicReadStateChanged 同构:只改命中的那一条,靠 @Observed 精准重渲染。
+  // 与首页同构:详情页改标题/分类/标签后,已读列表那一行就地更新。
+  private handleTopicMetadataChanged(event: TopicMetadataChanged): void {
+    for (let index: number = 0; index < this.topics.length; index++) {
+      const topic: Topic = this.topics[index];
+      if (topic.id !== event.topicId) {
+        continue;
+      }
+      topic.title = event.title;
+      if (event.categoryId !== undefined) {
+        topic.categoryId = event.categoryId;
+      }
+      if (event.tags !== undefined) {
+        topic.tags = event.tags;
+      }
+      return;
+    }
+  }
+
   private handleTopicReadStateChanged(state: TopicReadState): void {
     for (let index: number = 0; index < this.topics.length; index++) {
       const topic: Topic = this.topics[index];
