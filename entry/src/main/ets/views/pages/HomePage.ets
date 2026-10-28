@@ -28,6 +28,7 @@ import {
 import { TopicPage, TopicService } from '../../services/topic/TopicService';
 import { TopicDataSource } from '../../services/topic/TopicDataSource';
 import { TopicRowActions } from '../../services/topic/TopicRowActions';
+import { hasPinnedBlock, partitionPinnedFirst } from '../../services/topic/TopicOrdering';
 import { CategoryIndex } from '../../services/site/CategoryIndex';
 import { FeedKey } from '../../services/site/FeedPrefs';
 import {
@@ -681,6 +682,21 @@ export struct HomePage {
           .height(this.incomingPromptHeight)
           .opacity(this.incomingPromptOpacity)
           .clip(true)
+
+          // 置顶分区标题。判据是「第一行就是置顶帖」——partitionPinnedFirst 之后置顶块必然从 0 开始,
+          // 所以这里只看一条,O(1)。分区只画开头这一条:普通块没有自己的标题(它接着置顶块往下排,
+          // 再加一条「最新」标题会把信息密度已经很高的首页再切碎);单行上的「置顶」药丸负责逐条标识。
+          if (hasPinnedBlock(this.topics)) {
+            ListItem() {
+              Row() {
+                Text('置顶')
+                  .fontSize(13)
+                  .fontColor($r('app.color.text_secondary'))
+              }
+              .width('100%')
+              .padding({ left: 12, right: 12, top: 6, bottom: 2 })
+            }
+          }
 
           LazyForEach(this.topicDataSource, (topic: Topic) => {
             TopicListItem({
@@ -1376,7 +1392,8 @@ export struct HomePage {
     this.isInitialLoading = false;
 
     if (result.success && result.data) {
-      this.topics = result.data.topics;
+      // 置顶在前、其余保持服务端顺序(稳定分区,理由见 TopicOrdering)。
+      this.topics = partitionPinnedFirst(result.data.topics);
       this.topicDataSource.reset(this.topics);
       this.topicListVersion++;
       this.currentPage = 0;

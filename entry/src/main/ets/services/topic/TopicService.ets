@@ -1147,6 +1147,7 @@ export class TopicService {
       topic.highestPostNumber = typeof sourceTopic.highest_post_number === 'number' ? sourceTopic.highest_post_number : undefined;
       topic.hasAcceptedAnswer = sourceTopic.has_accepted_answer === true;
       topic.bookmarked = sourceTopic.bookmarked === true;
+      topic.pinned = sourceTopic.pinned === true;
       topic.author = this.findOriginalPoster(sourceTopic, sourceUsers);
       topics.push(topic);
     }

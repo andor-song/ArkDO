@@ -224,8 +224,20 @@ export struct TopicListItem {
           }
 
           // 分类 / 标签 与 时间同一行:徽标占剩余宽度可横向滚动,时间固定在最右侧。
-          if (this.hasBadges() || this.getRelativeTime().length > 0) {
+          // 置顶药丸也挂在这一行,所以它单独出现时这一行也得在(否则置顶帖在无徽标/无时间时看不出置顶)。
+          if (this.hasBadges() || this.getRelativeTime().length > 0 || this.topic.pinned === true) {
             Row() {
+              // 置顶标记:分区标题只在首页列表顶部出现一次,而置顶帖在滚动后仍需一眼可辨
+              // (尤其分页把置顶帖带到第二屏之后时)。药丸比图标省地方,也不与书签标记抢位置。
+              if (this.topic.pinned === true) {
+                Text('置顶')
+                  .fontSize(11)
+                  .fontColor($r('app.color.brand'))
+                  .backgroundColor($r('app.color.info_soft_bg'))
+                  .borderRadius(4)
+                  .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+                  .margin({ right: 6 })
+              }
               if (this.hasBadges()) {
                 TopicMetadataBadges({
                   category: this.category,

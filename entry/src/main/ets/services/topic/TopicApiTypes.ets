@@ -29,6 +29,9 @@ export interface DiscourseTopic {
   posters?: DiscoursePoster[];
   has_accepted_answer?: boolean;
   bookmarked?: boolean;
+  // 置顶。Discourse 列表接口顶层给 `pinned`(版块内/全站置顶都为 true);
+  // 另有 `pinned_globally` 只区分「全站置顶」,本仓不区分——对列表只有一个「置顶」概念。
+  pinned?: boolean;
 }
 
 export interface DiscoursePoster {
