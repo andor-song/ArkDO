@@ -41,13 +41,9 @@ export default function draftPublishRaceGuardTest() {
       expect(guard.getGeneration() - second).assertEqual(1);
     });
 
-    it('zeroSequenceDeleteIsUseless', 0, () => {
-      const guard: DraftPublishRaceGuard = new DraftPublishRaceGuard();
-      // 序号 0 = 服务端没有我们已知的草稿行;Discourse 会静默 no-op 却回 OK。
-      expect(guard.needsDelete(0)).assertFalse();
-      expect(guard.needsDelete(-1)).assertFalse();
-      expect(guard.needsDelete(8)).assertTrue();
-    });
+    // 这里原来有一条 needsDelete(sequence) 的判据(序号 0 就别删),已删:那个 0 是**新 key
+    // 首次保存的正常返回值**,这样的草稿照样删得掉。「有没有行」只有服务端说得准,
+    // 对应行为锁在 DraftService.test.ets 的 firstSaveWithSequenceZeroIsStillDeleted 里。
 
     it('lateSavePurgeKeepsSuppression', 0, () => {
       const guard: DraftPublishRaceGuard = new DraftPublishRaceGuard();

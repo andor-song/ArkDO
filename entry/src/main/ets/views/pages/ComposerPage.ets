@@ -181,8 +181,10 @@ export struct ComposerPage {
   private draftDirty: boolean = false;
   // 一次只允许一个保存在途,避免并发把 sequence 写乱。
   private draftSaving: boolean = false;
-  // 只有成功保存过或由草稿列表续写带入的草稿，删除成功后才应递减角标。
-  private draftPersisted: boolean = false;
+  // 这里**不再**自己记「服务端有没有这条草稿」(原来是 draftPersisted)。它只在保存请求成功回包
+  // 时置真,而某次保存被我们自己的 15s 超时判死、服务端却写成了的那种行它看不见 —— 于是删除会被
+  // 本地判据跳过,草稿箱留下一条内容等于已发主题的僵尸。现在删除先问服务端现状,角标也按
+  // 「真的删掉了一行」递减,这份记账没有读者。
   // 发表成功后置真:阻止收尾的补存把已删的草稿又写回来。
   private draftPublished: boolean = false;
   // 发表与草稿保存的时序判定(与 TopicDetailPage 同一个坑:POST /drafts 在途 ∩ 用户点发送)。
@@ -262,7 +264,6 @@ export struct ComposerPage {
       this.selectedTags = this.initialTags.slice();
       this.draftKey = this.initialDraftKey;
       this.draftSequence = this.initialDraftSequence;
-      this.draftPersisted = this.initialDraftKey.length > 0;
       if (this.categoryId >= 0) {
         this.refreshSelectedCategoryVisual();
       }
@@ -446,7 +447,6 @@ export struct ComposerPage {
         await this.purgeLateDraft();
         return;
       }
-      this.draftPersisted = true;
       Log.i(`${LOG_TAG} draft saved key=${this.draftKey} seq=${this.draftSequence}`);
     } else {
       // 存失败不打扰用户(草稿是兜底能力),标回脏,下次输入或关闭时再试。
@@ -455,10 +455,12 @@ export struct ComposerPage {
     }
   }
 
-  // 删掉一次「迟到但已写进服务端」的草稿:用刚落地的序号,删完归零,
-  // 随后 deleteDraftAfterPublish 会被 needsDelete 挡掉,不再发一条必然 no-op 的请求。
+  // 删掉一次「迟到但已写进服务端」的草稿:那次保存已把内容写进了服务端,行一定在,
+  // 拿**它刚落地的序号**删才打得中。这里不看序号大小:新主题草稿的 key 是本次现生成的,
+  // 首次保存走的是 INSERT 分支、回的序号就是 0 —— 0 照样删得掉(上游 Draft#clear 比对的是
+  // DraftSequence.current,新 key 没有 draft_sequences 行,current 正是 0)。
   private async purgeLateDraft(): Promise<void> {
-    if (!this.draftRaceGuard.needsDelete(this.draftSequence) || !this.draftService) {
+    if (!this.draftService) {
       return;
     }
     const sequence: number = this.draftSequence;
@@ -490,15 +492,17 @@ export struct ComposerPage {
     if (!this.draftService || this.draftKey.length === 0) {
       return;
     }
-    if (!this.draftRaceGuard.needsDelete(this.draftSequence)) {
-      this.draftPersisted = false;
-      return;
-    }
-    const result: NetworkResult<boolean> = await this.draftService.deleteDraft(this.draftKey, this.draftSequence);
-    if (result.success && this.draftPersisted) {
-      this.draftPersisted = false;
-      DraftEventBus.notifyDeleted(this.draftKey);
-      Log.i(`${LOG_TAG} draft deleted after publish key=${this.draftKey}`);
+    // 先问服务端现状、再按权威序号删:本地这个序号可能因为一次「被我们 15s 超时判死、服务端
+    // 却写成了」的保存而过期,拿过期序号直接删会**静默落空**却回 OK(见 DraftService 那段注释)。
+    // 现状说没有行就连 DELETE 都不发。
+    const result: NetworkResult<boolean> = await this.draftService.deleteDraftByServerState(this.draftKey);
+    if (result.success) {
+      const deletedRow: boolean = result.data === true;
+      this.draftSequence = 0;
+      if (deletedRow) {
+        DraftEventBus.notifyDeleted(this.draftKey);
+        Log.i(`${LOG_TAG} draft deleted after publish key=${this.draftKey}`);
+      }
     }
   }
 

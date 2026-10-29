@@ -8,10 +8,13 @@
  *   20:05:36.219 POST /drafts.json success    ← 在途那次保存晚于删除才落地!
  * 结果:服务端多出一条「内容 = 刚发出去的那段回复」的草稿,草稿箱里就这么留下了尸体。
  *
- * 为什么客户端原先看不见这个 bug:Discourse 的 DraftsController#destroy 是
- *   `return render json: success_json if draft_info.draft_sequence.to_i != params[:draft_sequence].to_i`
- * ——序号不匹配(或压根没有草稿行)时**静默什么都不删,照样回 {"success":"OK"}**。
- * 所以「删除成功」的日志与「草稿确实没了」之间没有等价关系,只能靠次序自证。
+ * 为什么客户端原先看不见这个 bug:上游 `Draft#clear` 要求带来的 sequence 与
+ * `DraftSequence.current(user, key)` **相等**才动手,不等就 `raise Draft::OutOfSequence`;
+ * 而 `DraftsController#destroy` 把这个异常 rescue 掉、注释写着「nothing really we can do here,
+ * if try clearing a draft that is not ours, just skip it. rendering an error causes issues in
+ * the composer」,末尾照样 `render json: success_json`。所以「删除成功」的日志与「草稿确实没了」
+ * 之间没有等价关系 —— 本类只能保证**次序**(先收干在途保存再删),删除是否命中得由服务端现状说话
+ * (见 DraftService#deleteDraftByServerState)。
  *
  * 本类只回答两个问题:
  *  1. 现在该不该把文本存成草稿?(发布已经发起 → 不该,不然又写回去)
@@ -49,11 +52,9 @@ export class DraftPublishRaceGuard {
     return startGeneration !== this.generation;
   }
 
-  /**
-   * 删除是否值得发:序号为 0 时 Discourse 必然静默 no-op(见文件头),
-   * 与其发一条只会写下「成功」误导日志的请求,不如不发。
-   */
-  needsDelete(sequence: number): boolean {
-    return sequence > 0;
-  }
+  // 这里**不再有**「这条删除值不值得发」的判断。早前一版按 `sequence > 0` 拦,是错的:
+  // 上游对一条**从没存过的新 key** 首次保存走 INSERT 分支、回的序号就是 0(此时
+  // draft_sequences 还没有行,DraftSequence.current 也是 0),所以序号 0 的草稿是**删得掉**的;
+  // 拿 0 当「没有草稿」的信号,恰好把「只自动存过一次就点了发送」这个最常见的情形漏删了。
+  // 判据只有一个:服务端自己说有没有行(GET /drafts/{key}.json)。
 }

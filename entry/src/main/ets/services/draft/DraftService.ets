@@ -45,6 +45,22 @@ export interface SaveReplyDraftInput {
   replyToPostNumber?: number;
 }
 
+// 服务端对某条草稿 key 的现状。来自 GET /drafts/{key}.json(DraftsController#show)。
+export interface DraftState {
+  // 服务端**到底有没有**这条草稿的行。这是客户端唯一拿得到的权威判据:本地记的
+  // 「保存成功过没有」在一种情况下必然失真——某次保存被我们自己的 15s 超时判死、
+  // 而服务端其实已经写成了(真机日志 10-29 00:17 那一串 409 就是这么来的)。
+  exists: boolean;
+  // 下一次保存/删除该带的序号(上游 DraftSequence.current)。没有行时为 0。
+  sequence: number;
+}
+
+// 草稿序号冲突:上游 Draft#set 对**已存在**的草稿要求带来的 sequence 与服务端 current
+// **完全相等**,不等就 raise Draft::OutOfSequence → DraftsController#create 回 409
+// (文案「正在另一个窗口中编辑草稿」)。控制器的自愈分支只在「草稿行不存在」时才补建,
+// 行在就照样抛回来 —— 所以拿着过期序号**重试多少次都是同一个 409**,自动保存会一路死到底。
+const DRAFT_SEQUENCE_CONFLICT_STATUS: number = 409;
+
 // 回帖草稿的 data 内层结构:比新主题少 title/tags,多主题所属 categoryId(对齐官方抓包)。
 interface ReplyDraftData {
   reply: string;
@@ -95,6 +111,13 @@ interface TopicDraftData {
 
 interface DiscourseDraftSaveResponse {
   success?: string;
+  draft_sequence?: number;
+}
+
+// DraftsController#show 的响应:{"draft": drafts.data 那个 JSON **字符串**, "draft_sequence": N}。
+// 无行(或序不符)时 draft 为 null。兼容个别版本可能直接回对象:只要非 null 就算「有行」。
+interface DiscourseDraftStateResponse {
+  draft?: string | object | null;
   draft_sequence?: number;
 }
 
@@ -221,12 +244,28 @@ export class DraftService {
   }
 
   // 保存草稿的公共出口:表单拼装 + 发送 + 取回新序号。新主题/回帖只是 data 内层不同。
+  // 撞序号冲突(409)时自动带 force_save=true 补发一次:上游此时会把服务端 current 当作基线
+  // 再 +1,并把新序号回给我们 —— 一次就把两边对齐,自动保存不至于从此死掉。
   private async postDraft(draftKey: string, sequence: number, dataJson: string): Promise<NetworkResult<number>> {
+    const first: NetworkResult<number> = await this.sendDraft(draftKey, sequence, dataJson, false);
+    if (first.success || first.statusCode !== DRAFT_SEQUENCE_CONFLICT_STATUS) {
+      return first;
+    }
+    // 只在 409 上补发一次,不递归:force_save 仍失败(限流/过大/未登录)就原样把失败交给调用方。
+    return this.sendDraft(draftKey, sequence, dataJson, true);
+  }
+
+  private async sendDraft(
+    draftKey: string,
+    sequence: number,
+    dataJson: string,
+    forceSave: boolean
+  ): Promise<NetworkResult<number>> {
     const body: string = `draft_key=${encodeURIComponent(draftKey)}` +
       `&sequence=${sequence}` +
       `&data=${encodeURIComponent(dataJson)}` +
       `&owner=${encodeURIComponent(DraftService.ownerId())}` +
-      `&force_save=false`;
+      `&force_save=${forceSave ? 'true' : 'false'}`;
 
     const response: NetworkResult<string> = await this.bridge.postForm('/drafts.json', body, {
       notifyChallenge: false,
@@ -258,6 +297,69 @@ export class DraftService {
       challengeState: response.challengeState,
       data: nextSequence
     };
+  }
+
+  // 读服务端对这条草稿 key 的现状:有没有行 + 权威序号。**不带 sequence 参数**,上游于是用
+  // DraftSequence.current(user, key) 作 seq,拿到的就是服务端自己的那份(见 #show)。
+  async getDraftState(draftKey: string): Promise<NetworkResult<DraftState>> {
+    const path: string = `/drafts/${encodeURIComponent(draftKey)}.json`;
+    const response: NetworkResult<string> = await this.bridge.getJson(path, {
+      referrer: `${AppConstants.BASE_URL}/my/activity/drafts`
+    });
+    if (!response.success) {
+      return forwardFailure<DraftState>(response);
+    }
+    if (response.data === undefined) {
+      return unexpectedResponse<DraftState>(response.statusCode, response.challengeState, '站点草稿状态响应为空。');
+    }
+    try {
+      const payload: DiscourseDraftStateResponse = JSON.parse(response.data) as DiscourseDraftStateResponse;
+      const raw: string | object | null | undefined = payload.draft;
+      let exists: boolean = raw !== undefined && raw !== null;
+      if (typeof raw === 'string') {
+        exists = raw.trim().length > 0;
+      }
+      const state: DraftState = {
+        exists: exists,
+        sequence: typeof payload.draft_sequence === 'number' ? payload.draft_sequence : 0
+      };
+      return {
+        success: true,
+        statusCode: response.statusCode,
+        challengeState: response.challengeState,
+        data: state
+      };
+    } catch (error) {
+      return unexpectedResponse<DraftState>(response.statusCode, response.challengeState, '站点草稿状态响应不是有效 JSON。');
+    }
+  }
+
+  /**
+   * 先问服务端现状、再删。data=true 是「确有一行被删掉」,data=false 是「服务端本来没有」
+   * (那种情况连 DELETE 都不发)。
+   *
+   * 为什么不能像原来那样直接拿本地序号去删:上游 Draft#clear 要求 sequence 与
+   * DraftSequence.current **相等**才动手,不等就抛 OutOfSequence,而 DraftsController#destroy
+   * 把这个异常 rescue 掉、照样回 {"success":"OK"}(注释原话:「回错误会让 composer 出问题」)。
+   * 也就是**删掉了和没删掉在响应上一模一样**。本地序号只要经历过一次「被本地超时判死、
+   * 服务端却写成了」的保存就会过期,于是删除静默落空 —— 草稿箱里就留下一条内容等于已发出
+   * 回复的僵尸草稿(用户报的现象,真机日志已实证)。读一次现状,删除才既打得中、又知道值不值得打。
+   */
+  async deleteDraftByServerState(draftKey: string): Promise<NetworkResult<boolean>> {
+    const state: NetworkResult<DraftState> = await this.getDraftState(draftKey);
+    if (!state.success || state.data === undefined) {
+      // 读不到现状就不删:此刻手里那个序号无法证其实,发出去大概率是一条「成功但没删」的假日志。
+      return forwardFailure<boolean, DraftState>(state);
+    }
+    if (!state.data.exists) {
+      return {
+        success: true,
+        statusCode: state.statusCode,
+        challengeState: state.challengeState,
+        data: false
+      };
+    }
+    return this.deleteDraft(draftKey, state.data.sequence);
   }
 
   // 删除草稿:DELETE /drafts/<draft_key>.json,**sequence 在表单 body 里**(不是 query)。

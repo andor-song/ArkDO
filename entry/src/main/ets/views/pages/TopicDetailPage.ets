@@ -326,8 +326,10 @@ export struct TopicDetailPage {
   private replyDraftSequence: number = 0;
   private replyDraftTimer: number = -1;
   private replyDraftSaving: boolean = false;
-  // 快速发表时可能还没落过服务端草稿；仅实际存在时删除并递减角标。
-  private replyDraftPersisted: boolean = false;
+  // 本页**不再**自己记「服务端到底有没有这条草稿」。原来那个 replyDraftPersisted 只在
+  // 「保存请求成功回包」时置真,可它有一处必然失真:某次保存被我们自己的 15s 超时判死、
+  // 服务端却写成了 —— 那种行既存在又拿不到序号,本地判据说没有。删除改成先问服务端现状
+  // (DraftService#deleteDraftByServerState),本地这份记账就没有读者了,删掉比留着诚实。
   // 在途的那次草稿保存。发表必须等它落地再删:不等就是日志里那次竞态
   // (DELETE 用旧序号先走,POST /drafts 后到,把已发出的回复又写成草稿)。
   private replyDraftInFlight: Promise<void> | null = null;
@@ -1771,9 +1773,8 @@ export struct TopicDetailPage {
         this.editDraftTimer = -1;
       }
       await this.settleReplyDraftInFlight();
-      if (this.replyDraftPersisted) {
-        await this.deleteReplyDraft();
-      }
+      // 无条件删:有没有行由服务端现状说,不按本地记账跳过(见上面字段处的说明)。
+      await this.deleteReplyDraft();
       this.pendingEditText = '';
       this.editingPostId = 0;
       this.editingOriginalRaw = '';
@@ -1906,7 +1907,6 @@ export struct TopicDetailPage {
         await this.purgeLateDraft(`topic_${this.detail.id}`);
         return;
       }
-      this.replyDraftPersisted = true;
     }
   }
 
@@ -1951,20 +1951,20 @@ export struct TopicDetailPage {
       if (this.draftRaceGuard.isLateSave(startGeneration)) {
         // 这次保存跨过了发表(真机日志:20:05:35.825 DELETE 先走、20:05:36.219 POST /drafts 后落地)。
         // 提交侧那条删除用的是旧序号,Discourse 对不匹配的序号静默 no-op 却回 OK —— 僵尸草稿就是
-        // 这么留下的。谁写脏谁擦:拿这次刚落地的新序号删掉,且不记为已持久化。
+        // 这么留下的。谁写脏谁擦:拿这次刚落地的新序号删掉。
         await this.purgeLateDraft(`topic_${this.detail.id}`);
         return;
       }
-      this.replyDraftPersisted = true;
     }
   }
 
   // 删掉一次「迟到但已写进服务端」的草稿。用当前 replyDraftSequence(= 刚落地的那条),
-  // 删完归零:随后 submitReply 的删除会因为序号 0 被 needsDelete 挡掉,不再发无用的请求。
+  // 删完归零:随后 submitReply 走 deleteReplyDraft 时,服务端现状会说「没有行」,连 DELETE 都不发。
+  // 这里不看序号大小:回帖草稿的 key 就是 topic_<id>,首次保存走 INSERT 分支、回的序号正是 0,
+  // 而 0 删得掉(上游 Draft#clear 比的是 DraftSequence.current,新 key 没建 draft_sequences 行时
+  // current 就是 0)。**别拿序号是否为 0 当「有没有草稿」的判据**,那样短回复只存过一次的情况
+  // 恰恰是最常见的漏删。
   private async purgeLateDraft(draftKey: string): Promise<void> {
-    if (!this.draftRaceGuard.needsDelete(this.replyDraftSequence)) {
-      return;
-    }
     const sequence: number = this.replyDraftSequence;
     Log.i(`${LOG_TAG} purge late draft key=${draftKey} seq=${sequence}`);
     const result: NetworkResult<boolean> = await new DraftService(this.bridge).deleteDraft(draftKey, sequence);
@@ -1979,19 +1979,20 @@ export struct TopicDetailPage {
       return;
     }
     const draftKey: string = `topic_${this.detail.id}`;
-    // 序号 0 = 服务端没有我们已知的草稿行。Discourse 的 destroy 对不匹配序号也回
-    // {"success":"OK"},发了只会留下一条「删除成功」的误导日志,不如不发。
-    if (!this.draftRaceGuard.needsDelete(this.replyDraftSequence)) {
-      this.replyDraftPersisted = false;
-      return;
-    }
+    // 先问服务端现状、再按权威序号删。不能直接拿本地 replyDraftSequence 去删:它可能因为一次
+    // 「被我们 15s 超时判死、服务端却写成了」的保存而过期,而拿过期序号删除会**静默落空却回
+    // {"success":"OK"}**(见 DraftService#deleteDraftByServerState)——用户看到的「回复过后草稿箱
+    // 里留着当时那段回复」就是这么来的。现状说没有行,就连 DELETE 都不发。
     const result: NetworkResult<boolean> =
-      await new DraftService(this.bridge).deleteDraft(draftKey, this.replyDraftSequence);
-    if (result.success && this.replyDraftPersisted) {
-      this.replyDraftPersisted = false;
-      DraftEventBus.notifyDeleted(draftKey);
+      await new DraftService(this.bridge).deleteDraftByServerState(draftKey);
+    if (result.success) {
+      const deletedRow: boolean = result.data === true;
+      this.replyDraftSequence = 0;
+      if (deletedRow) {
+        DraftEventBus.notifyDeleted(draftKey);
+        Log.i(`${LOG_TAG} draft deleted key=${draftKey}`);
+      }
     }
-    this.replyDraftSequence = 0;
   }
 
   // 续写来的草稿在发表成功后删除。只删一次(删完清空 key,防重复发表路径重复删)。
@@ -2006,9 +2007,9 @@ export struct TopicDetailPage {
     if (this.detail && key === `topic_${this.detail.id}`) {
       return;
     }
-    const sequence: number = this.param.draftSequence ?? 0;
-    const result: NetworkResult<boolean> = await new DraftService(this.bridge).deleteDraft(key, sequence);
-    if (result.success) {
+    // 序号也从服务端现状取:路由里带的那个是**打开草稿页那一刻**的快照,期间自动保存可能已把它推进。
+    const result: NetworkResult<boolean> = await new DraftService(this.bridge).deleteDraftByServerState(key);
+    if (result.success && result.data === true) {
       DraftEventBus.notifyDeleted(key);
     }
   }
@@ -2032,7 +2033,6 @@ export struct TopicDetailPage {
       this.composerHeaderTitle = '编辑';
       this.composerFullPlaceholder = '编辑这条回复';
       this.replyDraftSequence = this.param.draftSequence ?? 0;
-      this.replyDraftPersisted = this.detail !== undefined && this.param.draftKey === `topic_${this.detail.id}`;
       this.openFullComposer(draftReply, 0);
       return;
     }
@@ -2040,7 +2040,6 @@ export struct TopicDetailPage {
     this.pendingReplyText = draftReply;
     // 沿用草稿原序号继续自动存,不然首次保存会因序号过期被拒。
     this.replyDraftSequence = this.param.draftSequence ?? 0;
-    this.replyDraftPersisted = this.detail !== undefined && this.param.draftKey === `topic_${this.detail.id}`;
     this.openFullComposer(draftReply, 0);
   }
 
