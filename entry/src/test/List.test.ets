@@ -69,6 +69,7 @@ import readingTrackerRetryTest from './ReadingTrackerRetry.test';
 import pushSubscriptionKeysTest from './PushSubscriptionKeys.test';
 import htmlContentUtilsTest from './HtmlContentUtils.test';
 import linkRouterTest from './LinkRouter.test';
+import notificationTitleTest from './NotificationTitle.test';
 
 export default function testsuite() {
   architectureSkeletonTest();
@@ -147,4 +148,6 @@ export default function testsuite() {
   userCardServiceTest();
   mentionQueryTest();
   draftPublishRaceGuardTest();
+  // 通知标题的 HTML 实体解码(真机:从通知进帖标题显示成 &amp;)。
+  notificationTitleTest();
 }

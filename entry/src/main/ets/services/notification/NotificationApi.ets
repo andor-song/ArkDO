@@ -2,6 +2,7 @@ import { Log } from '../logging/Log';
 import { AppConstants } from '../../common/constants/AppConstants';
 import { NotificationItem, RawNotification, RawNotificationData, RawNotificationsResponse } from '../../models/Notification';
 import { JsonNetworkClient, NetworkErrorCode, NetworkResult } from '../network/NetworkTypes';
+import { HtmlText } from '../content/HtmlText';
 import { AMBER, SUCCESS_GREEN } from '../../common/theme/Palette';
 import { buildNotificationsPath } from './NotificationFilter';
 import { chatChannelIdFromUrl } from './NotificationRouting';
@@ -274,10 +275,20 @@ export class NotificationApi {
     if (raw.notification_type === T_GRANTED_BADGE && data.badge_name) {
       return data.badge_name;
     }
+    // 上游 NotificationSerializer 给的是 **fancy_title**,不是原始 title —— 它在
+    // Topic#fancy_title 里过了 CGI.escapeHTML,当纯文本直接显示就会看到「& 变成 &amp;」。
+    // 真机日志实证同一个帖 2496114:20:04 从列表进标题是「any状态&综合讨论集中贴」,
+    // 20:46 从通知进就成了「any状态&amp;综合讨论集中贴」(那行 1.7s 前正好是
+    // GET /notifications.json 200)。私信那侧(MessageService.fancyTitleOf)与书签那侧
+    // (BookmarkService.decodeEntities)都解过,通知是漏的那个。
     if (raw.fancy_title && raw.fancy_title.length > 0) {
-      return raw.fancy_title;
+      return HtmlText.decodeEntities(raw.fancy_title);
     }
     if (data.topic_title && data.topic_title.length > 0) {
+      // 这一支**不解实体**:core 的 notifier 里没有写过 data.topic_title 的地方(查过
+      // creator_notifier / notifier_base / notification / post_notifier 都没有这个键),它是主题
+      // 组件或旧数据自己填的,转义与否无从确认;而 decodeEntities 不幂等,标题真写着「&amp;」时
+      // 解一次就是把用户写的原文改错。真机上若仍见 &amp; 由这一支漏出,再按实测收紧。
       return data.topic_title;
     }
     if (data.badge_name && data.badge_name.length > 0) {
