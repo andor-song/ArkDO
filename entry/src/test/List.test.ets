@@ -20,6 +20,7 @@ import followFeedServiceTest from './FollowFeedService.test';
 import postImageUrlsTest from './PostImageUrls.test';
 import userCardServiceTest from './UserCardService.test';
 import mentionQueryTest from './MentionQuery.test';
+import draftPublishRaceGuardTest from './DraftPublishRaceGuard.test';
 import arkWebNetworkBridgeTest from './ArkWebNetworkBridge.test';
 import topicServiceTest from './TopicService.test';
 import authServiceTest from './AuthService.test';
@@ -145,4 +146,5 @@ export default function testsuite() {
   postImageUrlsTest();
   userCardServiceTest();
   mentionQueryTest();
+  draftPublishRaceGuardTest();
 }

@@ -29,6 +29,7 @@ import { TagSuggestion, TopicService } from '../../services/topic/TopicService';
 import { NetworkResult } from '../../services/network/NetworkTypes';
 import { DraftService, SaveTopicDraftInput } from '../../services/draft/DraftService';
 import { DraftEventBus } from '../../services/draft/DraftEventBus';
+import { DraftPublishRaceGuard } from '../../services/draft/DraftPublishRaceGuard';
 import { DraftTagRef } from '../../models/Draft';
 import { PostRichContent } from '../components/PostRichContent';
 import { applyAction, EditState, MdAction } from '../../utils/markdownInsert';
@@ -185,6 +186,10 @@ export struct ComposerPage {
   private draftPersisted: boolean = false;
   // 发表成功后置真:阻止收尾的补存把已删的草稿又写回来。
   private draftPublished: boolean = false;
+  // 发表与草稿保存的时序判定(与 TopicDetailPage 同一个坑:POST /drafts 在途 ∩ 用户点发送)。
+  private draftRaceGuard: DraftPublishRaceGuard = new DraftPublishRaceGuard();
+  // 在途的那次草稿保存。发表成功后先把它收干,删除才可能命中最新序号。
+  private draftSaveInFlight: Promise<void> | null = null;
 
   @State private text: string = '';
   @State private mode: ComposerMode = ComposerMode.Edit;
@@ -386,14 +391,21 @@ export struct ComposerPage {
     if (this.draftDebounceTimer !== -1) {
       clearTimeout(this.draftDebounceTimer);
     }
+    if (this.draftHasContent()) {
+      // 用户又改了内容:那是还没发出去的另一个草稿,恢复保存能力(submit 起点会抑制)。
+      this.draftRaceGuard.noteUserEdit();
+    }
     this.draftDebounceTimer = setTimeout(() => {
       this.draftDebounceTimer = -1;
-      this.saveDraftNow();
+      this.draftSaveInFlight = this.saveDraftNow();
     }, DRAFT_SAVE_DEBOUNCE_MS);
   }
 
   private async saveDraftNow(): Promise<void> {
     if (!this.draftService || !this.composeTopic || this.draftPublished) {
+      return;
+    }
+    if (this.draftRaceGuard.isSuppressed()) {
       return;
     }
     if (!this.draftHasContent()) {
@@ -424,17 +436,37 @@ export struct ComposerPage {
       composerTimeMs: this.appearTimeMs > 0 ? Date.now() - this.appearTimeMs : 0,
       typingTimeMs: this.firstTypeTimeMs > 0 ? Date.now() - this.firstTypeTimeMs : 0
     };
+    const startGeneration: number = this.draftRaceGuard.getGeneration();
     const result: NetworkResult<number> = await this.draftService.saveTopicDraft(input);
     this.draftSaving = false;
     if (result.success && result.data !== undefined) {
       // 服务端回的序号是下次该带的,存回去,否则下次保存会因序号过期被拒。
       this.draftSequence = result.data;
+      if (this.draftRaceGuard.isLateSave(startGeneration)) {
+        // 这次保存跨过了发表:内容已经变成帖子了,谁写脏谁擦干净。
+        await this.purgeLateDraft();
+        return;
+      }
       this.draftPersisted = true;
       Log.i(`${LOG_TAG} draft saved key=${this.draftKey} seq=${this.draftSequence}`);
     } else {
       // 存失败不打扰用户(草稿是兜底能力),标回脏,下次输入或关闭时再试。
       this.draftDirty = true;
       Log.i(`${LOG_TAG} draft save failed status=${result.statusCode}`);
+    }
+  }
+
+  // 删掉一次「迟到但已写进服务端」的草稿:用刚落地的序号,删完归零,
+  // 随后 deleteDraftAfterPublish 会被 needsDelete 挡掉,不再发一条必然 no-op 的请求。
+  private async purgeLateDraft(): Promise<void> {
+    if (!this.draftRaceGuard.needsDelete(this.draftSequence) || !this.draftService) {
+      return;
+    }
+    const sequence: number = this.draftSequence;
+    Log.i(`${LOG_TAG} purge late draft key=${this.draftKey} seq=${sequence}`);
+    const result: NetworkResult<boolean> = await this.draftService.deleteDraft(this.draftKey, sequence);
+    if (result.success) {
+      this.draftSequence = 0;
     }
   }
 
@@ -445,7 +477,22 @@ export struct ComposerPage {
       clearTimeout(this.draftDebounceTimer);
       this.draftDebounceTimer = -1;
     }
+    // 先把在途的那次保存收干:不等就会出现真机日志里那种次序 —— DELETE 拿旧序号先走
+    // (Discourse 对不匹配序号静默 no-op 却回 OK),POST /drafts 后落地,草稿箱留下已发布的内容。
+    const pending: Promise<void> | null = this.draftSaveInFlight;
+    if (pending !== null) {
+      this.draftSaveInFlight = null;
+      try {
+        await pending;
+      } catch (err) {
+        // 草稿是兜底能力,收尾失败不拖累发表。
+      }
+    }
     if (!this.draftService || this.draftKey.length === 0) {
+      return;
+    }
+    if (!this.draftRaceGuard.needsDelete(this.draftSequence)) {
+      this.draftPersisted = false;
       return;
     }
     const result: NetworkResult<boolean> = await this.draftService.deleteDraft(this.draftKey, this.draftSequence);
@@ -810,6 +857,10 @@ export struct ComposerPage {
     this.isSubmitting = true;
     const typingMs: number = this.firstTypeTimeMs > 0 ? Date.now() - this.firstTypeTimeMs : 0;
     const composerMs: number = this.appearTimeMs > 0 ? Date.now() - this.appearTimeMs : 0;
+    // 起点立在请求之前:在途的草稿保存回包时能认出自己跨过了发表,新的保存也先挡一手。
+    if (this.composeTopic) {
+      this.draftRaceGuard.beginPublish();
+    }
     let ok: boolean = false;
     try {
       ok = this.composeTopic
@@ -821,6 +872,10 @@ export struct ComposerPage {
       ok = false;
     }
     this.isSubmitting = false;
+    if (!ok && this.composeTopic) {
+      // 没发出去:内容仍在框里等重试,草稿能力恢复。
+      this.draftRaceGuard.noteUserEdit();
+    }
     if (ok) {
       // 已发出:删掉对应草稿,免得草稿列表里留一条已发布的。失败不拦关闭(草稿残留可手动删)。
       if (this.composeTopic) {

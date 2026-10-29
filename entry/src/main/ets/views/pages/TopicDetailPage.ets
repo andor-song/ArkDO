@@ -41,6 +41,7 @@ import { REALTIME_POSTS_ENABLED_STORAGE_KEY } from '../../services/realtime/Real
 import { TopicPresenceService } from '../../services/presence/TopicPresenceService';
 import { DraftService } from '../../services/draft/DraftService';
 import { DraftEventBus } from '../../services/draft/DraftEventBus';
+import { DraftPublishRaceGuard } from '../../services/draft/DraftPublishRaceGuard';
 import { ChallengeShortcutEventBus } from '../../services/challenge/ChallengeShortcutEventBus';
 import { ChallengeShortcutPrefs } from '../../services/challenge/ChallengeShortcutPrefs';
 import { BookmarkToggleResult, PostActions } from '../../services/topic/PostActions';
@@ -309,6 +310,11 @@ export struct TopicDetailPage {
   private replyDraftSaving: boolean = false;
   // 快速发表时可能还没落过服务端草稿；仅实际存在时删除并递减角标。
   private replyDraftPersisted: boolean = false;
+  // 在途的那次草稿保存。发表必须等它落地再删:不等就是日志里那次竞态
+  // (DELETE 用旧序号先走,POST /drafts 后到,把已发出的回复又写成草稿)。
+  private replyDraftInFlight: Promise<void> | null = null;
+  // 「发表 vs 草稿保存」的时序判定,纯逻辑,判定见 DraftPublishRaceGuard 文件头。
+  private draftRaceGuard: DraftPublishRaceGuard = new DraftPublishRaceGuard();
   // 输入框占位文字:回复话题「回复当前话题」/回复某楼「回复<昵称>」/发 boost「发一个 boost…」。
   @State private composerPlaceholder: string = '回复当前话题';
   // boost 输入目标楼 id:0 = 当前浮层是普通回复;>0 = 当前浮层是给该楼发 boost。
@@ -1659,6 +1665,9 @@ export struct TopicDetailPage {
     if (postId <= 0 || topicId <= 0) {
       return false;
     }
+    // 与回帖同一条 topic_<id> 草稿、同一个序号,所以起点也必须先立起来:
+    // 编辑草稿的在途保存同样会在「保存成功之后」才落地,把已提交的改动留在草稿箱。
+    this.draftRaceGuard.beginPublish();
     const result: NetworkResult<TopicPost> =
       await new TopicService(this.bridge).updatePost(postId, topicId, text, this.editingOriginalRaw);
     if (result.success && result.data) {
@@ -1668,6 +1677,7 @@ export struct TopicDetailPage {
         clearTimeout(this.editDraftTimer);
         this.editDraftTimer = -1;
       }
+      await this.settleReplyDraftInFlight();
       if (this.replyDraftPersisted) {
         await this.deleteReplyDraft();
       }
@@ -1678,9 +1688,11 @@ export struct TopicDetailPage {
       return true;
     }
     if (result.statusCode === 409) {
+      this.draftRaceGuard.noteUserEdit();
       this.showComposerToast('这条回复已被改动，请重新打开编辑', 2500);
       return false;
     }
+    this.draftRaceGuard.noteUserEdit();
     this.showComposerToast('保存失败，请稍后重试', 2000);
     return false;
   }
@@ -1760,9 +1772,13 @@ export struct TopicDetailPage {
     if (this.editDraftTimer !== -1) {
       clearTimeout(this.editDraftTimer);
     }
+    if (this.pendingEditText.trim().length > 0) {
+      // 用户又改了内容:那是还没保存的编辑,草稿能力恢复(见 submitEdit 的抑制起点)。
+      this.draftRaceGuard.noteUserEdit();
+    }
     this.editDraftTimer = setTimeout(() => {
       this.editDraftTimer = -1;
-      this.saveEditDraftNow();
+      this.replyDraftInFlight = this.saveEditDraftNow();
     }, REPLY_DRAFT_SAVE_DEBOUNCE_MS);
   }
 
@@ -1770,10 +1786,15 @@ export struct TopicDetailPage {
     if (!this.detail || this.replyDraftSaving || this.editingPostId <= 0) {
       return;
     }
+    // 发表/编辑保存已在进行:别再写草稿,否则会把刚发出去的内容送回草稿箱。
+    if (this.draftRaceGuard.isSuppressed()) {
+      return;
+    }
     // 没改动就别存:一进编辑框就存一条内容等于原文的草稿,会平白顶掉用户的回帖草稿。
     if (this.pendingEditText === this.editingOriginalRaw || this.pendingEditText.trim().length === 0) {
       return;
     }
+    const startGeneration: number = this.draftRaceGuard.getGeneration();
     this.replyDraftSaving = true;
     const result: NetworkResult<number> = await new DraftService(this.bridge).saveEditDraft({
       draftKey: `topic_${this.detail.id}`,
@@ -1788,6 +1809,10 @@ export struct TopicDetailPage {
     this.replyDraftSaving = false;
     if (result.success && result.data !== undefined) {
       this.replyDraftSequence = result.data;
+      if (this.draftRaceGuard.isLateSave(startGeneration)) {
+        await this.purgeLateDraft(`topic_${this.detail.id}`);
+        return;
+      }
       this.replyDraftPersisted = true;
     }
   }
@@ -1796,9 +1821,12 @@ export struct TopicDetailPage {
     if (this.replyDraftTimer !== -1) {
       clearTimeout(this.replyDraftTimer);
     }
+    if (this.pendingReplyText.trim().length > 0) {
+      this.draftRaceGuard.noteUserEdit();
+    }
     this.replyDraftTimer = setTimeout(() => {
       this.replyDraftTimer = -1;
-      this.saveReplyDraftNow();
+      this.replyDraftInFlight = this.saveReplyDraftNow();
     }, REPLY_DRAFT_SAVE_DEBOUNCE_MS);
   }
 
@@ -1806,9 +1834,13 @@ export struct TopicDetailPage {
     if (!this.detail || this.replyDraftSaving) {
       return;
     }
+    if (this.draftRaceGuard.isSuppressed()) {
+      return;
+    }
     if (this.pendingReplyText.trim().length === 0) {
       return;
     }
+    const startGeneration: number = this.draftRaceGuard.getGeneration();
     this.replyDraftSaving = true;
     const result: NetworkResult<number> = await new DraftService(this.bridge).saveReplyDraft({
       draftKey: `topic_${this.detail.id}`,
@@ -1823,7 +1855,28 @@ export struct TopicDetailPage {
     if (result.success && result.data !== undefined) {
       // 服务端回的是下次该带的序号,不存回去下次会因序号过期被拒。
       this.replyDraftSequence = result.data;
+      if (this.draftRaceGuard.isLateSave(startGeneration)) {
+        // 这次保存跨过了发表(真机日志:20:05:35.825 DELETE 先走、20:05:36.219 POST /drafts 后落地)。
+        // 提交侧那条删除用的是旧序号,Discourse 对不匹配的序号静默 no-op 却回 OK —— 僵尸草稿就是
+        // 这么留下的。谁写脏谁擦:拿这次刚落地的新序号删掉,且不记为已持久化。
+        await this.purgeLateDraft(`topic_${this.detail.id}`);
+        return;
+      }
       this.replyDraftPersisted = true;
+    }
+  }
+
+  // 删掉一次「迟到但已写进服务端」的草稿。用当前 replyDraftSequence(= 刚落地的那条),
+  // 删完归零:随后 submitReply 的删除会因为序号 0 被 needsDelete 挡掉,不再发无用的请求。
+  private async purgeLateDraft(draftKey: string): Promise<void> {
+    if (!this.draftRaceGuard.needsDelete(this.replyDraftSequence)) {
+      return;
+    }
+    const sequence: number = this.replyDraftSequence;
+    Log.i(`${LOG_TAG} purge late draft key=${draftKey} seq=${sequence}`);
+    const result: NetworkResult<boolean> = await new DraftService(this.bridge).deleteDraft(draftKey, sequence);
+    if (result.success) {
+      this.replyDraftSequence = 0;
     }
   }
 
@@ -1833,6 +1886,12 @@ export struct TopicDetailPage {
       return;
     }
     const draftKey: string = `topic_${this.detail.id}`;
+    // 序号 0 = 服务端没有我们已知的草稿行。Discourse 的 destroy 对不匹配序号也回
+    // {"success":"OK"},发了只会留下一条「删除成功」的误导日志,不如不发。
+    if (!this.draftRaceGuard.needsDelete(this.replyDraftSequence)) {
+      this.replyDraftPersisted = false;
+      return;
+    }
     const result: NetworkResult<boolean> =
       await new DraftService(this.bridge).deleteDraft(draftKey, this.replyDraftSequence);
     if (result.success && this.replyDraftPersisted) {
@@ -1958,6 +2017,9 @@ export struct TopicDetailPage {
     const categoryId: number | undefined = this.detail.categoryId;
     const replyToPostNumber: number | undefined =
       this.replyTargetPostNumber > 0 ? this.replyTargetPostNumber : undefined;
+    // 发起点必须在网络请求之前:这样任何在途的草稿保存回包时都能认出自己跨过了发表
+    // (见 saveReplyDraftNow 的 isLateSave 分支),同时挡住新的保存不再把内容写回去。
+    this.draftRaceGuard.beginPublish();
     const result: NetworkResult<CreateReplyOutcome> = await new TopicService(this.bridge)
       .createReply(topicId, categoryId, text, typingMs, composerMs, replyToPostNumber);
 
@@ -1983,18 +2045,37 @@ export struct TopicDetailPage {
         clearTimeout(this.replyDraftTimer);
         this.replyDraftTimer = -1;
       }
+      // 等已经在飞的那次保存落地,再发删除。不等就会出现日志里那种次序:
+      // DELETE(旧序号,静默 no-op) → POST /drafts 落地 → 草稿箱留下已发出的内容。
+      await this.settleReplyDraftInFlight();
       await this.deleteReplyDraft();
       // 若本次是从草稿页续写进来的,顺带删掉那条(key 可能与本主题草稿不同,如带楼号的旧草稿)。
       await this.deleteResumedDraftIfAny();
       return true;
     }
 
+    // 发表失败:文本还在输入框里等用户重试,那仍是「没发出去的草稿」,恢复保存能力。
+    this.draftRaceGuard.noteUserEdit();
     // 发表失败最常见的是站点校验(字数/频率/附件),站点原文已在 userReason 里,优先透出。
     this.showComposerToast(friendlyFailure(result, { subject: '回复', action: '发表' }), 2000);
     Log.i(`${LOG_TAG} createReply failed ${rawFailure(result)}`);
     return false;
   }
 
+  // 收尾在途的草稿保存(回帖/编辑共用同一条 topic_<id> 草稿与同一个序号)。
+  // 只在发表链路里调用:让「保存 → 删除」在服务端保持这个次序,删除才能命中最新序号。
+  private async settleReplyDraftInFlight(): Promise<void> {
+    const pending: Promise<void> | null = this.replyDraftInFlight;
+    if (pending === null) {
+      return;
+    }
+    this.replyDraftInFlight = null;
+    try {
+      await pending;
+    } catch (err) {
+      // 草稿是兜底能力,收尾失败不能拖累发表本身。
+    }
+  }
   // 发送 boost:POST /discourse-boosts/posts/{id}/boosts。成功后把返回的 boost 乐观追加到该楼,
   // 返回 true 令浮层关闭;失败保留输入内容(返回 false)。
   private async submitBoost(text: string): Promise<boolean> {
