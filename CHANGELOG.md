@@ -2,6 +2,32 @@
 
 本项目所有重要变更都会记录在此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，版本号遵循语义化版本。
 
+## [1.0.16] - 2026-10-29
+
+> 接在 1.0.15 之后的一轮离线开发（真机写操作暂停，全部结论来自 1.0.15 期间落盘的日志与源码）。
+> 主修 `csrf source=none` 把「这一次没读到令牌」误判成「会话过期」；其余两条是给明天真机复验
+> 铺路的观测与去重。
+
+### 修复
+
+- **写请求偶尔直接本地中止，界面却让用户重新登录**（`csrf source=none`，真机 13 条）：
+  注入脚本把 fetch 失败、CF 挑战页 HTML 解析失败、响应缺字段三类情况都吞成空串，零延迟重读
+  一次后仍为空，就判 `session_expired` 并中止写入。可同一分钟草稿保存与 2.5 秒后的
+  `/clicks/track` 都是 `source=session` 且成功——令牌根本没丢。现在逐项留证、按 `[0,300,900]ms`
+  退避重读、失败时优先复用最近 2 分钟内的有效令牌，并且只有服务端明确说没登录
+  （`discourse-logged-out` / 401 / 非 CF 的 403）才算会话过期；其余按网络档提示重试。
+- **同一毫秒发两次 `GET /session/current.json`**（回前台补查与看门狗/轮询同时到点）：
+  `AuthService.probeSession()` 把并发调用合并成同一个在途 Promise，落地即释放。
+- **CSRF fail-fast 后同一个 requestId 再回一个 `TypeError` 失败回执**：主链拿到 `undefined`
+  仍继续走 `response.text()`；加闸后不再产生第二条噪声回执。
+
+### 诊断
+
+- ArkWeb 执行器超时日志新增 `consecutiveTimeouts` / `pending` / `hostGeneration`，用于区分
+  「偶发慢」与「文档 JS 上下文已死」（known-issues 问题 3 的下一步）。
+- `cf_clearance` 诊断字段改名 `cfClearanceCookieVisible`：它是 HttpOnly，`false` 只代表
+  cookie 头里看不见，不代表没拿到通行证（问题 6）。
+
 ## [1.0.15] - 2026-10-29
 
 > 一轮真机实测（PLU-AL10 / 1316×2832，装的是 1.0.14）的产物。五条修复都是先在 App 自己的日志里
