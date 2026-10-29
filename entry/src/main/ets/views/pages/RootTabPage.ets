@@ -2554,7 +2554,10 @@ export struct RootTabPage {
 
   // 通知轮询启停的唯一入口:顺带维护 notificationServiceStarted 与看门狗互斥。
   private startNotificationPolling(): void {
-    this.notificationService.start();
+    // 两个调用点都在 checkCurrentUser 的成功分支里,且**刚刚**用本次响应广播过未读数
+    // (见上面的 NotificationEventBus.publish)。让服务跳过自己的首次 refresh,否则会
+    // 立刻再发一次 /session/current.json(真机冷启动实测相隔 27ms)。
+    this.notificationService.start(true);
     this.notificationServiceStarted = true;
     this.updateSessionWatchdog();
   }

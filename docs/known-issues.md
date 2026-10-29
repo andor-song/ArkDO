@@ -139,6 +139,10 @@ JS 上下文**；上下文已经死了的话，之后每个请求都只会走满
 - 同一条搜索被发两次：09:21:37.404 与 09:21:37.774 都是 `GET /search.json?q=codex 计划怎么不显示了`，
   **两次都 200 且都 59910 字节**（一次查询 120KB），两次结果都渲染了。
 - 同一批 21 个 `post_ids` 的 `GET /t/{id}/posts.json` 13 秒内取 4 次（gaps 0.84/1.63/1.89/0.80s）。
+  1.0.16 复测仍见 2 次（相隔 520ms，同一批 post_ids），触发点疑似「状态恢复预载 + 详情页首屏」，
+  **未修**——需要先确认这两次分别由谁发起。
+- 冷启动时 `RootTabPage.checkCurrentUser` 与 `NotificationService.start()` 各查一次会话
+  （1.0.16 实测相隔 27ms）。已修：`start(snapshotFresh=true)` 跳过首次 refresh。
 
 对照：`GET /latest.json` 的 403 重试是固定 2.000s × 最多 6 次、成功即停 —— 那条是**有意**的。
 

@@ -18,6 +18,9 @@
   （`discourse-logged-out` / 401 / 非 CF 的 403）才算会话过期；其余按网络档提示重试。
 - **同一毫秒发两次 `GET /session/current.json`**（回前台补查与看门狗/轮询同时到点）：
   `AuthService.probeSession()` 把并发调用合并成同一个在途 Promise，落地即释放。
+- **冷启动紧接着又查一次会话**：`RootTabPage` 刚用本次响应广播完未读数，
+  `NotificationService.start()` 又立刻 `refresh()` 发第二个一模一样的请求（真机实测相隔 27ms、
+  同一个 8KB 响应）。现在两个调用点都传 `snapshotFresh=true`，跳过这次立即刷新，等下一个轮询周期。
 - **CSRF fail-fast 后同一个 requestId 再回一个 `TypeError` 失败回执**：主链拿到 `undefined`
   仍继续走 `response.text()`；加闸后不再产生第二条噪声回执。
 

@@ -62,9 +62,16 @@ export class NotificationService {
   }
 
   // 登录成功/会话确认后调用。重复调用安全:已启动则只补拉一次。
-  start(): void {
+  //
+  // snapshotFresh=true 表示调用方**刚刚**用 /session/current.json 的响应广播过未读数
+  // (RootTabPage.checkCurrentUser 的成功分支就是如此)。此时再 refresh() 会立刻发出
+  // 第二个一模一样的会话请求 —— 真机 1.0.16 冷启动日志:arkdo_3 在 16:48:23.888 返回、
+  // arkdo_4 在 23.915 又发出,相隔 27ms、同一个 8KB 响应。跳过这一次,等下一个轮询周期。
+  start(snapshotFresh: boolean = false): void {
     if (this.started) {
-      this.refresh();
+      if (!snapshotFresh) {
+        this.refresh();
+      }
       return;
     }
     this.started = true;
@@ -75,9 +82,11 @@ export class NotificationService {
     this.unsubscribeMessageBus = MessageBusEventBus.subscribe((event: MessageBusEvent) => {
       this.handleMessageBusEvent(event);
     });
-    Log.i(`${LOG_TAG} start foreground=${AppStateEventBus.isForeground()}`);
+    Log.i(`${LOG_TAG} start foreground=${AppStateEventBus.isForeground()} snapshotFresh=${snapshotFresh}`);
     if (AppStateEventBus.isForeground()) {
-      this.refresh();
+      if (!snapshotFresh) {
+        this.refresh();
+      }
       this.startInterval();
     }
   }
