@@ -23,8 +23,6 @@ export struct TopicDetailHeader {
   // 点顶栏帖子标题回一楼。只在图层 B(帖子标题)显示时可点——摘要仍在视口内时一楼就在眼前,
   // 且那时显示的是「帖子详情」静态标题,点它没有意义(图层 B 的 hitTestBehavior 已天然做到这点)。
   onTitleClick: () => void = () => {};
-  // 右侧原生过盾菜单出现时，为自定义标题预留同宽空间，避免标题伸到菜单按钮下面。
-  @Prop showChallengeShortcut: boolean = false;
   // 整主题书签请求进行中:右侧书签按钮转圈,防连点。
   @Prop bookmarkLoading: boolean = false;
   // 点右侧书签按钮:上抛页面 toggle 整主题书签(对 1 楼 addBookmark/removeBookmark)。
@@ -38,6 +36,14 @@ export struct TopicDetailHeader {
   // 会表现为「转圈不出现」(同文件里 bookmarkLoading 用 @Prop 是同一个理由)。
   @Prop notificationLoading: boolean = false;
   onNotificationTap: () => void = () => {};
+  // 顶栏「更多」:帖内搜索 / 只看某人 / 图片墙 / 编辑主题信息 / 手动验证 这一组动作的入口。
+  //
+  // 为什么不继续用 HdsNavigation.menu 的原生按钮(真机实测 1.0.14,PLU-AL10 1316px 宽):
+  // 原生菜单项与 stackBuilder 的标题内容**抢同一条标题栏的右侧空间**,挤不下就直接不渲染,
+  // 而且不给你任何「还有 N 项被收起来」的痕迹 —— 实测「成人礼」那帖 3 项只出 1 项(放大镜),
+  // 「Chatgpt」那帖 2 项一项都不出。等于四个已开发完的功能在手机上根本没有入口。
+  // 自绘按钮走 Row 的固定 36vp,与标题的 layoutWeight(1) 各拿各的,不受宽度竞争影响。
+  onMoreTap: () => void = () => {};
 
   build() {
     Row({ space: 8 }) {
@@ -161,12 +167,19 @@ export struct TopicDetailHeader {
         this.onToggleBookmark();
       })
 
-      // 右侧按钮由 HdsNavigation.menu 绘制，这里仅做对称占位，不参与点击。
-      if (this.showChallengeShortcut) {
-        Blank()
-          .width(40)
-          .height(40)
+      // 「更多」动作入口(帖内搜索 / 只看某人 / 图片墙 / 编辑主题 / 手动验证)。
+      // 常驻:里面至少有一项(帖内搜索)对任何人都可用,不像铃铛那样依赖服务端字段。
+      Button({ type: ButtonType.Normal, stateEffect: true }) {
+        FaIconView({ icon: getFaIcon('ellipsis-vertical'), color: $r('app.color.icon_muted'), iconSize: 16 })
       }
+      .width(36)
+      .height(36)
+      .padding(0)
+      .backgroundColor(Color.Transparent)
+      .borderRadius(10)
+      .onClick(() => {
+        this.onMoreTap();
+      })
     }
     .width('100%')
     .justifyContent(FlexAlign.Start)

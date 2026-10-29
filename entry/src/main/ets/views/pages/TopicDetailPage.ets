@@ -3,7 +3,7 @@ import {
   ActionBarStyle,
   HdsActionBar,
   HdsNavigation,
-  HdsNavigationMenuItemOptions, HdsNavigationTitleMode
+  HdsNavigationTitleMode
 } from '@kit.UIDesignKit';
 import { ColorMetrics, LengthMetrics } from '@ohos.arkui.node';
 import { SymbolGlyphModifier } from '@ohos.arkui.modifier';
@@ -107,6 +107,21 @@ const LOG_TAG: string = '[ArkDO][TopicDetail]';
 // (不进路由、不进存储),枚举反而多一层 import。
 const SEARCH_MODE_KEYWORD: string = 'keyword';
 const SEARCH_MODE_USER: string = 'user';
+
+// 顶栏「更多」面板里的动作。用字符串 id 而不是把闭包塞进条目:条目要进 ForEach,
+// ArkTS 对带函数成员的数组字面量约束更严,而 id + 一个 runTopicAction 分发口更好读也更好测。
+const TOPIC_ACTION_SEARCH: string = 'search';
+const TOPIC_ACTION_USER: string = 'user';
+const TOPIC_ACTION_IMAGE_WALL: string = 'imageWall';
+const TOPIC_ACTION_EDIT_META: string = 'editMeta';
+const TOPIC_ACTION_CHALLENGE: string = 'challenge';
+
+interface TopicActionItem {
+  actionId: string;
+  iconId: string;
+  label: string;
+  hint: string;
+}
 const POSTS_PAGE_SIZE: number = 20;
 // 楼层预创建数(视口外上下各 N 条)，平衡快滑白块与内存占用。
 const POSTS_CACHED_COUNT: number = 4;
@@ -203,6 +218,9 @@ export struct TopicDetailPage {
   // 帖内搜索 / 只看某人。自绘浮层,理由同 notificationPanelVisible(本页唯一 bindSheet 已给反应用户弹层)。
   // 两种模式共用一块面板:输入框与结果列表长得一样,分成两个浮层只会多一套开关与返回键接线。
   @State private searchPanelVisible: boolean = false;
+  // 顶栏「更多」动作面板。自绘浮层,理由同 searchPanelVisible;
+  // 它替代原来的 HdsNavigation.menu —— 原生菜单在手机上会被标题栏挤掉(见 TopicDetailHeader 注释)。
+  @State private topicActionsPanelVisible: boolean = false;
   @State private searchMode: string = SEARCH_MODE_KEYWORD;
   @State private searchTerm: string = '';
   @State private searchUsername: string = '';
@@ -795,8 +813,11 @@ export struct TopicDetailPage {
       onTitleClick: () => {
         this.jumpToFirstPost();
       },
-      // 与 HdsNavigation.menu 使用同一条件，仅用于给右侧原生按钮预留标题空间。
-      showChallengeShortcut: this.shouldShowChallengeShortcut()
+      // 顶栏「更多」:帖内搜索 / 只看某人 / 图片墙 / 编辑主题 / 手动验证。
+      // 不再走 HdsNavigation.menu —— 原生菜单项会被标题栏宽度静默挤掉(见 TopicDetailHeader 注释)。
+      onMoreTap: () => {
+        this.openTopicActionsPanel();
+      }
     })
   }
 
@@ -885,9 +906,9 @@ export struct TopicDetailPage {
               this.onBack();
             }
           },
-          menu: {
-            value: this.headerMenuItems()
-          },
+          // 故意不给 HdsNavigation 挂原生 menu:原生菜单项与 stackBuilder 的标题内容抢同一段
+          // 右侧空间,挤不下就**静默不渲染**,也不给「还有 N 项被收起」的痕迹(真机 1.0.14 实测:
+          // 3 项只出 1 项、另帖 2 项一项不出)。动作全部收进顶栏自绘的「更多」按钮。
           stackBuilder: () => {
             this.DetailTitleBarContent();
           }
@@ -1532,6 +1553,78 @@ export struct TopicDetailPage {
       .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
     }
 
+    // 顶栏「更多」动作面板。自绘浮层(开关与返回键接线理由同 searchPanelVisible)。
+    // 它替代被标题栏宽度静默挤掉的原生菜单,所以是这五个动作在手机上唯一的入口。
+    if (this.topicActionsPanelVisible) {
+      Stack({ alignContent: Alignment.Bottom }) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(SCRIM_STRONG)
+          .onClick(() => {
+            this.closeTopicActionsPanel();
+          })
+
+        Column() {
+          Row() {
+            Text('这个帖子的操作')
+              .fontSize(17)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 18, bottom: 6 })
+
+          ForEach(this.topicActionItems(), (item: TopicActionItem) => {
+            Row() {
+              FaIconView({
+                icon: getFaIcon(item.iconId),
+                color: $r('app.color.icon_muted'),
+                iconSize: 18
+              })
+                .margin({ right: 12 })
+
+              Column() {
+                Text(item.label)
+                  .fontSize(15)
+                  .fontColor($r('app.color.text_primary'))
+                  .width('100%')
+                Text(item.hint)
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_faint'))
+                  .width('100%')
+                  .margin({ top: 2 })
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+            }
+            .width('100%')
+            .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+            .onClick(() => {
+              // 先收面板再跑动作:面板与搜索/图片墙浮层是同层自绘面板,不收起就会叠在一起。
+              this.closeTopicActionsPanel();
+              this.runTopicAction(item.actionId);
+            })
+          }, (item: TopicActionItem): string => item.actionId)
+
+          Row()
+            .width('100%')
+            .height(8)
+        }
+        .width('100%')
+        .backgroundColor($r('app.color.page_bg'))
+        .borderRadius({ topLeft: 20, topRight: 20 })
+        .padding({ bottom: this.sysBottomInset + 8 })
+        .clip(true)
+        .transition(TransitionEffect.move(TransitionEdge.BOTTOM).combine(TransitionEffect.OPACITY)
+          .animation({ duration: 240, curve: Curve.EaseOut }))
+      }
+      .width('100%')
+      .height('100%')
+      .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
+    }
+
     // 用户卡片浮层(点头像弹出)。放在所有面板之后 = 绘制在最上层:
     // 它可以从任何一楼的作者头像打开,不能被其它浮层盖住。
     if (this.userCardVisible) {
@@ -1994,6 +2087,11 @@ export struct TopicDetailPage {
     // 帖内搜索 / 只看某人浮层同理。
     if (this.searchPanelVisible) {
       this.closeSearchPanel();
+      return;
+    }
+    // 顶栏「更多」动作面板同理:自绘浮层不吃 Navigation 栈的返回,不接就是「按返回没反应」。
+    if (this.topicActionsPanelVisible) {
+      this.closeTopicActionsPanel();
       return;
     }
     // 用户卡片浮层在最上层(它可能盖在详情页上),先关它。
@@ -3200,72 +3298,82 @@ export struct TopicDetailPage {
     return first.postNumber === 1 && first.canEdit === true;
   }
 
-  // 顶栏菜单项。两个条件互不相关(能否编辑主题 / 是否显示过盾快捷键),用 push 逐个加,
-  // 而不是嵌套三元 —— 后者会写出四种组合。
-  private headerMenuItems(): HdsNavigationMenuItemOptions[] {
-    const items: HdsNavigationMenuItemOptions[] = [];
+  // 顶栏「更多」面板的动作清单。两个条件互不相关(能否编辑主题 / 是否显示过盾快捷键),
+  // 用 push 逐个加,而不是嵌套三元 —— 后者会写出四种组合。
+  private topicActionItems(): TopicActionItem[] {
+    const items: TopicActionItem[] = [];
     if (this.canEditTopicMeta()) {
       items.push({
-        content: {
-          icon: $r('sys.symbol.square_and_pencil'),
-          label: '编辑主题信息',
-          isEnabled: true,
-          action: () => {
-            this.openMetaPanel();
-          }
-        }
+        actionId: TOPIC_ACTION_EDIT_META,
+        iconId: 'pen-to-square',
+        label: '编辑主题信息',
+        hint: '改标题 / 版块 / 标签'
       });
     }
     // 帖内搜索与只看某人:长帖里找自己记得的那句话 / 只想看某个人的发言。
     // 两个入口常驻(不依赖登录):搜索接口对匿名也开放,过滤只是把 post_stream 换个参数。
     items.push({
-      content: {
-        icon: $r('sys.symbol.magnifyingglass'),
-        label: '帖内搜索',
-        isEnabled: true,
-        action: () => {
-          this.openSearchPanel(SEARCH_MODE_KEYWORD);
-        }
-      }
+      actionId: TOPIC_ACTION_SEARCH,
+      iconId: 'magnifying-glass',
+      label: '帖内搜索',
+      hint: '只在这一帖里找关键词'
     });
     items.push({
-      content: {
-        icon: $r('sys.symbol.person'),
-        label: '只看某人的回复',
-        isEnabled: true,
-        action: () => {
-          this.openSearchPanel(SEARCH_MODE_USER);
-        }
-      }
+      actionId: TOPIC_ACTION_USER,
+      iconId: 'user',
+      label: '只看某人的回复',
+      hint: '默认楼主,可改成任何人'
     });
     // 图片墙:整帖配图一次看全(按楼层顺序)。没有图就不摆这个入口 —— 点开一片空白比没有入口更差。
     if (this.topicImageUrls().length > 0) {
       items.push({
-        content: {
-          icon: $r('sys.symbol.square_grid_2x2'),
-          label: '图片墙',
-          isEnabled: true,
-          action: () => {
-            this.openImageWall();
-          }
-        }
+        actionId: TOPIC_ACTION_IMAGE_WALL,
+        iconId: 'images',
+        label: '图片墙',
+        hint: '按楼层顺序一次看全配图'
       });
     }
     if (this.shouldShowChallengeShortcut()) {
       items.push({
-        content: {
-          icon: $r('sys.symbol.lock_shield'),
-          label: '手动验证',
-          isEnabled: true,
-          action: () => {
-            this.onOpenChallenge();
-          }
-        }
+        actionId: TOPIC_ACTION_CHALLENGE,
+        iconId: 'shield-halved',
+        label: '手动验证',
+        hint: '访问验证卡住时手动过盾'
       });
     }
     return items;
   }
 
+  // 先收起「更多」面板再执行动作:面板盖在同一块屏幕上,不收起就会叠在搜索/图片墙浮层上面。
+  private runTopicAction(actionId: string): void {
+    if (actionId === TOPIC_ACTION_EDIT_META) {
+      this.openMetaPanel();
+      return;
+    }
+    if (actionId === TOPIC_ACTION_SEARCH) {
+      this.openSearchPanel(SEARCH_MODE_KEYWORD);
+      return;
+    }
+    if (actionId === TOPIC_ACTION_USER) {
+      this.openSearchPanel(SEARCH_MODE_USER);
+      return;
+    }
+    if (actionId === TOPIC_ACTION_IMAGE_WALL) {
+      this.openImageWall();
+      return;
+    }
+    if (actionId === TOPIC_ACTION_CHALLENGE) {
+      this.onOpenChallenge();
+    }
+  }
+
+  private openTopicActionsPanel(): void {
+    this.topicActionsPanelVisible = true;
+  }
+
+  private closeTopicActionsPanel(): void {
+    this.topicActionsPanelVisible = false;
+  }
   private shouldShowChallengeShortcut(): boolean {
     return ChallengeShortcutPrefs.isEnabled() && this.challengeBlocked;
   }
