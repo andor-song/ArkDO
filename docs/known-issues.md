@@ -72,6 +72,65 @@
 
 ---
 
+## 问题 3：ArkWeb 执行器整段卡死约 61 秒，期间所有请求都以 15s 超时失败（未修，已定位到窗口）
+
+**证据**（真机日志 10-29 00:16:15 → 00:17:16，10 个文件里 13 条 `failed before response envelope`
+有 10 条挤在这个窗口）：
+
+```
+00:16:15.195 GET /latest.json start
+00:16:20.197 force host ready reason=waiterTimeout dropped=1     ← 全日志仅此一次
+00:16:35.198 ArkWeb executor reject requestId=arkdo_655 reason=ArkWeb 请求超时。 kind=timeout
+…（657 / 658 / 659 / 660 / 662 依次同样在 15.00s 处被拒；期间新请求照发不误）
+00:17:16.489 reject arkdo_662 (POST /drafts.json)   ← 这一条引出了后续的草稿 409(1.0.15 已修)
+```
+
+重启后同一症状复现过一次（09:25:41 `/session/current` 超时、09:26:34 `GET /t/topic/2904899.json`
+超时 → 详情页报 `kind=timeout`，用户手动重试 1.6s 就成功；**超时的主题加载没有自动重试**）。
+17 分钟后（00:27:48 → 08:51:31）进程被系统杀掉，所以不是心跳丢失。
+
+**判断**：`force host ready` 只是把等待者丢掉（`dropped=1`）并允许新请求出发，**没有重建 host 的
+JS 上下文**；上下文已经死了的话，之后每个请求都只会走满 15s 超时。晚到的回包被
+`ArkWeb callback ignored` 丢掉（全日志 19 条，其中 `arkdo_656` 同一 id 被忽略两次）。
+
+**下一步**（要真机 + 日志配合，别盲改）：先给 `ArkWebNetworkBridge` 加一条可观测计数——连续
+N 次 timeout 时打 `consecutiveTimeouts=N hostGeneration=…`；再决定是「重建 host 文档」还是
+「换一条执行通道」。同时在详情页/列表页给「超时」补一次自动重试（现在只有 CF 403 那条重试链
+有 6 次 2s 退避）。
+
+## 问题 4：`csrf source=none` 让 13 次写请求直接本地中止（未修，窗口与问题 3 重叠）
+
+`csrf source=session length=86` × 89 与 `csrf source=none length=0` × 13：13 条全部落在
+10-29 00:03:27 → 00:17:26，其中 12 条 `POST /topics/timings` + 1 条 `POST /presence/update`。
+矛盾样本：00:14:08.571 timings 报 `source=none`，2.5 秒后 `POST /clicks/track` 却是 `source=session`
+并 200；同一分钟里草稿保存也一直是 `source=session`。代价是已读进度真的丢了：
+`[ArkDO][ReadingTracker] report failed` × 14、`drain report … success=false status=0` × 2，
+主题 3046615 / 3024844 的已读位置永久缺了那几批。重启（08:51）之后 `source=none` 归零。
+
+**下一步**：读 `CsrfTokenProvider` 的「取不到就当没有」分支——更像**读 cookie 的时序**问题
+（`source=none` 时 cookie 仓正好在读/写），不是令牌真没了。若确认，把「取不到」与「确实没有」
+分开：前者应等待一次重读或复用最近一次有效令牌，而不是直接判「会话可能已过期」并中止写入。
+
+## 问题 5：重复请求（未修，逐条确认后再动）
+
+- `GET /session/current.json` 在**同一毫秒**被发两次（10:07:22.316，`arkdo_123` / `arkdo_124`，
+  触发点是 `foreground session recheck`）；另外两次前台恢复也是 0.5–1.8s 内成对。
+- 同一条搜索被发两次：09:21:37.404 与 09:21:37.774 都是 `GET /search.json?q=codex 计划怎么不显示了`，
+  **两次都 200 且都 59910 字节**（一次查询 120KB），两次结果都渲染了。
+- 同一批 21 个 `post_ids` 的 `GET /t/{id}/posts.json` 13 秒内取 4 次（gaps 0.84/1.63/1.89/0.80s）。
+
+对照：`GET /latest.json` 的 403 重试是固定 2.000s × 最多 6 次、成功即停 —— 那条是**有意**的。
+
+## 问题 6：CF 诊断说「已解决」但 `hasCfClearance` 全程 false（未修，只影响诊断可信度）
+
+00:14:20→00:14:33 那次挑战：13 条 `[ARKDO_CF_DIAG]` 采样**每一条**都是 `hasCfClearance=false`，
+包括最后 `stage=resolvedBySource404 … hasResolved=true`；可之后 00:15:04 的草稿保存确实 200 了。
+结论：解决判定（404 即认为过盾）是对的，**clearance 探测看错了 cookie 仓**（sheet 期间
+`cookieHeaderLength` 反而从 1697 降到 1636）。同一时段 `[Challenge] required` 的 version 自增 37 次，
+而 `rootChallengeOpen` 只触发 1 次（25 次是 30s 冷却里的 `recoverySwallow state=3`）。
+
+---
+
 ## 已修复（留此一行，避免被重新发现一遍）
 
 - ~~首页加载帖子列表时出现两个 loading~~：`refreshLatestTopics()` 里 `isInitialLoading` 与 `isRefreshing`
