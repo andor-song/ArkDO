@@ -8,7 +8,6 @@ import {
 } from '@kit.UIDesignKit';
 import window from '@ohos.window';
 import { inputMethod } from '@kit.IMEKit';
-import { SymbolGlyphModifier } from '@ohos.arkui.modifier';
 import { Log } from '../../services/logging/Log';
 import { SYS_BOTTOM_INSET_KEY, SYS_TOP_INSET_KEY } from '../../common/utils/ImmersiveWindow';
 import { JsonNetworkClient } from '../../services/network/NetworkTypes';
@@ -1122,7 +1121,7 @@ export struct ComposerPage {
   @Builder
   private ComposerTitleBarContent() {
     Row() {
-      // stackBuilder 覆盖完整标题栏，左右透明占位分别给 HDS 原生关闭键和发送菜单留出区域。
+      // 左侧透明占位:给 HDS 原生关闭键(xmark)留出它要绘制的位置。
       Blank()
         .width(40)
         .height(40)
@@ -1135,9 +1134,34 @@ export struct ComposerPage {
       .layoutWeight(1)
       .justifyContent(FlexAlign.Center)
 
-      Blank()
+      // 右侧发送按钮:**自绘**,不走 HdsNavigation.menu。原生菜单项与 stackBuilder 抢的是
+      // 同一段标题栏右侧空间,挤不下就直接不渲染、也不给「还有 N 项被收起」的痕迹(真机 1.0.14
+      // 在详情页实测:3 项只出 1 项,另一帖 2 项一项不出)。发送是本页唯一的提交入口,
+      // 不渲染就等于「写了半天发不出去」,不能把它押在宽度竞争上。自绘按钮拿固定 40vp,
+      // 与中部 layoutWeight(1) 各要各的(详情页顶栏那排自绘按钮就是这么在手机上一直可点的)。
+      Button({ type: ButtonType.Normal, stateEffect: true }) {
+        if (this.isSubmitting) {
+          LoadingProgress()
+            .width(20)
+            .height(20)
+            .color($r('app.color.brand'))
+        } else {
+          // 沿用原发送按钮的「可发送=品牌色、不可发送=弱化色」反馈。内容不完整时仍可点击,
+          // 由 submit() 给出缺标题/分类/标签/字数的具体提示。
+          SymbolGlyph($r('sys.symbol.paperplane_fill'))
+            .fontSize(19)
+            .fontColor([this.canSubmit() ? $r('app.color.brand') : $r('app.color.text_faint')])
+        }
+      }
       .width(40)
       .height(40)
+      .padding(0)
+      .backgroundColor(Color.Transparent)
+      .borderRadius(10)
+      .enabled(!this.isSubmitting)
+      .onClick(() => {
+        this.submit();
+      })
     }
     .width('100%')
     .height(56)
@@ -1167,20 +1191,8 @@ export struct ComposerPage {
             this.onBack();
           }
         },
-        menu: {
-          value: [{
-            content: {
-              icon: this.sendMenuSymbolModifier(),
-              label: '发送',
-              // 内容不完整时仍允许点击，由 submit() 给出缺标题/分类/标签/字数的具体提示；
-              // 只有请求已经发出时才真正禁用，防止重复提交。
-              isEnabled: !this.isSubmitting,
-              action: () => {
-                this.submit();
-              }
-            }
-          }]
-        },
+        // 故意不给 HdsNavigation 挂原生 menu:发送入口已改由 ComposerTitleBarContent 自绘
+        // (原生菜单项会被标题栏宽度静默挤掉,见那里的注释)。
         stackBuilder: () => {
           this.ComposerTitleBarContent();
         }
@@ -1195,15 +1207,6 @@ export struct ComposerPage {
     .height('100%')
     .backgroundColor(Color.Transparent)
     .hitTestBehavior(HitTestMode.Transparent)
-  }
-
-  // HDS menu 支持 SymbolGlyphModifier，因此可保留原发送按钮的“可发送=品牌色、不可发送=弱化色”反馈。
-  // 菜单项在校验未通过时仍可点击，实际阻断与提示统一由 submit()/canSubmit() 负责。
-  private sendMenuSymbolModifier(): SymbolGlyphModifier {
-    const modifier: SymbolGlyphModifier = new SymbolGlyphModifier($r('sys.symbol.paperplane_fill'));
-    modifier.fontSize(19);
-    modifier.fontColor([this.canSubmit() ? $r('app.color.brand') : $r('app.color.text_faint')]);
-    return modifier;
   }
 
   // 顶栏下的元信息行:发帖=标题输入 + 分类 + 标签;私信=固定收件人行(不可编辑)。
