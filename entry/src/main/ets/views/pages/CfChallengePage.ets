@@ -333,7 +333,9 @@ export struct CfChallengePage {
 
   private logDiagnostic(stage: string, detail: string): void {
     const snapshot: CookiePresenceSnapshot = WebSessionManager.getCookiePresenceSnapshot('cf_clearance');
-    Log.i(`${DIAG_TAG} stage=${stage} hasCfClearance=${snapshot.hasCookie} cookieHeaderLength=${snapshot.headerLength} pollCount=${this.challengePollCount} timerActive=${this.challengePollTimer >= 0} hasResolved=${this.hasResolved} sawChallengeWidget=${this.sawChallengeWidget} ${detail}`);
+    // 字段名刻意写「可见」而不是「有没有」:cf_clearance 是 HttpOnly,cookie 头里看不到它
+    // 不等于没拿到通行证(known-issues 问题 6)。过盾真值看 hasResolved / resolvedBySource404。
+    Log.i(`${DIAG_TAG} stage=${stage} cfClearanceCookieVisible=${snapshot.hasCookie} cookieHeaderLength=${snapshot.headerLength} pollCount=${this.challengePollCount} timerActive=${this.challengePollTimer >= 0} hasResolved=${this.hasResolved} sawChallengeWidget=${this.sawChallengeWidget} ${detail}`);
   }
 
   private safeUrlLabel(url: string): string {

@@ -184,7 +184,7 @@ export class ChallengeRecoveryCoordinator {
     if (this.state !== ChallengeRecoveryState.RESOLVING) {
       return;
     }
-    Log.i(`${DIAG_TAG} stage=recoveryProbe attempt=${this.pollCount}/${MAX_POLL} resolved=${resolved} hasCfClearance=${WebSessionManager.hasCfClearance()}`);
+    Log.i(`${DIAG_TAG} stage=recoveryProbe attempt=${this.pollCount}/${MAX_POLL} resolved=${resolved} cfClearanceCookieVisible=${WebSessionManager.isCfClearanceVisible()}`);
     if (resolved) {
       this.resolvedSilently();
       return;

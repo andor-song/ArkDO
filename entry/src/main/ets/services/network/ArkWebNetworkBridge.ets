@@ -14,6 +14,7 @@ import { buildMessageBusScript } from './webscript/MessageBusScriptTemplate';
 import { createFetchScript, createFormScript, createHeaderedFetchScript, createImageFetchScript, createPostJsonScript,
   createPutScript, createUploadScript, REQUEST_ID_TOKEN } from './ArkWebFetchScriptFactory';
 import { extractMessageBusClientId, MessageBusEventBus, parseMessageBusEvent } from '../message/MessageBusEventBus';
+import { classifyCsrfFailure } from './CsrfFailurePolicy';
 
 const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 120000;
 // 下载意图在队列里的最长存活时间。startDownload 成功返回不等于下载真的起得来(被 CF 拦、
@@ -42,6 +43,23 @@ function logNetworkBody(message: string): void {
   Log.i(`[ArkDO][Network][Body] ${message}`);
 }
 
+// 注入脚本只报「CSRF 没读到」这一事实,是否算会话过期由这里判定:
+// 只有服务端明确说没登录(discourse-logged-out / 401 / 非 CF 的 403)才升为 SESSION_EXPIRED,
+// 其余(挑战页 HTML、执行器卡死、429/5xx)保持 CSRF_UNAVAILABLE → 按网络档提示重试。
+function classifyScriptFailure(envelope: WebFetchEnvelope): NetworkFailureKind {
+  if (envelope.failureKind === NetworkFailureKind.SESSION_EXPIRED) {
+    return NetworkFailureKind.SESSION_EXPIRED;
+  }
+  if (envelope.failureKind === NetworkFailureKind.CSRF_UNAVAILABLE) {
+    return classifyCsrfFailure(
+      (envelope.csrfLoggedOut ? envelope.csrfLoggedOut : '').length > 0,
+      envelope.csrfLastStatus ? envelope.csrfLastStatus : 0,
+      (envelope.csrfCfMitigated ? envelope.csrfCfMitigated : '').length > 0
+    );
+  }
+  return NetworkFailureKind.TRANSPORT;
+}
+
 export interface ArkWebJsonExecutor {
   run(script: string): Promise<string>;
 }
@@ -57,12 +75,20 @@ interface WebFetchEnvelope {
   cfMitigated?: string;
   body?: string;
   errorMessage?: string;
-  // 注入脚本给的**结构化**失败分类(目前只有 'session_expired'):CSRF 取不到 = 会话过期。
+  // 注入脚本给的**结构化**失败分类('csrf_unavailable' / 'session_expired')。
   // 刻意不用 errorMessage 里的英文字符串判断 —— 那是给日志看的,不是契约。
   failureKind?: string;
-  // POST 诊断:本次使用的 CSRF token 来源(session/meta/none)与长度,用于定位 403 是否为 CSRF 不匹配。
+  // POST 诊断:本次使用的 CSRF token 来源(session/cache/meta/none)与长度,用于定位 403 是否为 CSRF 不匹配。
   csrfSource?: string;
   csrfLength?: number;
+  // CSRF 读取现场。脚本把「读了几次、最后一次看到什么」如实带回,分类在 ArkTS 侧做
+  // (CsrfFailurePolicy.classifyCsrfFailure):只有服务端明确说没登录才算会话过期。
+  csrfAttempts?: number;
+  csrfLastStatus?: number;
+  csrfLastError?: string;
+  csrfCfMitigated?: string;
+  csrfLoggedOut?: string;
+  csrfUsedCache?: boolean;
   // 响应头 `Discourse-Logged-Out` 的值(上游在 BAD_TOKEN 时回 "1")。见 NetworkTypes 的说明:
   // 它把「404 到底是游客还是令牌失效」这件事说清楚了,是会话判定唯一可靠的服务端正面证据。
   loggedOut?: string;
@@ -143,12 +169,19 @@ class WebviewJsonExecutor implements ArkWebJsonExecutor, ArkWebResultReceiver {
   private controller: webview.WebviewController;
   private callbackProxy: ArkWebCallbackProxy = new ArkWebCallbackProxy(this);
   private pendingRequests: Map<string, PendingJsonRequest> = new Map();
+  // 连续超时计数与 host 文档代次:定位「执行器整段卡死」(known-issues 问题 3)时,
+  // 关键是区分「偶发一次慢」与「文档 JS 上下文已死、之后每个请求都只会走满超时」。
+  // 连续计数跨过阈值就说明后者;hostGeneration 用来核对卡死是否发生在某次 host 重载前后
+  // (重载会换掉文档,旧上下文里的回调再也不会回来)。
+  private consecutiveTimeouts: number = 0;
+  private hostGenerationProvider: () => number;
   // 长轮询客户端 id(由注入脚本生成、经 config-ready 上报;值本身不敏感,不进日志全文)。
   private messageBusClientId: string = '';
   private requestSequence: number = 0;
 
-  constructor(controller: webview.WebviewController) {
+  constructor(controller: webview.WebviewController, hostGenerationProvider: () => number) {
     this.controller = controller;
+    this.hostGenerationProvider = hostGenerationProvider;
   }
 
   getCallbackProxy(): ArkWebCallbackProxy {
@@ -162,6 +195,9 @@ class WebviewJsonExecutor implements ArkWebJsonExecutor, ArkWebResultReceiver {
 
     return new Promise<string>((resolve: (value: string) => void, reject: (reason: ExecutorFailure) => void) => {
       const timeoutId: number = setTimeout(() => {
+        this.consecutiveTimeouts++;
+        logNetwork(`ArkWeb executor timeout requestId=${requestId} consecutiveTimeouts=${this.consecutiveTimeouts}` +
+          ` pending=${this.pendingRequests.size} hostGeneration=${this.hostGenerationProvider()}`);
         this.rejectRequest(requestId, new ExecutorFailure('ArkWeb 请求超时。', NetworkFailureKind.TIMEOUT));
       }, AppConstants.DEFAULT_TIMEOUT_MS);
       this.pendingRequests.set(requestId, new PendingJsonRequest(resolve, reject, timeoutId));
@@ -187,6 +223,8 @@ class WebviewJsonExecutor implements ArkWebJsonExecutor, ArkWebResultReceiver {
     }
 
     logNetwork(`ArkWeb callback received requestId=${requestId} payloadLength=${payload.length}`);
+    // 有回执 = 执行器还活着,连续超时链断开。
+    this.consecutiveTimeouts = 0;
     clearTimeout(pendingRequest.timeoutId);
     this.pendingRequests.delete(requestId);
     pendingRequest.resolve(payload);
@@ -217,6 +255,10 @@ class WebviewJsonExecutor implements ArkWebJsonExecutor, ArkWebResultReceiver {
     }
 
     logNetwork(`ArkWeb executor reject requestId=${requestId} reason=${failure.message} kind=${failure.kind}`);
+    // 超时由上面的回调自己计数;其余失败(脚本抛错)同样证明执行器有响应,链断开。
+    if (failure.kind !== NetworkFailureKind.TIMEOUT) {
+      this.consecutiveTimeouts = 0;
+    }
     clearTimeout(pendingRequest.timeoutId);
     this.pendingRequests.delete(requestId);
     pendingRequest.reject(failure);
@@ -244,6 +286,9 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
   // 打开、放行整个队列,而此时第二次 loadUrl 已经在途 —— 请求注进一个马上被销毁的文档,回调永远
   // 不来,只能干等到执行器 15s 超时。计数保证「最后一次重载真正落地」才放行。
   private outstandingLoads: number = 0;
+  // host 文档代次:每发一次 loadUrl 自增。执行器超时日志带上它,用来核对「卡死是否发生在
+  // 某次重载之后」——重载会换掉文档,旧上下文里未完成的回调再也不会回来。
+  private hostGeneration: number = 0;
   // host webview 控制器与其原生下载委托:附件下载走它,天然带会话 Cookie、自动跟随 302 到 CDN、不受 CORS 限制。
   private controller?: webview.WebviewController;
   private downloadContext?: Context;
@@ -486,6 +531,8 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
   markHostLoadIssued(): void {
     this.reloading = true;
     this.outstandingLoads++;
+    this.hostGeneration++;
+    logNetwork(`host load issued generation=${this.hostGeneration} outstanding=${this.outstandingLoads}`);
   }
 
   // 主动重载 host 首页:一次真实页面导航,让 CF 挑战 JS 在真浏览器环境里运行以拿 cf_clearance
@@ -881,7 +928,7 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
 
   private ensureWebviewExecutor(controller: webview.WebviewController): WebviewJsonExecutor {
     if (!this.webviewExecutor) {
-      this.webviewExecutor = new WebviewJsonExecutor(controller);
+      this.webviewExecutor = new WebviewJsonExecutor(controller, (): number => this.hostGeneration);
     }
     return this.webviewExecutor;
   }
@@ -898,16 +945,21 @@ export class ArkWebNetworkBridge implements JsonNetworkClient {
     if (method === 'POST') {
       const csrfSource: string = envelope.csrfSource ? envelope.csrfSource : 'unknown';
       const csrfLength: number = envelope.csrfLength ? envelope.csrfLength : 0;
-      logNetwork(`POST ${path} csrf source=${csrfSource} length=${csrfLength}`);
+      // 正常路径(session)只留一行短日志;非 session 才把读取现场一并打出来,
+      // 否则每次写请求都多出一串没人看的字段。
+      const csrfDetail: string = csrfSource === 'session' ? '' :
+        ` attempts=${envelope.csrfAttempts ? envelope.csrfAttempts : 0}` +
+        ` lastStatus=${envelope.csrfLastStatus ? envelope.csrfLastStatus : 0}` +
+        ` lastError=${envelope.csrfLastError ? envelope.csrfLastError : ''}` +
+        ` cache=${envelope.csrfUsedCache ? 'yes' : 'no'}`;
+      logNetwork(`POST ${path} csrf source=${csrfSource} length=${csrfLength}${csrfDetail}`);
     }
 
     if (envelope.errorMessage) {
       logNetwork(`${method} ${path} envelope error=${envelope.errorMessage}`);
-      // 脚本可以给出结构化分类(目前只有 session_expired):优先认它,其余一律 TRANSPORT。
+      // 脚本给的是现场事实,分类在 classifyScriptFailure 里按正面证据做。
       // 不按 errorMessage 里有没有 'CSRF' 去猜 —— 改一次措辞判定就静默失真。
-      const scriptKind: NetworkFailureKind = envelope.failureKind === NetworkFailureKind.SESSION_EXPIRED
-        ? NetworkFailureKind.SESSION_EXPIRED
-        : NetworkFailureKind.TRANSPORT;
+      const scriptKind: NetworkFailureKind = classifyScriptFailure(envelope);
       return {
         success: false,
         statusCode: 0,

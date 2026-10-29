@@ -159,7 +159,15 @@ export class WebSessionManager {
     }
   }
 
-  static hasCfClearance(): boolean {
+  /**
+   * `cf_clearance` 是否**在 cookie 头里可见**。
+   *
+   * 注意:CF 下发的 cf_clearance 带 HttpOnly,而 `fetchCookieSync` 不保证把它列出来
+   * (与 `_t` 同一类问题,见 deleteCookie 的注释)。因此 false **不能**当作「没有通行证」,
+   * 只能当作「这次看不见」。判断是否真的过盾,以挑战页/协调器的 404 探测为准
+   * (resolvedBySource404)——那条信号走的是真实请求,不受 cookie 可见性影响。
+   */
+  static isCfClearanceVisible(): boolean {
     return WebSessionManager.hasCookie('cf_clearance');
   }
 

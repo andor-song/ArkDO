@@ -34,6 +34,10 @@ export enum NetworkFailureKind {
   // 写请求拿不到 CSRF（会话已过期）。**必须与 TRANSPORT 分开**：这条的正确引导是「重新登录」，
   // 说「检查网络」会让用户在网络设置里白折腾一圈，而重试永远不会成功。
   SESSION_EXPIRED = 'session_expired',
+  // 写请求这一次没读到 CSRF，但**没有**任何「会话已失效」的正面证据（CF 挑战页返回 HTML、
+  // 宿主执行器卡死、429/5xx、cookie 仓正在读写）。与 SESSION_EXPIRED 分开：这条的正确引导
+  // 是「稍后重试」，把人赶去重新登录只会白登出一次。
+  CSRF_UNAVAILABLE = 'csrf_unavailable',
   // 本仓在发请求前自己拦下（本地校验、会话代次已变）。不是网络问题，别引导用户去查网络。
   LOCAL_ABORT = 'local_abort'
 }

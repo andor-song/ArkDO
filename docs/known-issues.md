@@ -93,12 +93,16 @@
 JS 上下文**；上下文已经死了的话，之后每个请求都只会走满 15s 超时。晚到的回包被
 `ArkWeb callback ignored` 丢掉（全日志 19 条，其中 `arkdo_656` 同一 id 被忽略两次）。
 
-**下一步**（要真机 + 日志配合，别盲改）：先给 `ArkWebNetworkBridge` 加一条可观测计数——连续
-N 次 timeout 时打 `consecutiveTimeouts=N hostGeneration=…`；再决定是「重建 host 文档」还是
-「换一条执行通道」。同时在详情页/列表页给「超时」补一次自动重试（现在只有 CF 403 那条重试链
-有 6 次 2s 退避）。
+**1.0.16 已加观测（不改行为）**：执行器每次超时打一行
+`ArkWeb executor timeout requestId=… consecutiveTimeouts=N pending=… hostGeneration=…`；
+任何回执或非超时失败都会把连续计数清零；`markHostLoadIssued` 每次 `loadUrl` 自增代次并打
+`host load issued generation=…`。明天复现时看两点：连续计数是否一路涨到 ≥3（说明上下文已死，
+不是偶发慢），以及卡死窗口的 `hostGeneration` 是否与某次重载重合。
 
-## 问题 4：`csrf source=none` 让 13 次写请求直接本地中止（未修，窗口与问题 3 重叠）
+**仍未做**：详情页/列表页对「超时」的自动重试（现在只有 CF 403 那条重试链有 6 次 2s 退避）；
+以及「重建 host 文档」与「换执行通道」之间的取舍——等上面的观测数据。
+
+## 问题 4：`csrf source=none` 让 13 次写请求直接本地中止（1.0.16 已修，待真机复验）
 
 `csrf source=session length=86` × 89 与 `csrf source=none length=0` × 13：13 条全部落在
 10-29 00:03:27 → 00:17:26，其中 12 条 `POST /topics/timings` + 1 条 `POST /presence/update`。
@@ -107,27 +111,49 @@ N 次 timeout 时打 `consecutiveTimeouts=N hostGeneration=…`；再决定是�
 `[ArkDO][ReadingTracker] report failed` × 14、`drain report … success=false status=0` × 2，
 主题 3046615 / 3024844 的已读位置永久缺了那几批。重启（08:51）之后 `source=none` 归零。
 
-**下一步**：读 `CsrfTokenProvider` 的「取不到就当没有」分支——更像**读 cookie 的时序**问题
-（`source=none` 时 cookie 仓正好在读/写），不是令牌真没了。若确认，把「取不到」与「确实没有」
-分开：前者应等待一次重读或复用最近一次有效令牌，而不是直接判「会话可能已过期」并中止写入。
+**根因**：注入脚本的 `readCsrf()` 把三类完全不同的失败都 `catch` 成空串——fetch 传输失败、
+`r.json()` 解析失败（CF 挑战页是 HTML）、响应里没有 `csrf` 字段。随后一次**零延迟**重读撞在
+同一个抖动上，再落到「没有 meta 令牌」分支，就断言 `session may be expired` 并中止写入。
+证据本身否定了这个结论：同一分钟草稿保存是 `source=session`，2.5 秒后的 `/clicks/track` 也成功。
 
-## 问题 5：重复请求（未修，逐条确认后再动）
+**已改（1.0.16）**：
+- 读取失败逐项留证（`http_<status>` / `malformed` / `missing` / `transport:`），回执带上
+  `csrfAttempts / csrfLastStatus / csrfLastError / csrfCfMitigated / csrfLoggedOut`。
+- 重试改为 `[0, 300, 900]ms` 退避（`CsrfFailurePolicy.CSRF_RETRY_DELAYS_MS`），最坏新增延迟 1.2s。
+- 读不到时先复用最近一次成功令牌（`window.__arkdoCsrfCache`，TTL 2 分钟，按 origin 隔离），
+  再落 meta；只有**明确登出证据**才作废缓存。
+- 分类上移：脚本只报 `csrf_unavailable`，由 `classifyCsrfFailure()` 按正面证据（`discourse-logged-out`、
+  401、非 CF 的 403）升为 `SESSION_EXPIRED`；其余按网络档提示「稍后重试」，不再把用户赶去重新登录。
+- 顺带修掉 fail-fast 后主链继续执行、对同一 requestId 再回一个 `TypeError` 失败回执的问题。
 
-- `GET /session/current.json` 在**同一毫秒**被发两次（10:07:22.316，`arkdo_123` / `arkdo_124`，
-  触发点是 `foreground session recheck`）；另外两次前台恢复也是 0.5–1.8s 内成对。
+**真机复验**（明天）：日志里 `source=none` 应显著变少；若出现，同一行会带 `attempts/lastStatus/lastError/cache`，
+界面提示应是「网络不顺畅」而不是「请重新登录」。已读上报仍按 status=0 退避 4 档（5/10/20/40s），
+若这 4 档全部落在执行器卡死窗口内仍会丢批——那是问题 3，不是 CSRF。
+
+## 问题 5：重复请求（1.0.16 修掉一条，其余待真机确认触发点）
+
+- ~~`GET /session/current.json` 在**同一毫秒**被发两次~~（1.0.16 已修：`AuthService.probeSession()`
+  把并发调用合并成同一个在途 Promise，落地即释放；`AuthService.test` 有对应用例）。
+  原始证据：10:07:22.316，`arkdo_123` / `arkdo_124`，
+  触发点是 `foreground session recheck`；另外两次前台恢复也是 0.5–1.8s 内成对。
 - 同一条搜索被发两次：09:21:37.404 与 09:21:37.774 都是 `GET /search.json?q=codex 计划怎么不显示了`，
   **两次都 200 且都 59910 字节**（一次查询 120KB），两次结果都渲染了。
 - 同一批 21 个 `post_ids` 的 `GET /t/{id}/posts.json` 13 秒内取 4 次（gaps 0.84/1.63/1.89/0.80s）。
 
 对照：`GET /latest.json` 的 403 重试是固定 2.000s × 最多 6 次、成功即停 —— 那条是**有意**的。
 
-## 问题 6：CF 诊断说「已解决」但 `hasCfClearance` 全程 false（未修，只影响诊断可信度）
+## 问题 6：CF 诊断说「已解决」但 `hasCfClearance` 全程 false（1.0.16 已把字段改名，只影响诊断可信度）
 
 00:14:20→00:14:33 那次挑战：13 条 `[ARKDO_CF_DIAG]` 采样**每一条**都是 `hasCfClearance=false`，
 包括最后 `stage=resolvedBySource404 … hasResolved=true`；可之后 00:15:04 的草稿保存确实 200 了。
 结论：解决判定（404 即认为过盾）是对的，**clearance 探测看错了 cookie 仓**（sheet 期间
 `cookieHeaderLength` 反而从 1697 降到 1636）。同一时段 `[Challenge] required` 的 version 自增 37 次，
 而 `rootChallengeOpen` 只触发 1 次（25 次是 30s 冷却里的 `recoverySwallow state=3`）。
+
+**1.0.16 已改（只修可信度，不改判定）**：`cf_clearance` 是 HttpOnly，`fetchCookieSync` 不保证
+把它列出来——所以那个 false 本来就不能读成「没有通行证」。日志字段已从 `hasCfClearance` 改名为
+`cfClearanceCookieVisible`，`WebSessionManager.hasCfClearance()` 改名 `isCfClearanceVisible()` 并写明
+「false 只代表看不见」。过盾真值仍以 `resolvedBySource404` / `hasResolved` 为准。
 
 ---
 

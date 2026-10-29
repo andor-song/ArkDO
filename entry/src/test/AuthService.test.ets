@@ -49,6 +49,55 @@ class FakeBridge implements JsonNetworkClient {
   }
 }
 
+// 手动放行的 bridge:用来观察「两次 probeSession 并发时到底发了几次请求」。
+class DeferredBridge implements JsonNetworkClient {
+  calls: number = 0;
+  private resolvers: Array<(result: NetworkResult<string>) => void> = [];
+
+  getJson(path: string): Promise<NetworkResult<string>> {
+    this.calls++;
+    return new Promise<NetworkResult<string>>((resolve: (result: NetworkResult<string>) => void) => {
+      this.resolvers.push(resolve);
+    });
+  }
+
+  complete(result: NetworkResult<string>): void {
+    const pending: Array<(result: NetworkResult<string>) => void> = this.resolvers;
+    this.resolvers = [];
+    for (let index: number = 0; index < pending.length; index++) {
+      pending[index](result);
+    }
+  }
+
+  postForm(path: string, body: string): Promise<NetworkResult<string>> {
+    return Promise.resolve(this.empty());
+  }
+
+  putJson(path: string): Promise<NetworkResult<string>> {
+    return Promise.resolve(this.empty());
+  }
+
+  postJson(path: string, body: string): Promise<NetworkResult<string>> {
+    return Promise.resolve(this.empty());
+  }
+
+  putForm(path: string, body: string): Promise<NetworkResult<string>> {
+    return Promise.resolve(this.empty());
+  }
+
+  deleteForm(path: string, body: string): Promise<NetworkResult<string>> {
+    return Promise.resolve(this.empty());
+  }
+
+  uploadImage(base64: string, fileName: string, mimeType: string): Promise<NetworkResult<string>> {
+    return Promise.resolve(this.empty());
+  }
+
+  private empty(): NetworkResult<string> {
+    return { success: false, statusCode: 0, challengeState: ChallengeState.NONE };
+  }
+}
+
 export default function authServiceTest() {
   describe('authServiceTest', () => {
     it('loadsCurrentUserFromDiscourseSessionPayload', 0, async () => {
@@ -278,6 +327,35 @@ export default function authServiceTest() {
       const result: NetworkResult<User | undefined> = await service.getCurrentUser();
 
       expect(result.success).assertFalse();
+    });
+
+    it('coalescesConcurrentSessionProbesIntoOneRequest', 0, async () => {
+      const bridge: DeferredBridge = new DeferredBridge();
+      const service: AuthService = new AuthService(bridge, () => CookiePresence.PRESENT);
+
+      // 真机 10:07:22.316 同一毫秒发出两次 /session/current.json。并发调用必须合并。
+      const first: Promise<NetworkResult<SessionProbe>> = service.probeSession();
+      const second: Promise<NetworkResult<SessionProbe>> = service.probeSession();
+      expect(bridge.calls).assertEqual(1);
+
+      bridge.complete({
+        success: true,
+        statusCode: 200,
+        challengeState: ChallengeState.NONE,
+        data: '{"current_user":{"id":7,"username":"linuxdo_user"}}'
+      });
+      const results: NetworkResult<SessionProbe>[] = await Promise.all([first, second]);
+      expect(results[0].success).assertTrue();
+      expect(results[1].success).assertTrue();
+      expect(results[0].data?.verdict).assertEqual('logged-in');
+      expect(results[1].data?.verdict).assertEqual('logged-in');
+
+      // 落地后必须放开:下一次调用是一次新的探测,而不是永远复用旧结果。
+      const third: Promise<NetworkResult<SessionProbe>> = service.probeSession();
+      expect(bridge.calls).assertEqual(2);
+      bridge.complete({ success: true, statusCode: 200, challengeState: ChallengeState.NONE, data: '{"current_user":null}' });
+      const thirdResult: NetworkResult<SessionProbe> = await third;
+      expect(thirdResult.data?.verdict).assertEqual('anonymous-confirmed');
     });
   });
 }

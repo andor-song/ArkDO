@@ -64,6 +64,11 @@ export interface SessionProbe {
 export class AuthService {
   private bridge: JsonNetworkClient;
   private cookiePresence: (name: string) => CookiePresence;
+  // 在途的会话探测。真机日志里出现过同一毫秒发出两次 GET /session/current.json
+  // (10:07:22.316 arkdo_123/124,触发点是「回前台补查」与通知轮询/看门狗同时到点)。
+  // 探测是无参只读,两个并发调用没有任何理由各发一次请求:合并成同一个 Promise,
+  // 后来者直接等这一次的结果。第一次落地后立刻清空,下一次调用仍会重新探测。
+  private inFlightProbe?: Promise<NetworkResult<SessionProbe>>;
 
   constructor(bridge: JsonNetworkClient, cookiePresence?: (name: string) => CookiePresence) {
     this.bridge = bridge;
@@ -79,6 +84,22 @@ export class AuthService {
   // fetchCookieSync 抛异常时返回 false：一次 Cookie API 抖动就能把用户掀下线。
   // 现在探测异常 = UNKNOWN = 不下任何结论。
   async probeSession(): Promise<NetworkResult<SessionProbe>> {
+    if (this.inFlightProbe !== undefined) {
+      return this.inFlightProbe;
+    }
+    const probe: Promise<NetworkResult<SessionProbe>> = this.probeSessionOnce();
+    this.inFlightProbe = probe;
+    try {
+      return await probe;
+    } finally {
+      // 只清自己那一次:若期间已被替换(理论上不会),别把后来者的在途标记抹掉。
+      if (this.inFlightProbe === probe) {
+        this.inFlightProbe = undefined;
+      }
+    }
+  }
+
+  private async probeSessionOnce(): Promise<NetworkResult<SessionProbe>> {
     const response: NetworkResult<string> = await this.bridge.getJson(CURRENT_SESSION_PATH);
     const cookiePresence: CookiePresence = this.cookiePresence(AUTH_COOKIE_NAME);
     // 与 verdict 用**同一个口径**（isTokenDeclaredDead）：这条证据决定上层要不要隔离凭据，

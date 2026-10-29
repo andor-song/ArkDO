@@ -70,6 +70,8 @@ import pushSubscriptionKeysTest from './PushSubscriptionKeys.test';
 import htmlContentUtilsTest from './HtmlContentUtils.test';
 import linkRouterTest from './LinkRouter.test';
 import notificationTitleTest from './NotificationTitle.test';
+import csrfFailurePolicyTest from './CsrfFailurePolicy.test';
+import csrfScriptTemplateTest from './CsrfScriptTemplate.test';
 
 export default function testsuite() {
   architectureSkeletonTest();
@@ -150,4 +152,7 @@ export default function testsuite() {
   draftPublishRaceGuardTest();
   // 通知标题的 HTML 实体解码(真机:从通知进帖标题显示成 &amp;)。
   notificationTitleTest();
+  // CSRF 取不到时的分类与重试:会话过期必须只在有正面证据时成立(真机 13 条 source=none)。
+  csrfFailurePolicyTest();
+  csrfScriptTemplateTest();
 }

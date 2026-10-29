@@ -119,6 +119,11 @@ export function classifyFailure<T>(response: NetworkResult<T>): FailureCause {
       // 会话过期在「该做什么」上与 not_logged_in 是同一件事,共用一档文案。
       return FailureCause.NEED_LOGIN;
     }
+    if (kind === NetworkFailureKind.CSRF_UNAVAILABLE) {
+      // 这一次没读到令牌,但没有任何「会话已失效」的正面证据(挑战页 HTML、执行器卡死、
+      // 429/5xx、cookie 仓正在读写)。按网络档引导重试;把人赶去重新登录只会白登出一次。
+      return FailureCause.NETWORK;
+    }
     return FailureCause.NETWORK;
   }
 
